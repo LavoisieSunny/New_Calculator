@@ -1190,7 +1190,9 @@ document.addEventListener("DOMContentLoaded", () => {
 
                             // Load high-fidelity PDF preview in the right pane!
                             const blobUrl = URL.createObjectURL(file);
-                            singlePreviewFilename.innerHTML = `${file.name} <span class="badge source-badge" style="margin-left: 8px; background: rgba(59, 130, 246, 0.2); color: #60a5fa; border: 1px solid rgba(59, 130, 246, 0.3); font-size: 0.7rem; padding: 2px 6px; border-radius: 4px; display: inline-block;">Source: ${data.fallback_source}</span>`;
+                            if (singlePreviewFilename) {
+                                singlePreviewFilename.innerHTML = `${file.name} <span class="badge source-badge" style="margin-left: 8px; background: rgba(59, 130, 246, 0.2); color: #60a5fa; border: 1px solid rgba(59, 130, 246, 0.3); font-size: 0.7rem; padding: 2px 6px; border-radius: 4px; display: inline-block;">Source: ${data.fallback_source}</span>`;
+                            }
                             singlePreviewContainer.innerHTML = `
                                 <iframe class="pdf-iframe" src="${blobUrl}#toolbar=0" width="100%" height="100%"></iframe>
                             `;
@@ -3092,7 +3094,9 @@ This cannot be undone.`)) return;
                 <p style="font-size: 0.8rem; color: var(--text-secondary)">Upload a PDF on the left to see the live document preview here.</p>
             </div>
         `;
-        singlePreviewFilename.textContent = "No File Loaded";
+        if (singlePreviewFilename) {
+            singlePreviewFilename.textContent = "No File Loaded";
+        }
 
         const summaryCard = document.getElementById("legal-ai-summary-card");
         if (summaryCard) {
