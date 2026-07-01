@@ -484,11 +484,6 @@
                                 <i class="fa-solid fa-scale-balanced" style="color: var(--color-primary);"></i> Benchmarking
                                 <span id="benchmarking-tab-dot" class="notification-dot hidden"></span>
                             </button>
-                            <!-- Classifies whether the appeal seeks enhancement or reduction of the award -->
-                            <button type="button" class="pane-tab-btn" data-pane-tab="enhancement-check" style="background: transparent; border: 1px solid transparent; color: var(--text-secondary); padding: 6px 12px; border-radius: var(--radius-sm); font-family: 'Outfit', sans-serif; font-size: 0.8rem; font-weight: 600; cursor: pointer; display: flex; align-items: center; gap: 6px; transition: all var(--transition-fast); position: relative;">
-                                <i class="fa-solid fa-gavel" style="color: var(--color-warning);"></i> Enhancement Check
-                                <span id="enhancement-check-tab-dot" class="notification-dot hidden"></span>
-                            </button>
                         </div>
 
                         <!-- Tab 1 Content: PDF Preview -->
@@ -598,29 +593,7 @@
                             </div>
                         </div>
 
-                        <!-- Tab 3 Content: Enhancement Check -->
-                        <div id="pane-tab-enhancement-check-content" class="pane-tab-content hidden" style="flex: 1; display: flex; flex-direction: column; gap: 20px; padding: 20px; overflow-y: auto; height: calc(100% - 44px);">
 
-                            <!-- Unified Enhancement Check Page Card -->
-                            <div class="card" id="enhancement-check-main-card">
-                                <div class="card-header" style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--border-glass);">
-                                    <h3 style="margin: 0; font-size: 1.1rem; display: flex; align-items: center; gap: 8px;">
-                                        <i class="fa-solid fa-gavel text-glow" style="color: var(--color-warning);"></i> Enhancement & Reduction Check
-                                    </h3>
-                                    <span class="badge tech-badge" id="enhancement-verdict-confidence" style="display: none;">—</span>
-                                </div>
-                                <div class="card-body" id="enhancement-check-main-body" style="padding: 20px; display: flex; flex-direction: column; gap: 20px;">
-                                    <div class="empty-state" style="text-align: center; padding: 40px 15px; opacity: 0.6;">
-                                        <i class="fa-solid fa-circle-question" style="font-size: 2.5rem; color: var(--color-primary); margin-bottom: 12px; display: block;"></i>
-                                        <p style="margin: 0; font-size: 0.95rem; font-weight: 500;">No PDF Processed Yet</p>
-                                        <p style="margin: 4px 0 0 0; font-size: 0.8rem; color: var(--text-muted);">
-                                            Upload a PDF to view the Grounds of Appeal and Relief/Prayer clauses in bullet form.
-                                        </p>
-                                    </div>
-                                </div>
-                            </div>
-
-                        </div>
 
                         <!-- Floating Tool Buttons -->
                         <div class="preview-floating-toolbar" id="preview-floating-toolbar">
@@ -910,9 +883,6 @@
             <div class="slideover-header">
                 <div style="display: flex; align-items: center; gap: 10px;">
                     <h3 id="slideover-title">🤖 AI Legal Assistant</h3>
-                    <button type="button" id="expand-slideover-btn" class="slideover-expand-btn" title="Toggle Wide View" style="background: transparent; border: none; color: var(--text-muted); cursor: pointer; display: flex; align-items: center; justify-content: center; font-size: 1rem; transition: color 0.2s ease;">
-                        <i class="fa-solid fa-expand"></i>
-                    </button>
                 </div>
                 <button type="button" id="close-slideover" class="slideover-close-btn">&times;</button>
             </div>

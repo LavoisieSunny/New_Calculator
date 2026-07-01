@@ -674,14 +674,14 @@ select.low-confidence-input {
 }
 
 .btn-primary {
-    background: var(--gradient-primary);
-    color: hsl(224, 71%, 4%);
+    background: linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%);
+    color: #ffffff;
     font-weight: 700;
-    box-shadow: 0 4px 15px rgba(0, 242, 254, 0.25);
+    box-shadow: 0 4px 15px rgba(37, 99, 235, 0.25);
 }
 .btn-primary:hover {
     transform: translateY(-2px);
-    box-shadow: 0 8px 25px rgba(0, 242, 254, 0.4), var(--shadow-neon);
+    box-shadow: 0 8px 25px rgba(37, 99, 235, 0.4);
     filter: brightness(1.1);
 }
 
@@ -2128,10 +2128,10 @@ select.low-confidence-input {
    FULL-SCREEN WORKSTATION OVERLAY & SLIDE-OVER PANEL STYLE RULES
    ========================================================================== */
 .preview-floating-toolbar {
-    position: absolute;
-    right: 24px;
-    top: 72px;
-    z-index: 90;
+    position: fixed;
+    right: 30px;
+    bottom: 30px;
+    z-index: 999;
     display: flex;
     flex-direction: column;
     gap: 14px;
@@ -2185,7 +2185,7 @@ select.low-confidence-input {
     right: 0;
     top: 0;
     height: 100vh;
-    width: 420px;
+    width: 50vw;
     z-index: 1000;
     background: rgba(255, 255, 255, 0.95);
     border-left: 1px solid var(--border-glass);
@@ -2200,6 +2200,12 @@ select.low-confidence-input {
 
 .slideover-panel.open {
     transform: translateX(0);
+}
+
+@media (max-width: 768px) {
+    .slideover-panel {
+        width: 100vw !important;
+    }
 }
 
 .slideover-header {
