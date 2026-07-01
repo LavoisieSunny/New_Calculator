@@ -1166,7 +1166,7 @@ document.addEventListener("DOMContentLoaded", () => {
                             console.log("OCR suggestions structure:", JSON.stringify(data.suggestions, null, 2));
 
                             // Apply OCR suggestions automatically
-                            applyAllOcrSuggestions(data.suggestions);
+                            applyAllOcrSuggestions(data.suggestions, null, null, null, true);
 
                             // Store raw text for AI data recovery
                             currentOcrRawText = data.raw_text || [];

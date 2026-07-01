@@ -13,7 +13,8 @@ from backend.parser_heuristics import (
     score_page_importance,
     parse_chronological_events,
     extract_compensation_table_fields,
-    parse_extracted_text
+    parse_extracted_text,
+    extract_hindi_narrative_income
 )
 
 class TestParserHeuristics(unittest.TestCase):
@@ -371,6 +372,35 @@ class TestParserHeuristics(unittest.TestCase):
         formatted = format_suggestions_for_calculator(suggestions)
         self.assertEqual(formatted["fields"]["claimant_relationship_to_deceased"], "Rajesh Kumar — Son of deceased")
         self.assertEqual(formatted["fields"]["claimant_relationship_type"], "Son of")
+
+    def test_extract_hindi_narrative_income_override(self):
+        """Verify that extract_hindi_narrative_income parses the pleaded amount over the testimony amount."""
+        hindi_text = (
+            "...माल स्प्लाई का कार्य कर 15,000/-रूपये प्रतिमाह की आय अर्जित करता था, "
+            "जबकि अपनी मूल याचिका में स्वयं का आय 12,000/-रूपये प्रतिमाह होना अभिवचनित किया गया है..."
+        )
+        amount, clause = extract_hindi_narrative_income(hindi_text)
+        self.assertEqual(amount, 12000.0)
+        self.assertIn("अभिवचनित", clause)
+    def test_multiline_compensation_table_extraction(self):
+        """Verify that multiline split labels and values are correctly grouped and matched."""
+        text = (
+            "--- PAGE 7 ---\n"
+            "Amount of expenses on treatment\n"
+            "84,600/-\n"
+            "(As adjudged by the Tribunal)\n"
+            "Amount of damages as loss of\n"
+            "(Income awarded by the Tribunal)\n"
+            "Amount of general damages\n"
+            "22,000/-\n"
+            "(Award by the Tribunal)\n"
+            "Total Compensation awarded\n"
+            "1,06,600/-\n"
+        )
+        suggestions = parse_extracted_text(text.split("\n"))
+        self.assertEqual(suggestions["medical_expenses"], 84600.0)
+        self.assertEqual(suggestions["loss_of_income"], 22000.0)
+        self.assertEqual(suggestions["total_compensation"], 106600.0)
 
 
 if __name__ == "__main__":

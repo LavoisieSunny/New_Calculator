@@ -35,7 +35,9 @@ HEADING_KEYWORDS = {
         "particulars of accident"
     ],
     "compensation_section": [
-        "compensation", "quantum", "assessment of compensation", "heads of claim", "calculation", "loss of dependency"
+        "compensation", "quantum", "assessment of compensation", "heads of claim", "calculation", "loss of dependency",
+        "amount of expenses on treatment", "amount of damages", "general damages", "expenses on treatment",
+        "treatment expenses", "award by the tribunal", "adjudged by the tribunal"
     ],
     "relief_section": [
         "relief", "prayer", "relief claimed", "prayer clause", "it is therefore prayed"
@@ -55,7 +57,7 @@ FIELD_LABEL_ALIASES = {
         "name of claimant", "claimant name", "name of the claimant",
         "name of injured", "injured name", "name of the injured",
         "name of victim", "petitioner name", "name of petitioner",
-        "name of appellant", "appellant name", "injured person name"
+        "name of appellant", "appellant name", "injured person name", "name"
     ],
     "deceased_name": [
         "name of deceased", "deceased name", "name of the deceased",
@@ -859,29 +861,95 @@ def parse_compensation_table(text):
     """
     Layer 3: Compensation Table Parser.
     Parses structured lists of compensation heads and amounts from text blocks.
+    Supports multiline look-ahead pairing of split labels and values, and parenthetical cleaning.
     """
+    if not text:
+        return {}
+        
     table = {}
-    lines = text.split("\n")
+    lines = [line.strip() for line in text.split("\n") if line.strip()]
     
-    valid_heads = ["dependency", "consortium", "funeral", "estate", "pain", "medical", "transport", "nourishment", "attender", "disability", "amenities", "earning", "structure", "litigation", "miscellaneous", "marriage", "expectation", "love", "enjoyment", "lumpsum", "spouse", "parental", "children", "wife", "mother", "father", "husband", "brother", "sister"]
-    pattern = r'(?:\d+[\.\)\-]\s*)?([A-Za-z\s&\(\)/\-\’\‘\“\”]+)\s*(?:[:\-–]|\b\.?\s*rs\.?\b)\s*(?:rs\.?|inr)?\s*([\d,\.\s]+lakhs?|[\d,\.\-\/]+)\b'
+    valid_heads = [
+        "dependency", "consortium", "funeral", "estate", "pain", "medical", 
+        "transport", "nourishment", "attender", "disability", "amenities", 
+        "earning", "structure", "litigation", "miscellaneous", "marriage", 
+        "expectation", "love", "enjoyment", "lumpsum", "spouse", "parental", 
+        "children", "wife", "mother", "father", "husband", "brother", "sister",
+        "income", "damages", "general", "loss", "treatment", "expenses"
+    ]
     
+    cleaned_lines = []
     for line in lines:
-        line_clean = line.strip()
-        if not line_clean:
-            continue
-            
-        m = re.search(pattern, line_clean, re.IGNORECASE)
+        cleaned = re.sub(r'[\(\)]', ' ', line)
+        cleaned = re.sub(r'\s+', ' ', cleaned).strip()
+        cleaned_lines.append(cleaned)
+        
+    pattern_single = r'(?:\d+[\.\)\-]\s*)?([A-Za-z\s&\(\)/\-\’\‘\“\”]+)\s*(?:[:\-–]|\b\.?\s*rs\.?\b)\s*(?:rs\.?|inr)?\s*([\d,\.\s]+lakhs?|[\d,\.\-\/]+)\b'
+    
+    def is_valid_head(head_str):
+        hl = head_str.lower()
+        if len(head_str) <= 3:
+            return False
+        if not any(kw in hl for kw in valid_heads):
+            return False
+        reject_kws = ["total", "interest", "passed", "order", "judgment"]
+        if any(kw in hl for kw in reject_kws):
+            return False
+        if "awarded" in hl and "awarded by" not in hl:
+            return False
+        return True
+
+    i = 0
+    while i < len(cleaned_lines):
+        line = cleaned_lines[i]
+        
+        m = re.search(pattern_single, line, re.IGNORECASE)
         if m:
             head = m.group(1).strip()
             head = re.sub(r'\s+', ' ', head).strip()
+            if is_valid_head(head):
+                val = parse_indian_rupee_value(m.group(2))
+                if val > 0:
+                    table[head.title()] = val
+            i += 1
+            continue
             
-            if len(head) > 3 and any(kw in head.lower() for kw in valid_heads):
-                if not any(kw in head.lower() for kw in ["total", "awarded", "interest", "passed", "order", "judgment"]):
-                    val = parse_indian_rupee_value(m.group(2))
-                    if val > 0:
-                        table[head.title()] = val
-                    
+        has_letters = any(c.isalpha() for c in line)
+        has_digits = any(c.isdigit() for c in line)
+        
+        if has_letters and not has_digits:
+            j = i + 1
+            found_val = None
+            skipped_lines = []
+            while j < len(cleaned_lines):
+                next_line = cleaned_lines[j]
+                next_has_letters = sum(1 for c in next_line if c.isalpha())
+                next_has_digits = any(c.isdigit() for c in next_line)
+                
+                if next_has_letters > 10 and not next_has_digits:
+                    if any(stop in next_line.lower() for stop in ["total", "interest"]):
+                        break
+                    skipped_lines.append(next_line)
+                    j += 1
+                    continue
+                
+                if next_has_digits and next_has_letters < 5:
+                    num_match = re.search(r'(?:rs\.?|inr)?\s*([\d,]+(?:\/-)?)\b', next_line, re.IGNORECASE)
+                    if num_match:
+                        found_val = parse_indian_rupee_value(num_match.group(1))
+                        break
+                break
+                
+            if found_val is not None and found_val > 0:
+                full_label = " ".join([line] + skipped_lines)
+                full_label = re.sub(r'\s+', ' ', full_label).strip()
+                if is_valid_head(full_label):
+                    table[full_label.title()] = found_val
+                i = j + 1
+                continue
+                
+        i += 1
+        
     return table
 
 
@@ -3627,6 +3695,7 @@ def parse_extracted_text(text_lines):
             "medical expenses", "medical exp", "medical bill", "medical cost",
             "hospital expenses", "hospital bill", "treatment expenses",
             "treatment cost", "medical", "hospitalisation",
+            "expenses on treatment", "treatment",
             # Hindi
             "चिकित्सा व्यय", "चिकित्सीय व्यय", "इलाज व्यय",
             "उपचार व्यय", "इलाज पर खर्च", "चिकित्सा खर्च",
