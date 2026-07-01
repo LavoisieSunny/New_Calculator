@@ -512,7 +512,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
         // Update Title text
         const titleMap = {
-            calculator: "Motor Claims Compensation Workstation",
+            calculator: "High Court Compensation Calculator",
             library: "Centralized PDF Library & Qdrant Queue",
             chat: "AI Precedent Assistant & Semantic Search",
             qdrant: "Qdrant Vector Database Explorer Dashboard"
