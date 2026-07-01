@@ -1345,6 +1345,27 @@ def _extract_matching_points(text, verdict_type):
     return matched_points
 
 
+def _extract_all_points(text):
+    """
+    Splits text into clauses/sentences and returns all points, cleaned of leading markers.
+    """
+    if not text:
+        return []
+    
+    clauses = _split_into_sentences_or_points(text)
+    points = []
+    
+    for clause in clauses:
+        # Clean leading list markers like "A. ", "1. ", "(IX) " etc.
+        cleaned = re.sub(r'^(?:[A-Za-z0-9]{1,2}\.|\([A-Za-z0-9]{1,2}\)|[•\-\*])\s*', '', clause).strip()
+        if cleaned:
+            # Capitalize first letter
+            cleaned = cleaned[0].upper() + cleaned[1:]
+            points.append(cleaned)
+            
+    return points
+
+
 def _extract_snippet(text, matched_phrase, max_chars=320, min_chars=40):
     """
     Returns a complete, sentence-bound excerpt around the matched phrase
@@ -1446,22 +1467,9 @@ def classify_enhancement_or_reduction(sections):
     g_has_signal = g_verdict in ("enhancement", "reduction")
     r_has_signal = r_verdict in ("enhancement", "reduction")
 
-    # Extract detailed bullet points
-    grounds_points = []
-    if g_verdict in ("enhancement", "reduction"):
-        grounds_points = _extract_matching_points(grounds_text, g_verdict)
-    else:
-        grounds_points = _extract_matching_points(grounds_text, "enhancement") + _extract_matching_points(grounds_text, "reduction")
-        seen = set()
-        grounds_points = [x for x in grounds_points if not (x in seen or seen.add(x))]
-
-    relief_points = []
-    if r_verdict in ("enhancement", "reduction"):
-        relief_points = _extract_matching_points(relief_text, r_verdict)
-    else:
-        relief_points = _extract_matching_points(relief_text, "enhancement") + _extract_matching_points(relief_text, "reduction")
-        seen = set()
-        relief_points = [x for x in relief_points if not (x in seen or seen.add(x))]
+    # Extract detailed bullet points (extract all points as they are in the file)
+    grounds_points = _extract_all_points(grounds_text)
+    relief_points = _extract_all_points(relief_text)
 
     # Fallback to snippet if no points were parsed but a signal was detected
     if g_has_signal and not grounds_points and g_snippet:
