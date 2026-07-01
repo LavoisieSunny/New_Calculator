@@ -1630,8 +1630,17 @@ def perform_ocr_on_scanned_pdf(file_path: str, progress_callback=None, page_call
                                     return None, 0.0, [], None, False
                                 raise
 
-                        # Submit to dedicated single-thread Paddle executor
-                        dual_result = _paddle_executor.submit(_run_paddle_dual, temp_img_path, page_num).result()
+                        # Submit to dedicated single-thread Paddle executor.
+                        # Bounded by OCR_PAGE_TIMEOUT so one bad/slow page can't
+                        # stall the whole request (and the shared Paddle worker)
+                        # indefinitely — falls back to Tesseract for that page instead.
+                        try:
+                            dual_result = _paddle_executor.submit(
+                                _run_paddle_dual, temp_img_path, page_num
+                            ).result(timeout=OCR_PAGE_TIMEOUT)
+                        except _cf.TimeoutError:
+                            _tlog(f"[PAGE {page_num:>3}/{total_pages}] PaddleOCR exceeded {OCR_PAGE_TIMEOUT}s timeout → Tesseract fallback")
+                            dual_result = None
 
                         if dual_result and dual_result[0] is not None:
                             lines, conf, ocr_boxes, result, used_hindi = dual_result
@@ -1701,7 +1710,13 @@ def perform_ocr_on_scanned_pdf(file_path: str, progress_callback=None, page_call
                                         _tlog(f"[PAGE {pnum:>3}] PIR error in retry → skip")
                                         return None
                                     raise
-                            retry_result = _paddle_executor.submit(_run_paddle_retry, retry_temp, page_num).result()
+                            try:
+                                retry_result = _paddle_executor.submit(
+                                    _run_paddle_retry, retry_temp, page_num
+                                ).result(timeout=OCR_PAGE_TIMEOUT)
+                            except _cf.TimeoutError:
+                                _tlog(f"[PAGE {page_num:>3}] Retry pass exceeded {OCR_PAGE_TIMEOUT}s timeout → keeping first-pass result")
+                                retry_result = None
                             if retry_result:
                                 retry_lines = extract_text_lines_from_paddle_result(retry_result)
                                 retry_conf = calculate_paddle_confidence(retry_result)

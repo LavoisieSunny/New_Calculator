@@ -429,11 +429,82 @@ import logging
 import urllib.request
 import urllib.error
 import re
+from datetime import datetime
 
 from config.llm import LLM_PROVIDER, LLM_MODEL_NAME, LLM_API_KEY, LLM_API_ENDPOINT
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("LLMClient")
+
+_MONTHS = {
+    "jan": 1, "january": 1, "feb": 2, "february": 2, "mar": 3, "march": 3,
+    "apr": 4, "april": 4, "may": 5, "jun": 6, "june": 6, "jul": 7, "july": 7,
+    "aug": 8, "august": 8, "sep": 9, "sept": 9, "september": 9,
+    "oct": 10, "october": 10, "nov": 11, "november": 11, "dec": 12, "december": 12,
+}
+
+
+def normalize_date_to_ddmmyyyy(raw_value):
+    """
+    Best-effort conversion of ANY human/LLM-supplied date string into a
+    strict 'DD-MM-YYYY' string (the format parser_heuristics.py, the
+    calculator, and the frontend's date converter all expect).
+
+    The system prompt *asks* the LLM to return DD-MM-YYYY, but local models
+    (Ollama/qwen etc.) frequently ignore that instruction and return
+    "10/04/2023", "2023-04-10", "10 April 2023", "10-Apr-2023", etc.
+    The frontend feeds this value into an <input type="date">, which the
+    browser silently rejects (leaving it blank) unless it converts cleanly
+    to "YYYY-MM-DD" — so an unnormalized date from the LLM is the single
+    biggest cause of "date fields not autofilling" after AI extraction.
+
+    Returns the original value unchanged (never raises) if it cannot be
+    confidently parsed as a date, so callers stay safe on unexpected input.
+    """
+    if raw_value is None:
+        return raw_value
+    val = str(raw_value).strip()
+    if not val:
+        return raw_value
+
+    # 1) Purely numeric, separator-delimited dates: DD-MM-YYYY, DD/MM/YYYY,
+    #    DD.MM.YYYY, or the ISO-ish YYYY-MM-DD / YYYY/MM/DD variants.
+    m = re.match(r'^(\d{1,4})[\-/\.](\d{1,2})[\-/\.](\d{1,4})$', val)
+    if m:
+        a, b, c = m.group(1), m.group(2), m.group(3)
+        try:
+            if len(a) == 4:  # YYYY-MM-DD style
+                year, month, day = int(a), int(b), int(c)
+            else:  # DD-MM-YYYY style (day-first, standard in Indian legal docs)
+                day, month, year = int(a), int(b), int(c)
+            datetime(year, month, day)  # validates the combination
+            return f"{day:02d}-{month:02d}-{year}"
+        except (ValueError, TypeError):
+            pass
+
+    # 2) Textual month dates: "10 April 2023", "10th April, 2023",
+    #    "April 10 2023", "10-Apr-2023", "Apr 10, 2023".
+    text = val.lower().replace(",", " ")
+    text = re.sub(r'(\d)(st|nd|rd|th)\b', r'\1', text)  # strip ordinal suffixes
+    tokens = [t for t in re.split(r'[\s\-/]+', text.strip()) if t]
+    day = month = year = None
+    for tok in tokens:
+        if tok in _MONTHS:
+            month = _MONTHS[tok]
+        elif re.fullmatch(r'\d{4}', tok):
+            year = int(tok)
+        elif re.fullmatch(r'\d{1,2}', tok) and day is None:
+            day = int(tok)
+    if day and month and year:
+        try:
+            datetime(year, month, day)
+            return f"{day:02d}-{month:02d}-{year}"
+        except (ValueError, TypeError):
+            pass
+
+    # Could not confidently parse — leave untouched rather than risk
+    # corrupting a legitimate value we didn't anticipate the shape of.
+    return raw_value
 
 
 def validate_ollama_setup() -> dict:
@@ -792,6 +863,15 @@ def ai_data_recovery(raw_ocr_text: str) -> dict:
                 conf = 1.0 if val is not None else 0.0
             data[key] = val
             confidence_scores[key] = {"confidence": conf}
+
+        # ── Canonicalise every date field to strict DD-MM-YYYY ─────────────
+        # (see normalize_date_to_ddmmyyyy docstring for why this matters —
+        # without it, LLM dates that aren't already exactly DD-MM-YYYY get
+        # silently rejected by the frontend's <input type="date"> and the
+        # field appears to "not fill" at all.)
+        for _date_key in ("dob", "date_of_birth", "accident_date", "date_of_accident", "decision_date"):
+            if data.get(_date_key):
+                data[_date_key] = normalize_date_to_ddmmyyyy(data[_date_key])
 
         # ── Case type deterministic override ──────────────────────────────
         ocr_evidence_case = classify_case_type_by_ocr_text(raw_ocr_text)

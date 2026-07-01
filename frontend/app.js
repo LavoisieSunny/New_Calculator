@@ -350,7 +350,6 @@ document.addEventListener("DOMContentLoaded", () => {
     const singlePreviewCard = document.getElementById("single-preview-card");
     const singlePreviewContainer = document.getElementById("single-preview-container");
     const singlePreviewFilename = document.getElementById("single-preview-filename");
-    const aiExtractBtn = document.getElementById("ai-extract-btn");
     const downloadWordBtn = document.getElementById("download-word-btn");
 
     // Age & Dates
@@ -1173,12 +1172,13 @@ document.addEventListener("DOMContentLoaded", () => {
                             currentOcrRawText = data.raw_text || [];
                             window.lastRawText = currentOcrRawText.join("\n");
                             checkCaseType(caseTypeSelect.value, window.lastRawText);
-                            if (aiExtractBtn) {
-                                if (currentOcrRawText.length > 0) {
-                                    aiExtractBtn.style.display = "inline-flex";
-                                } else {
-                                    aiExtractBtn.style.display = "none";
-                                }
+
+                            // Automatically run AI (LLM) extraction right after OCR completes —
+                            // no manual button needed. Heuristic suggestions are already applied
+                            // above; this refines/fills in anything the heuristics missed and
+                            // re-applies the merged result directly onto the form.
+                            if (currentOcrRawText.length > 0) {
+                                runAiRecovery(currentOcrRawText);
                             }
                             if (downloadWordBtn) {
                                 if (currentOcrRawText.length > 0) {
@@ -1497,15 +1497,8 @@ This cannot be undone.`)) return;
             if (matchedFile.suggestions) {
                 stopOcrTimerSuccess();
 
-                // Store raw text for AI data recovery if they want to click it manually later
+                // Store raw text for AI data recovery
                 currentOcrRawText = matchedFile.raw_text || [];
-                if (aiExtractBtn) {
-                    if (currentOcrRawText.length > 0) {
-                        aiExtractBtn.style.display = "inline-flex";
-                    } else {
-                        aiExtractBtn.style.display = "none";
-                    }
-                }
                 if (downloadWordBtn) {
                     if (currentOcrRawText.length > 0) {
                         downloadWordBtn.style.display = "inline-flex";
@@ -1558,9 +1551,6 @@ This cannot be undone.`)) return;
             window.lastRawText = currentOcrRawText.join("\n");
             checkCaseType(caseTypeSelect.value, window.lastRawText);
 
-            if (aiExtractBtn) {
-                aiExtractBtn.style.display = "inline-flex";
-            }
             if (downloadWordBtn) {
                 downloadWordBtn.style.display = "inline-flex";
             }
@@ -1714,10 +1704,43 @@ This cannot be undone.`)) return;
         }, 1500);
     }
 
+    // Converts a date string coming from OCR heuristics or the AI/LLM extractor
+    // (which may arrive as DD-MM-YYYY, DD/MM/YYYY, DD.MM.YYYY, or already as
+    // YYYY-MM-DD) into the exact "YYYY-MM-DD" shape required by
+    // <input type="date">. Browsers silently reject anything else, which is
+    // why dates would sometimes appear to "not fill" at all. Returns "" if
+    // the value can't be confidently parsed as a date.
+    function toHtmlDateValue(val) {
+        if (!val || typeof val !== "string") return "";
+        const trimmed = val.trim();
+
+        // Already ISO (YYYY-MM-DD) — pass through untouched.
+        if (/^\d{4}-\d{1,2}-\d{1,2}$/.test(trimmed)) {
+            const [y, m, d] = trimmed.split("-");
+            return `${y}-${m.padStart(2, "0")}-${d.padStart(2, "0")}`;
+        }
+
+        // DD-MM-YYYY, DD/MM/YYYY, or DD.MM.YYYY (day-first, standard in
+        // Indian legal documents).
+        const dmy = trimmed.match(/^(\d{1,2})[\-/.](\d{1,2})[\-/.](\d{4})$/);
+        if (dmy) {
+            const day = dmy[1].padStart(2, "0");
+            const month = dmy[2].padStart(2, "0");
+            const year = dmy[3];
+            return `${year}-${month}-${day}`;
+        }
+
+        return "";
+    }
+
     // Helper to populate fields based on active case type (Part 5 & Part 6)
     function populateFieldsForActiveCaseType() {
+        // Never bail out entirely just because a case type hasn't been
+        // resolved yet — the "common" fields below (name, DOB, age, income,
+        // accident date, place) apply to both injury and death cases and
+        // should always autofill. Only the case-specific extra fields
+        // (further below) stay gated on actually knowing injury vs death.
         const activeCaseType = caseTypeSelect.value;
-        if (!activeCaseType) return;
 
         // Clear all previous low-confidence warning labels, styles, and AI metadata badges again to refresh
         document.querySelectorAll(".verification-warning").forEach(el => el.remove());
@@ -1788,14 +1811,10 @@ This cannot be undone.`)) return;
 
             // Direct Auto-fill (no confidence gate / suggestion badge for other fields)
             if (inputId === "date-of-birth" || inputId === "date-of-accident") {
-                let htmlDate = val;
-                if (val.includes("-")) {
-                    const parts = val.split("-");
-                    if (parts.length === 3 && parts[2].length === 4) {
-                        htmlDate = `${parts[2]}-${parts[1]}-${parts[0]}`;
-                    }
+                const htmlDate = toHtmlDateValue(val);
+                if (htmlDate) {
+                    el.value = htmlDate;
                 }
-                el.value = htmlDate;
             } else {
                 el.value = val;
             }
@@ -2115,57 +2134,55 @@ This cannot be undone.`)) return;
     // AI DATA RECOVERY (LLM OPTIMIZED PARSING EXTRACTION)
     // ==========================================================================
     // AI DATA RECOVERY (LLM OPTIMIZED PARSING EXTRACTION) (Part 3, Part 4 & Part 5 integration)
-    if (aiExtractBtn) {
-        aiExtractBtn.addEventListener("click", async () => {
-            if (!currentOcrRawText || currentOcrRawText.length === 0) {
-                showToast("No raw OCR text available. Please upload a PDF first.", "warning");
-                return;
-            }
+    // Runs automatically right after every OCR completion (no manual button) —
+    // called from handleSinglePdfUpload's success branch below.
+    async function runAiRecovery(rawTextLines) {
+        if (!rawTextLines || rawTextLines.length === 0) return;
 
-            const formPanel = document.querySelector("#tab-calculator .panel.scroll-y");
-            const loader = document.createElement("div");
-            loader.className = "form-ocr-loader";
-            loader.innerHTML = `
-                <div class="spinner-glow"></div>
-                <p>AI Legal LLM is parsing text...</p>
-                <span style="font-size: 0.8rem; color: var(--text-secondary); opacity: 0.8;">Recovering missing legal compensation entities</span>
-            `;
+        const formPanel = document.querySelector("#tab-calculator .panel.scroll-y");
+        const loader = document.createElement("div");
+        loader.className = "form-ocr-loader";
+        loader.innerHTML = `
+            <div class="spinner-glow"></div>
+            <p>AI Legal LLM is refining extracted fields...</p>
+            <span style="font-size: 0.8rem; color: var(--text-secondary); opacity: 0.8;">Recovering missing legal compensation entities</span>
+        `;
+        if (formPanel) {
             formPanel.style.position = "relative";
             formPanel.appendChild(loader);
+        }
 
-            try {
-                const response = await fetch("/api/ocr/ai-recover", {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({ raw_text: currentOcrRawText })
-                });
+        try {
+            const response = await fetch("/api/ocr/ai-recover", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ raw_text: rawTextLines })
+            });
 
-                loader.remove();
+            loader.remove();
 
-                if (!response.ok) {
-                    const errData = await response.json().catch(() => ({}));
-                    const detail = errData.detail || "";
-                    if (response.status === 503 || detail.toLowerCase().includes("llm") || detail.toLowerCase().includes("unavailable") || detail.toLowerCase().includes("ollama")) {
-                        throw new Error(`LLM server unreachable. Is Ollama running with model ${detail || "qwen2.5:14b"}? Check backend logs.`);
-                    }
-                    throw new Error(detail || `Server error ${response.status}`);
-                }
-                const data = await response.json();
-
-                if (data.success) {
-                    const confidenceScores = data.raw_recovered ? data.raw_recovered.confidence_scores : null;
-                    const ocrEvidence = data.raw_recovered ? data.raw_recovered.ocr_evidence_case : null;
-                    applyAllOcrSuggestions(data.suggestions, confidenceScores, ocrEvidence, data.raw_recovered);
-                    showToast("AI data extraction complete! All recovered parameters cached internally.", "success");
-                } else {
-                    showToast("AI extraction failed to extract fields.", "error");
-                }
-            } catch (error) {
-                loader.remove();
-                console.error("AI recovery failed:", error);
-                showToast(`AI extraction failed: ${error.message}`, "error");
+            if (!response.ok) {
+                const errData = await response.json().catch(() => ({}));
+                const detail = errData.detail || "";
+                console.warn("Automatic AI extraction unavailable:", detail || response.status);
+                showToast("AI field refinement unavailable — heuristic OCR extraction is already applied.", "warning");
+                return;
             }
-        });
+            const data = await response.json();
+
+            if (data.success) {
+                const confidenceScores = data.raw_recovered ? data.raw_recovered.confidence_scores : null;
+                const ocrEvidence = data.raw_recovered ? data.raw_recovered.ocr_evidence_case : null;
+                applyAllOcrSuggestions(data.suggestions, confidenceScores, ocrEvidence, data.raw_recovered);
+                showToast("AI extraction complete — fields refined automatically.", "success");
+            } else {
+                showToast("AI extraction could not recover additional fields.", "warning");
+            }
+        } catch (error) {
+            loader.remove();
+            console.error("Automatic AI recovery failed:", error);
+            showToast("AI field refinement failed — heuristic OCR extraction is already applied.", "warning");
+        }
     }
 
     if (downloadWordBtn) {
@@ -3785,6 +3802,9 @@ This cannot be undone.`)) return;
         printBtn.addEventListener("click", () => { window.print(); });
     }
 });
+
+
+
 
 
 
