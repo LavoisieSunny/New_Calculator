@@ -1243,22 +1243,69 @@ def _is_real_boundary_text(text, period_idx):
 def _split_into_sentences_or_points(text):
     if not text:
         return []
-    boundary_positions = [0]
-    for m in re.finditer(r'[.;]\s+|\n{2,}', text):
-        pos = m.start()
-        if text[pos] == '.' and not _is_real_boundary_text(text, pos):
+    
+    # First split by lines and construct list items intelligently
+    lines = text.split('\n')
+    points = []
+    current_point = ""
+    
+    for line in lines:
+        line = line.strip()
+        if not line:
+            if current_point:
+                points.append(current_point)
+                current_point = ""
             continue
-        boundary_positions.append(m.end())
-    boundary_positions.append(len(text))
-
-    clauses = []
-    for i in range(len(boundary_positions) - 1):
-        clause = text[boundary_positions[i]:boundary_positions[i+1]].strip()
-        if clause:
-            # Clean up internal linebreaks
-            clause = re.sub(r'\s+', ' ', clause)
-            clauses.append(clause)
-    return clauses
+        
+        is_new_bullet = False
+        if not current_point:
+            is_new_bullet = True
+        else:
+            # Check if this line starts a new bullet/point (e.g. "1.", "A.", "(i)", bullet character, or follows a period)
+            has_marker = re.match(r'^(?:[0-9]{1,2}|[A-Za-z]{1,2})\s*[\.\)]', line) or \
+                         re.match(r'^\([0-9A-Za-z]{1,2}\)', line) or \
+                         line.startswith(('•', '-', '*'))
+            
+            ends_with_boundary = current_point.endswith(('.', ';', '!', '?'))
+            
+            if has_marker or ends_with_boundary:
+                is_new_bullet = True
+            elif line[0].isupper():
+                # Conjunctions / prepositions / articles connector check
+                last_word_match = re.search(r'\b(\w+)$', current_point)
+                last_word = last_word_match.group(1).lower() if last_word_match else ""
+                if last_word in ('and', 'or', 'of', 'to', 'the', 'a', 'in', 'on', 'with', 'for', 'at', 'by'):
+                    is_new_bullet = False
+                else:
+                    is_new_bullet = True
+        
+        if is_new_bullet:
+            if current_point:
+                points.append(current_point)
+            current_point = line
+        else:
+            current_point = current_point + " " + line
+            
+    if current_point:
+        points.append(current_point)
+        
+    final_clauses = []
+    for pt in points:
+        boundary_positions = [0]
+        for m in re.finditer(r'[.;]\s+', pt):
+            pos = m.start()
+            if pt[pos] == '.' and not _is_real_boundary_text(pt, pos):
+                continue
+            boundary_positions.append(m.end())
+        boundary_positions.append(len(pt))
+        
+        for i in range(len(boundary_positions) - 1):
+            clause = pt[boundary_positions[i]:boundary_positions[i+1]].strip()
+            if clause:
+                clause = re.sub(r'\s+', ' ', clause)
+                final_clauses.append(clause)
+                
+    return final_clauses
 
 
 def _extract_matching_points(text, verdict_type):

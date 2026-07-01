@@ -462,32 +462,37 @@
 
                             <!-- Buttons -->
                             <div class="form-actions hidden-section" id="form-actions-bar">
+                                <button type="button" id="enhancement-btn" class="btn btn-secondary" style="display: none; border-color: var(--warning); color: var(--warning); font-weight: 600;"><i class="fa-solid fa-gavel"></i> Enhancement Check</button>
                                 <button type="button" id="reset-btn" class="btn btn-secondary"><i class="fa-solid fa-rotate-right"></i> Reset</button>
                                 <button type="submit" id="calculate-btn" class="btn btn-primary"><i class="fa-solid fa-calculator"></i> Calculate</button>
                             </div>
                         </form>
+
+                        <!-- Unified Enhancement Check Page Card -->
+                        <div class="card hidden-section" id="enhancement-check-main-card" style="margin-top: 20px; border: 1px solid var(--border-color); background: rgba(15, 23, 42, 0.01);">
+                            <div class="card-header" style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--border-color); padding: 12px 16px;">
+                                <h3 style="margin: 0; font-size: 1.05rem; display: flex; align-items: center; gap: 8px; font-family: 'Outfit', sans-serif;">
+                                    <i class="fa-solid fa-gavel text-glow" style="color: var(--color-warning);"></i> Enhancement & Reduction Check
+                                </h3>
+                                <span class="badge tech-badge" id="enhancement-verdict-confidence" style="display: none;">—</span>
+                            </div>
+                            <div class="card-body" id="enhancement-check-main-body" style="padding: 16px; display: flex; flex-direction: column; gap: 16px;">
+                                <div class="empty-state" style="text-align: center; padding: 20px 10px; opacity: 0.6;">
+                                    <i class="fa-solid fa-circle-question" style="font-size: 2rem; color: var(--color-primary); margin-bottom: 8px; display: block;"></i>
+                                    <p style="margin: 0; font-size: 0.85rem; font-weight: 500;">No PDF Processed Yet</p>
+                                    <p style="margin: 4px 0 0 0; font-size: 0.75rem; color: var(--text-muted);">
+                                        Upload a PDF to view the Grounds of Appeal and Relief/Prayer clauses in bullet form.
+                                    </p>
+                                </div>
+                            </div>
+                        </div>
                     </div>
 
                     <!-- Right: Dynamic Legal Precedents & Live Preview -->
                     <div class="panel" id="calculator-right-pane" style="position: relative; display: flex; flex-direction: column; padding: 0; gap: 0; overflow: hidden; height: 100%;">
                         
-                        <!-- Right Pane Tabs Navigator -->
-                        <!-- Secondary Right Workspace Panel Navigation Tabs
-                             Toggle visibility of preview, database benchmarking, metrics, and quality inspector tabs. -->
-                        <div class="right-pane-tabs" id="right-pane-tabs" style="height: 44px; border-bottom: 1px solid var(--border-color); padding: 0 16px; display: flex; align-items: center; gap: 8px; background: var(--bg-card); flex-shrink: 0;">
-                            <!-- PDF Viewer Preview Panel -->
-                            <button type="button" class="pane-tab-btn active" data-pane-tab="pdf" style="background: rgba(11, 58, 114, 0.06); border: 1px solid rgba(11, 58, 114, 0.25); color: var(--color-primary); padding: 6px 12px; border-radius: var(--radius-sm); font-family: 'Outfit', sans-serif; font-size: 0.8rem; font-weight: 600; cursor: pointer; display: flex; align-items: center; gap: 6px; transition: all var(--transition-fast);">
-                                <i class="fa-solid fa-file-pdf" style="color: var(--color-danger);"></i> PDF Preview
-                            </button>
-                            <!-- Qdrant Precedents Database comparison and similarity scoring -->
-                            <button type="button" class="pane-tab-btn" data-pane-tab="benchmarking" style="background: transparent; border: 1px solid transparent; color: var(--text-secondary); padding: 6px 12px; border-radius: var(--radius-sm); font-family: 'Outfit', sans-serif; font-size: 0.8rem; font-weight: 600; cursor: pointer; display: flex; align-items: center; gap: 6px; transition: all var(--transition-fast); position: relative;">
-                                <i class="fa-solid fa-scale-balanced" style="color: var(--color-primary);"></i> Benchmarking
-                                <span id="benchmarking-tab-dot" class="notification-dot hidden"></span>
-                            </button>
-                        </div>
-
                         <!-- Tab 1 Content: PDF Preview -->
-                        <div id="pane-tab-pdf-content" class="pane-tab-content active" style="flex: 1; display: flex; flex-direction: column; height: calc(100% - 44px); overflow: hidden; margin: 0; padding: 0;">
+                        <div id="pane-tab-pdf-content" class="pane-tab-content active" style="flex: 1; display: flex; flex-direction: column; height: 100%; overflow: hidden; margin: 0; padding: 0;">
                             <!-- High-Fidelity PDF Preview Panel -->
                             <div class="card preview-card" id="single-preview-card" style="height: 100%; width: 100%; display: flex; flex-direction: column; margin: 0; padding: 0; border: none; box-shadow: none; background: transparent; flex: 1; overflow: hidden;">
                                 <div class="card-header" style="height: 40px; padding: 0 16px; border-bottom: 1px solid var(--border-color); display: flex; justify-content: space-between; align-items: center; margin: 0; flex-shrink: 0; background: var(--bg-panel);">
@@ -510,88 +515,7 @@
                             </div>
                         </div>
 
-                        <!-- Tab 2 Content: Benchmarking (now includes former Analysis & Metrics cards) -->
-                        <div id="pane-tab-benchmarking-content" class="pane-tab-content hidden" style="flex: 1; display: flex; flex-direction: column; gap: 20px; padding: 20px; overflow-y: auto; height: calc(100% - 44px);">
-                            <!-- Precedent Benchmarking Card -->
-                            <div class="card hidden-section" id="evaluator-card">
-                                <div class="card-header" style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid rgba(255, 255, 255, 0.05); padding-bottom: 10px;">
-                                    <h3 style="margin: 0;"><i class="fa-solid fa-scale-balanced text-glow"></i> Precedent Benchmarking</h3>
-                                    <button type="button" id="trigger-eval-btn" class="btn btn-small btn-primary" style="padding: 6px 12px; font-size: 0.78rem;" disabled>
-                                        <i class="fa-solid fa-wand-magic-sparkles"></i> Benchmark Precedents
-                                    </button>
-                                </div>
-                                <div class="card-body" id="evaluator-card-body" style="padding-top: 12px; color: var(--text-secondary); font-size: 0.85rem;">
-                                    <div class="empty-state" style="text-align: center; padding: 15px; opacity: 0.6;">
-                                        <i class="fa-solid fa-gavel" style="font-size: 2rem; color: var(--color-primary); margin-bottom: 8px; display: block;"></i>
-                                        Awaiting compensation calculation to perform comparative benchmarking against Qdrant database precedents.
-                                    </div>
-                                </div>
-                            </div>
 
-                            <!-- Live Metrics Preview Card (moved from former Analysis & Metrics tab) -->
-                            <div class="card hidden-section" id="live-metrics-card">
-                                <div class="card-header">
-                                    <h3><i class="fa-solid fa-chart-simple text-glow"></i> Live Metrics Preview</h3>
-                                    <span class="badge tech-badge">Active</span>
-                                </div>
-                                <div class="metrics-grid">
-                                    <div class="metric-item">
-                                        <span class="label">Age</span>
-                                        <span class="value" id="live-age">—</span>
-                                    </div>
-                                    <div class="metric-item">
-                                        <span class="label">Multiplier</span>
-                                        <span class="value" id="live-multiplier">—</span>
-                                    </div>
-                                    <div class="metric-item full-width" id="live-prospects-item">
-                                        <span class="label">Future Prospects</span>
-                                        <div style="display: flex; align-items: center; gap: 10px; margin-top: 4px;">
-                                            <div class="progress-bar-wrapper" style="flex: 1;">
-                                                <div id="live-prospects-bar" class="progress-bar-fill" style="width: 0%;"></div>
-                                            </div>
-                                            <span class="value" id="live-prospects" style="font-size: 0.95rem; font-weight: 700; min-width: 40px; text-align: right;">—%</span>
-                                        </div>
-                                    </div>
-                                    <div class="metric-item full-width" id="live-deductions-item">
-                                        <span class="label">Personal Deductions</span>
-                                        <div style="display: flex; align-items: center; gap: 10px; margin-top: 4px;">
-                                            <div class="progress-bar-wrapper" style="flex: 1;">
-                                                <div id="live-deductions-bar" class="progress-bar-fill bg-danger" style="width: 0%;"></div>
-                                            </div>
-                                            <span class="value" id="live-deductions" style="font-size: 0.95rem; font-weight: 700; min-width: 40px; text-align: right;">—%</span>
-                                        </div>
-                                    </div>
-                                </div>
-                            </div>
-
-                            <!-- AI Legal Judgment Summary Card (moved from former Analysis & Metrics tab) -->
-                            <div class="card hidden-section" id="legal-ai-summary-card">
-                                <div class="card-header">
-                                    <h3><i class="fa-solid fa-brain-circuit text-purple"></i> AI Legal Judgment Summary</h3>
-                                    <span class="badge tech-badge">AI Analysis</span>
-                                </div>
-                                <div class="card-body" id="legal-ai-summary-body" style="padding-top: 12px; display: flex; flex-direction: column; gap: 14px;">
-                                    <div class="empty-summary-state" style="display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; opacity: 0.5; padding: 20px 0;">
-                                        <i class="fa-solid fa-gavel" style="font-size: 2.5rem; color: #c084fc;"></i>
-                                        <p style="font-size: 0.8rem; color: var(--text-secondary); text-align: center; margin: 0;">Upload a PDF to see the structured legal analysis summary and judicial anomaly checklist.</p>
-                                    </div>
-                                </div>
-                            </div>
-
-                            <!-- Extracted Compensation Table Card (moved from former Analysis & Metrics tab) -->
-                            <div class="card hidden-section" id="compensation-table-card">
-                                <div class="card-header">
-                                    <h3><i class="fa-solid fa-table-list text-green"></i> Judicial Compensation Heads</h3>
-                                    <span class="badge tech-badge">OCR Extract</span>
-                                </div>
-                                <div class="card-body" id="compensation-table-body" style="padding-top: 12px;">
-                                    <div class="empty-table-state" style="display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; opacity: 0.5; padding: 20px 0;">
-                                        <i class="fa-solid fa-table-list" style="font-size: 2.5rem; color: #34d399;"></i>
-                                        <p style="font-size: 0.8rem; color: var(--text-secondary); text-align: center; margin: 0;">Upload a PDF to view the detailed breakdown of the judicial award heads.</p>
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
 
 
 

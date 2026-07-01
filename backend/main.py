@@ -38,14 +38,15 @@ async def startup_event():
     except Exception as e:
         logger.error(f"Startup check failed: {str(e)}")
 
-    # Warm up PaddleOCR — isolated so failure never blocks Ollama/Qdrant
-    try:
-        logger.info("Warming up PaddleOCR singleton...")
-        from backend.ocr import get_ocr_instance
-        await asyncio.to_thread(get_ocr_instance)
-        logger.info("PaddleOCR warm-up complete.")
-    except Exception as e:
-        logger.error(f"PaddleOCR warm-up failed (non-fatal): {str(e)}")
+    # Warm up PaddleOCR — commented out eager warm-up to avoid startup crashes.
+    # It will initialize lazily on the first PDF upload.
+    # try:
+    #     logger.info("Warming up PaddleOCR singleton...")
+    #     from backend.ocr import get_ocr_instance
+    #     get_ocr_instance()
+    #     logger.info("PaddleOCR warm-up complete.")
+    # except Exception as e:
+    #     logger.error(f"PaddleOCR warm-up failed (non-fatal): {str(e)}")
 
 app.add_middleware(
     CORSMiddleware,

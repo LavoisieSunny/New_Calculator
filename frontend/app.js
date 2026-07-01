@@ -1212,11 +1212,18 @@ document.addEventListener("DOMContentLoaded", () => {
                             if (liveMetricsCard) liveMetricsCard.classList.add("show");
                             if (evaluatorCard) evaluatorCard.classList.add("show");
 
-                            updateEnhancementCheck(data);
-
-                            if (typeof triggerTabNotification === "function") {
-                                triggerTabNotification("benchmarking");
+                            // Show the enhancement check button and card
+                            const enhancementBtn = document.getElementById("enhancement-btn");
+                            if (enhancementBtn) {
+                                enhancementBtn.style.display = "inline-flex";
                             }
+                            const mainCard = document.getElementById("enhancement-check-main-card");
+                            if (mainCard) {
+                                mainCard.classList.remove("hidden-section");
+                                mainCard.classList.add("show");
+                            }
+
+                            updateEnhancementCheck(data);
 
                             showToast("Case PDF analyzed! Form auto-filled focusing on Previous Judgment, Petition, and Prayer details. Please manually review fields.", "success");
                         } else {
@@ -2502,43 +2509,45 @@ This cannot be undone.`)) return;
             `;
         });
 
-        evaluatorCardBody.innerHTML = `
-            <!-- Hero comparative stats -->
-            <div class="eval-hero">
-                <div class="eval-stats">
-                    <span class="label">Calculated Award</span>
-                    <span class="value">Rs. ${evalData.calculated_amount.toLocaleString('en-IN')}</span>
+        if (evaluatorCardBody) {
+            evaluatorCardBody.innerHTML = `
+                <!-- Hero comparative stats -->
+                <div class="eval-hero">
+                    <div class="eval-stats">
+                        <span class="label">Calculated Award</span>
+                        <span class="value">Rs. ${evalData.calculated_amount.toLocaleString('en-IN')}</span>
+                    </div>
+                    <div class="eval-stats" style="text-align: right;">
+                        <span class="label">Precedent Avg</span>
+                        <span class="value" style="color: var(--text-secondary)">Rs. ${evalData.average_precedent_award.toLocaleString('en-IN')}</span>
+                    </div>
                 </div>
-                <div class="eval-stats" style="text-align: right;">
-                    <span class="label">Precedent Avg</span>
-                    <span class="value" style="color: var(--text-secondary)">Rs. ${evalData.average_precedent_award.toLocaleString('en-IN')}</span>
+
+                <!-- Alignment and margin -->
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 10px;">
+                    <span class="card-text">Award Margin: <strong>${evalData.margin_percent > 0 ? '+' : ''}${evalData.margin_percent}%</strong></span>
+                    ${alignLabels[evalData.alignment] || ""}
                 </div>
-            </div>
 
-            <!-- Alignment and margin -->
-            <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 10px;">
-                <span class="card-text">Award Margin: <strong>${evalData.margin_percent > 0 ? '+' : ''}${evalData.margin_percent}%</strong></span>
-                ${alignLabels[evalData.alignment] || ""}
-            </div>
+                <!-- Legal recommendation -->
+                <div class="eval-desc">
+                    <strong><i class="fa-solid fa-gavel"></i> Legal Opinion:</strong><br>
+                    ${evalData.recommendation}
+                </div>
 
-            <!-- Legal recommendation -->
-            <div class="eval-desc">
-                <strong><i class="fa-solid fa-gavel"></i> Legal Opinion:</strong><br>
-                ${evalData.recommendation}
-            </div>
+                <!-- Legal Argument briefs -->
+                <div class="eval-desc" style="background: rgba(186, 104, 200, 0.02); border-color: rgba(186, 104, 200, 0.12); margin-top: 8px;">
+                    <strong><i class="fa-solid fa-scroll"></i> Court Brief Argument:</strong><br>
+                    <em>"${evalData.claimant_argument}"</em>
+                </div>
 
-            <!-- Legal Argument briefs -->
-            <div class="eval-desc" style="background: rgba(186, 104, 200, 0.02); border-color: rgba(186, 104, 200, 0.12); margin-top: 8px;">
-                <strong><i class="fa-solid fa-scroll"></i> Court Brief Argument:</strong><br>
-                <em>"${evalData.claimant_argument}"</em>
-            </div>
-
-            <!-- Retrieved precedent list -->
-            <div style="margin-top: 14px;">
-                <span class="metric-label">Matching Cases Indexed (Qdrant)</span>
-                ${precedentsHtml}
-            </div>
-        `;
+                <!-- Retrieved precedent list -->
+                <div style="margin-top: 14px;">
+                    <span class="metric-label">Matching Cases Indexed (Qdrant)</span>
+                    ${precedentsHtml}
+                </div>
+            `;
+        }
 
         if (typeof triggerTabNotification === "function") {
             triggerTabNotification("benchmarking");
@@ -3119,8 +3128,18 @@ This cannot be undone.`)) return;
             }
         }
 
-        triggerEvalBtn.disabled = true;
+        if (triggerEvalBtn) triggerEvalBtn.disabled = true;
         currentCalculationAmount = 0;
+
+        const enhancementBtn = document.getElementById("enhancement-btn");
+        if (enhancementBtn) {
+            enhancementBtn.style.display = "none";
+        }
+        const mainCard = document.getElementById("enhancement-check-main-card");
+        if (mainCard) {
+            mainCard.classList.remove("show");
+            mainCard.classList.add("hidden-section");
+        }
 
         const enhancementMainBody = document.getElementById("enhancement-check-main-body");
         const enhancementConfBadge = document.getElementById("enhancement-verdict-confidence");
@@ -3130,16 +3149,32 @@ This cannot be undone.`)) return;
         }
         if (enhancementMainBody) {
             enhancementMainBody.innerHTML = `
-                <div class="empty-state" style="text-align: center; padding: 40px 15px; opacity: 0.6;">
-                    <i class="fa-solid fa-circle-question" style="font-size: 2.5rem; color: var(--color-primary); margin-bottom: 12px; display: block;"></i>
-                    <p style="margin: 0; font-size: 0.95rem; font-weight: 500;">No PDF Processed Yet</p>
-                    <p style="margin: 4px 0 0 0; font-size: 0.8rem; color: var(--text-muted);">
+                <div class="empty-state" style="text-align: center; padding: 20px 10px; opacity: 0.6;">
+                    <i class="fa-solid fa-circle-question" style="font-size: 2rem; color: var(--color-primary); margin-bottom: 8px; display: block;"></i>
+                    <p style="margin: 0; font-size: 0.85rem; font-weight: 500;">No PDF Processed Yet</p>
+                    <p style="margin: 4px 0 0 0; font-size: 0.75rem; color: var(--text-muted);">
                         Upload a PDF to view the Grounds of Appeal and Relief/Prayer clauses in bullet form.
                     </p>
                 </div>
             `;
         }
     });
+
+    // --- ENHANCEMENT CHECK BUTTON SCROLL ACTION ---
+    const enhancementBtnEl = document.getElementById("enhancement-btn");
+    if (enhancementBtnEl) {
+        enhancementBtnEl.addEventListener("click", () => {
+            const targetCard = document.getElementById("enhancement-check-main-card");
+            if (targetCard) {
+                targetCard.scrollIntoView({ behavior: "smooth" });
+                targetCard.style.transition = "box-shadow 0.3s ease";
+                targetCard.style.boxShadow = "0 0 20px rgba(245, 158, 11, 0.4)";
+                setTimeout(() => {
+                    targetCard.style.boxShadow = "";
+                }, 1500);
+            }
+        });
+    }
 
     // ==========================================================================
     const slideover = document.getElementById("right-slideover");
