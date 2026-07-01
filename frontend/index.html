@@ -1,0 +1,985 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Compensation Calculator & Centralized Qdrant Vector DB</title>
+    
+    <!-- Typography: Google Fonts setup for headings (Outfit) and body (Inter) -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Outfit:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    
+    <!-- Legal and Workstation Icons: FontAwesome CDN link -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    
+    <!-- Custom Application Styling (style.css) -->
+    <link rel="stylesheet" href="style.css?v=2.0.0">
+</head>
+<body>
+    
+    <!-- Glowing background elements commented out for clean judicial aesthetic -->
+    <!-- <div class="bg-glow bg-glow-1"></div>
+    <div class="bg-glow bg-glow-2"></div> -->
+
+    <div class="app-layout">
+        
+        <!-- ==========================================
+             VERTICAL NAVIGATION SIDEBAR
+             ========================================== -->
+        <aside class="app-sidebar">
+            <div class="sidebar-brand">
+                <i class="fa-solid fa-gavel brand-icon"></i>
+                <div class="brand-text">
+                    <h1>COMPENSATION</h1>
+                    <span>Calculator</span>
+                </div>
+            </div>
+            
+            <!-- Sidebar Navigation Links
+                 Each item toggles a viewport layout tab via JavaScript routing.
+                 data-tab attribute maps to the container viewport IDs. -->
+            <nav class="sidebar-nav">
+                <!-- Tab button: Calculator workstation screen -->
+                <button type="button" class="nav-item active" data-tab="calculator">
+                    <i class="fa-solid fa-calculator-simple"></i>
+                    <span>Workstation</span>
+                </button>
+                <!-- Tab button: Batch PDF Library page and database upload manager -->
+                <button type="button" class="nav-item" data-tab="library">
+                    <i class="fa-solid fa-folder-open"></i>
+                    <span>PDF Library</span>
+                    <span id="queue-badge" class="badge sidebar-badge hidden">0</span>
+                </button>
+                <!-- Tab button: AI Legal Search & chat screen -->
+                <button type="button" class="nav-item" data-tab="chat">
+                    <i class="fa-solid fa-comments"></i>
+                    <span>AI Precedent Chat</span>
+                </button>
+                <!-- Tab button: Qdrant DB point and collections viewer -->
+                <button type="button" class="nav-item" data-tab="qdrant">
+                    <i class="fa-solid fa-database"></i>
+                    <span>Qdrant DB Explorer</span>
+                </button>
+            </nav>
+
+            <div class="sidebar-footer">
+                <div class="db-status">
+                    <span class="status-dot"></span>
+                    <span id="db-status-text">Centralized Qdrant: Connecting...</span>
+                </div>
+            </div>
+        </aside>
+
+        <!-- ==========================================
+             MAIN CONTENT WORKSPACE
+             ========================================== -->
+        <div class="main-container">
+            
+            <!-- Global Header Section
+                 Displays current tab viewport title and real-time backend/OCR status telemetry -->
+            <header class="main-header">
+                <div class="header-title">
+                    <div style="display: flex; align-items: center; gap: 12px;">
+                        <!-- Heading text is updated dynamically in Javascript to reflect current navigation -->
+                        <h2 id="tab-title-text" style="margin: 0;">Compensation Workstation</h2>
+                        <!-- Header OCR Timer Badge: Telemetry metric for process durations -->
+                        <span class="header-badge" id="header-ocr-timer-badge" style="display: inline-flex; align-items: center; gap: 6px; font-family: monospace; font-weight: 700; color: var(--text-secondary); background: rgba(15, 23, 42, 0.04); border: 1px solid var(--border-glass);">
+                            <span>⏱</span>
+                            <span id="header-ocr-timer-elapsed">Ready</span>
+                        </span>
+                    </div>
+                    <!-- Connection and Server Status display -->
+                    <div style="display: flex; align-items: center; gap: 10px;">
+                        <span class="header-badge" id="server-badge">
+                            <span class="pulse-indicator active"></span>
+                            <span id="server-status">Connecting Backend...</span>
+                        </span>
+                    </div>
+                </div>
+            </header>
+
+            <!-- TAB 1: WORKSTATION & DYNAMIC CALCULATOR -->
+            <div id="tab-calculator" class="tab-viewport active-viewport">
+                <div class="workspace-grid split-55-45">
+                    
+                    <!-- Left: Dynamic Input Form -->
+                    <div class="panel scroll-y">
+                        <div class="panel-header">
+                            <h3><i class="fa-solid fa-file-invoice-dollar text-glow"></i> Case parameters</h3>
+                            <p class="panel-subtitle">Select Injury or Death case type. Fields marked with red asterisk (<span class="req">*</span>) are mandatory.</p>
+                        </div>
+                        
+                        <form id="compensation-form" class="compensation-form">
+                            <!-- Case Type Selector
+                                 Triggers display toggle for Injury or Death custom forms below. -->
+                            <div class="form-group selector-group">
+                                <label for="case-type" class="main-label">Type of Case <span class="req">*</span></label>
+                                <div class="select-wrapper">
+                                    <select id="case-type" name="case_type" required>
+                                        <option value="" disabled selected>-- Select Injury or Death --</option>
+                                        <option value="injury">Injury Case</option>
+                                        <option value="death">Death Case</option>
+                                    </select>
+                                    <i class="fa-solid fa-chevron-down select-arrow"></i>
+                                </div>
+                            </div>
+
+                            <!-- Case Type Suggestion Panel (Issue 2)
+                                 Dynamically visible container populated with machine classifier recommendations. -->
+                            <div id="case-type-suggestion" class="case-type-suggestion-container hidden-section"></div>
+
+                            <!-- Single PDF Drag & Drop Uploader (shown after case type selection)
+                                 Directly feeds a PDF judgment or claim sheet into the local PaddleOCR pipeline. -->
+                            <div id="single-upload-section" class="form-group full-width hidden-section">
+                                <label class="main-label">Upload Case PDF for AI Auto-Fill</label>
+                                <div id="single-drop-zone" class="single-drop-zone">
+                                    <div class="single-drop-zone-content">
+                                        <i class="fa-solid fa-file-pdf single-drop-icon" style="color: var(--color-danger); font-size: 2.2rem; margin-bottom: 8px;"></i>
+                                        <p class="single-drop-title">Drag & Drop case PDF here or click to browse</p>
+                                        <p class="single-drop-subtitle">Runs PaddleOCR to autofill previous judgment, petition, and prayer details</p>
+                                        <span class="btn btn-small btn-secondary" style="margin-top: 6px;">Select Document</span>
+                                        <input type="file" id="single-file-input" accept="application/pdf" style="display: none;">
+                                    </div>
+                                </div>
+                                
+                                <!-- Premium Live OCR Timer Container
+                                     Tracks and monitors real-time text extraction latency inside the workstation. -->
+                                <div id="ocr-timer-container" class="ocr-timer-container" style="margin-top: 12px; padding: 12px 16px; border-radius: var(--radius-sm); border: 1px solid var(--border-color); background: var(--bg-panel); display: flex; align-items: center; justify-content: space-between; gap: 12px;">
+                                    <div style="display: flex; align-items: center; gap: 8px;">
+                                        <span id="ocr-timer-status-icon" style="display: inline-flex; align-items: center; justify-content: center;"><i class="fa-solid fa-clock" style="color: var(--color-primary);"></i></span>
+                                        <span id="ocr-timer-status-text" style="font-weight: 500; font-size: 0.85rem; color: var(--text-secondary);">Ready for upload</span>
+                                    </div>
+                                    <div style="display: flex; align-items: center; gap: 6px; font-family: monospace; font-size: 0.95rem; font-weight: 700; color: var(--text-secondary);">
+                                        <span id="ocr-timer-clock-icon">⏱</span>
+                                        <span id="ocr-timer-elapsed">Ready</span>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- Common Information Container (Active for both injury and death categories) -->
+                            <div id="shared-fields" class="form-grid hidden-section">
+                                <div class="section-divider full-width">
+                                    <span><i class="fa-solid fa-user"></i> Claimant Details</span>
+                                </div>
+
+                                <!-- Claimant Name -->
+                                <div class="form-group">
+                                    <label for="name">Name <span class="req">*</span></label>
+                                    <div class="input-icon-wrapper">
+                                        <i class="fa-solid fa-user-tie field-icon"></i>
+                                        <input type="text" id="name" name="name" placeholder="Enter name" required>
+                                    </div>
+                                </div>
+
+                                <!-- Father/Husband Guardian Name -->
+                                <div class="form-group">
+                                    <label for="father-name">Father / Husband Name</label>
+                                    <div class="input-icon-wrapper">
+                                        <i class="fa-solid fa-users field-icon"></i>
+                                        <input type="text" id="father-name" name="father_name" placeholder="Enter name">
+                                    </div>
+                                </div>
+
+                                <!-- Date of Birth (Optional helper input for age deduction) -->
+                                <div class="form-group">
+                                    <label for="date-of-birth">Date of Birth</label>
+                                    <div class="input-icon-wrapper">
+                                        <i class="fa-solid fa-cake-candles field-icon"></i>
+                                        <input type="date" id="date-of-birth" name="date_of_birth">
+                                    </div>
+                                </div>
+
+                                <!-- Date of Accident (Used for calculating interest or relative age timeline) -->
+                                <div class="form-group">
+                                    <label for="date-of-accident">Date of Accident <span class="req">*</span></label>
+                                    <div class="input-icon-wrapper">
+                                        <i class="fa-solid fa-calendar-days field-icon"></i>
+                                        <input type="date" id="date-of-accident" name="date_of_accident" required>
+                                    </div>
+                                </div>
+
+                                <!-- Accident Location Place -->
+                                <div class="form-group">
+                                    <label for="place-of-accident">Place of Accident</label>
+                                    <div class="input-icon-wrapper">
+                                        <i class="fa-solid fa-location-dot field-icon"></i>
+                                        <input type="text" id="place-of-accident" name="place_of_accident" placeholder="e.g. NH-3 or Bypass Road">
+                                    </div>
+                                </div>
+
+                                <!-- Claimant Age: Essential metric to choose multipliers and prospects percent -->
+                                <div class="form-group highlighted-group">
+                                    <label for="age">Age <span class="req">*</span></label>
+                                    <div class="input-icon-wrapper">
+                                        <i class="fa-solid fa-hourglass-half field-icon"></i>
+                                        <input type="number" id="age" name="age" placeholder="Enter age or extract" required>
+                                    </div>
+                                </div>
+
+                                <!-- Monthly Income value: Used as baseline salary for formula multiplication -->
+                                <div class="form-group">
+                                    <label for="monthly-income">Monthly Income (Rs.) <span class="req">*</span></label>
+                                    <div class="input-icon-wrapper">
+                                        <i class="fa-solid fa-indian-rupee-sign field-icon"></i>
+                                        <input type="number" id="monthly-income" name="monthly_income" step="any" min="0" placeholder="e.g. 25000" required>
+                                    </div>
+                                </div>
+
+                                <!-- Number of Dependents: Deduces standard percent deduction for self expenses.
+                                     Only relevant for a Married deceased — shown/required dynamically by app.js -->
+                                <div class="form-group" id="dependents-group">
+                                    <label for="dependents" id="label-dependents">Number of Dependents <span class="req">*</span></label>
+                                    <div class="input-icon-wrapper">
+                                        <i class="fa-solid fa-people-roof field-icon"></i>
+                                        <input type="number" id="dependents" name="dependents" min="2" placeholder="e.g. 3">
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- DEATH PARAMETERS
+                                 Active fields mapping to Sarla Verma & Pranay Sethi compensation rules for fatal claims. -->
+                            <div id="death-fields" class="form-grid hidden-section">
+                                <div class="section-divider full-width">
+                                    <span><i class="fa-solid fa-ribbon"></i> Death Parameters</span>
+                                </div>
+
+                                <!-- Claimant Relationship Display -->
+                                <div class="form-group full-width">
+                                    <label for="claimant-relationship-display">Claimant Name & Relationship</label>
+                                    <div class="input-icon-wrapper disabled">
+                                        <i class="fa-solid fa-user-group field-icon"></i>
+                                        <input type="text" id="claimant-relationship-display" readonly placeholder="No claimant extracted">
+                                    </div>
+                                </div>
+
+                                <!-- Marital status: Factors into dependent deductions logic -->
+                                <div class="form-group">
+                                    <label for="marital-status">Marital Status <span class="req">*</span></label>
+                                    <div class="select-wrapper">
+                                        <select id="marital-status" name="marital_status">
+                                            <option value="married" selected>Married</option>
+                                            <option value="single">Single / Bachelor</option>
+                                        </select>
+                                        <i class="fa-solid fa-chevron-down select-arrow"></i>
+                                    </div>
+                                </div>
+
+                                <!-- Future Prospects category (Permanent, Self-Employed, Daily Wage etc.) -->
+                                <div class="form-group">
+                                    <label for="future-type">Future Prospects Type <span class="req">*</span></label>
+                                    <div class="select-wrapper">
+                                        <select id="future-type" name="future_type">
+                                            <option value="1">Permanent Job (with increments)</option>
+                                            <option value="2" selected>Self Employed / Fixed Salary</option>
+                                        </select>
+                                        <i class="fa-solid fa-chevron-down select-arrow"></i>
+                                    </div>
+                                </div>
+
+                                <!-- Future prospects percentage addition (Calculated via Age and Job Type) -->
+                                <div class="form-group highlighted-group">
+                                    <label for="future-prospect">Future Prospects (%) <span class="req">*</span></label>
+                                    <div class="input-icon-wrapper disabled">
+                                        <i class="fa-solid fa-chart-line field-icon"></i>
+                                        <input type="number" id="future-prospect" name="future_prospect" readonly placeholder="Auto-calculated">
+                                    </div>
+                                </div>
+
+                                <!-- Age-based multiplier coefficient derived from standard Sarla Verma schedule (Read-only) -->
+                                <div class="form-group highlighted-group">
+                                    <label for="death-multiplier">Multiplier <span class="req">*</span></label>
+                                    <div class="input-icon-wrapper disabled">
+                                        <i class="fa-solid fa-scale-unbalanced field-icon"></i>
+                                        <input type="number" id="death-multiplier" name="multiplier" readonly placeholder="Auto-calculated">
+                                    </div>
+                                </div>
+
+                                <!-- Deduction percentage for personal expenses of deceased (Read-only) -->
+                                <div class="form-group highlighted-group">
+                                    <label for="death-deduction">Deduction % <span class="req">*</span></label>
+                                    <div class="input-icon-wrapper disabled">
+                                        <i class="fa-solid fa-percent field-icon"></i>
+                                        <input type="number" id="death-deduction" name="deduction_percentage" readonly placeholder="Auto-calculated">
+                                    </div>
+                                </div>
+
+                                <!-- Loss of Consortium (single field - loc in PHP, matching original claim.php) -->
+                                <div class="form-group">
+                                    <label for="consortium">Loss of consortium (Rs.)</label>
+                                    <div class="input-icon-wrapper">
+                                        <i class="fa-solid fa-heart field-icon"></i>
+                                        <input type="number" id="consortium" name="consortium" value="40000" placeholder="40000">
+                                    </div>
+                                </div>
+
+                                <!-- Funeral Expenses - default 15000 per original claim.php -->
+                                <div class="form-group">
+                                    <label for="funeral-expenses">Funeral expenses (Rs.)</label>
+                                    <div class="input-icon-wrapper">
+                                        <i class="fa-solid fa-circle-exclamation field-icon"></i>
+                                        <input type="number" id="funeral-expenses" name="funeral_expenses" value="15000" placeholder="15000">
+                                    </div>
+                                </div>
+
+                                <!-- Loss of Estate - default 15000 per original claim.php -->
+                                <div class="form-group">
+                                    <label for="loss-estate">Loss of estate (Rs.)</label>
+                                    <div class="input-icon-wrapper">
+                                        <i class="fa-solid fa-box field-icon"></i>
+                                        <input type="number" id="loss-estate" name="loss_estate" value="15000" placeholder="15000">
+                                    </div>
+                                </div>
+
+                                <!-- Calculated Loss of Dependency: (Salary + Prospects) * Multiplier * (1 - Deduction) -->
+                                <div class="form-group highlighted-group">
+                                    <label for="loss-of-dependency">Loss of Dependency (Rs.)</label>
+                                    <div class="input-icon-wrapper disabled">
+                                        <i class="fa-solid fa-money-bill-transfer field-icon"></i>
+                                        <input type="number" id="loss-of-dependency" name="loss_of_dependency" readonly placeholder="Auto-calculated">
+                                    </div>
+                                </div>
+
+                                <!-- Final Calculated Death Compensation total sum (Dependency + Conventional Heads) -->
+                                <div class="form-group highlighted-group">
+                                    <label for="death-final-compensation">Final Compensation (Rs.)</label>
+                                    <div class="input-icon-wrapper disabled">
+                                        <i class="fa-solid fa-scale-balanced field-icon"></i>
+                                        <input type="number" id="death-final-compensation" name="final_compensation" readonly placeholder="Auto-calculated">
+                                    </div>
+                                </div>
+
+                                <!-- Dynamic Live Calculations Preview Dashboard -->
+                                <div class="live-calc-dashboard full-width">
+                                    <div class="live-calc-header">
+                                        <h4><i class="fa-solid fa-clock-rotate-left"></i> Real-time calculation breakdown</h4>
+                                        <span class="live-badge">Live Update</span>
+                                    </div>
+                                    <div class="live-calc-grid">
+                                        <div class="live-calc-item">
+                                            <span class="label">Annual Income</span>
+                                            <span class="value" id="live-calc-annual">—</span>
+                                        </div>
+                                        <div class="live-calc-item">
+                                            <span class="label">Enhanced Monthly</span>
+                                            <span class="value" id="live-calc-future">—</span>
+                                        </div>
+                                        <div class="live-calc-item">
+                                            <span class="label">Deduction %</span>
+                                            <span class="value" id="live-calc-deduct-pct">—</span>
+                                        </div>
+                                        <div class="live-calc-item">
+                                            <span class="label">Deduction Amount</span>
+                                            <span class="value" id="live-calc-deduct-amt">—</span>
+                                        </div>
+                                        <div class="live-calc-item">
+                                            <span class="label">Multiplier</span>
+                                            <span class="value" id="live-calc-multiplier">—</span>
+                                        </div>
+                                        <div class="live-calc-item">
+                                            <span class="label">Loss of Dependency</span>
+                                            <span class="value text-glow-green" id="live-calc-dependency">—</span>
+                                        </div>
+                                        <div class="live-calc-item highlight-total">
+                                            <span class="label">Final Settlement</span>
+                                            <span class="value text-glow-purple" id="live-calc-total">—</span>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- INJURY PARAMETERS -->
+                            <div id="injury-fields" class="form-grid hidden-section">
+                                <div class="section-divider full-width">
+                                    <span><i class="fa-solid fa-crutch"></i> Injury Parameters</span>
+                                </div>
+
+                                <div class="form-group">
+                                    <label for="disability">Permanent Disability (%) <span class="req">*</span></label>
+                                    <div class="input-icon-wrapper">
+                                        <i class="fa-solid fa-percent field-icon"></i>
+                                        <input type="number" id="disability" name="disability" step="any" min="0" max="100" placeholder="e.g. 35">
+                                    </div>
+                                </div>
+
+                                <div class="form-group">
+                                    <label for="medical-expenses">Medical Expenses (Rs.)</label>
+                                    <div class="input-icon-wrapper">
+                                        <i class="fa-solid fa-file-medical field-icon"></i>
+                                        <input type="number" id="medical-expenses" name="medical_expenses" placeholder="0">
+                                    </div>
+                                </div>
+
+                                <div class="form-group">
+                                    <label for="future-medical-expenses">Future Medical Expenses (Rs.)</label>
+                                    <div class="input-icon-wrapper">
+                                        <i class="fa-solid fa-prescription-bottle-medical field-icon"></i>
+                                        <input type="number" id="future-medical-expenses" name="future_medical_expenses" placeholder="0">
+                                    </div>
+                                </div>
+
+                                <div class="form-group">
+                                    <label for="pain-and-suffering">Pain & Suffering (Rs.)</label>
+                                    <div class="input-icon-wrapper">
+                                        <i class="fa-solid fa-face-sad-tear field-icon"></i>
+                                        <input type="number" id="pain-and-suffering" name="pain_and_suffering" placeholder="0">
+                                    </div>
+                                </div>
+
+                                <div class="form-group">
+                                    <label for="transportation">Transportation (Rs.)</label>
+                                    <div class="input-icon-wrapper">
+                                        <i class="fa-solid fa-truck-medical field-icon"></i>
+                                        <input type="number" id="transportation" name="transportation" placeholder="0">
+                                    </div>
+                                </div>
+
+                                <div class="form-group">
+                                    <label for="special-diet">Special Diet (Rs.)</label>
+                                    <div class="input-icon-wrapper">
+                                        <i class="fa-solid fa-apple-whole field-icon"></i>
+                                        <input type="number" id="special-diet" name="special_diet" placeholder="0">
+                                    </div>
+                                </div>
+
+                                <div class="form-group">
+                                    <label for="attender-charges">Attender Charges (Rs.)</label>
+                                    <div class="input-icon-wrapper">
+                                        <i class="fa-solid fa-hands-holding-child field-icon"></i>
+                                        <input type="number" id="attender-charges" name="attender_charges" placeholder="0">
+                                    </div>
+                                </div>
+
+                                <div class="form-group">
+                                    <label for="loss-of-income">Loss of Income (Rs.)</label>
+                                    <div class="input-icon-wrapper">
+                                        <i class="fa-solid fa-money-bill-trend-up field-icon"></i>
+                                        <input type="number" id="loss-of-income" name="loss_of_income" placeholder="0">
+                                    </div>
+                                </div>
+
+                            </div>
+
+                            <!-- Buttons -->
+                            <div class="form-actions hidden-section" id="form-actions-bar">
+                                <button type="button" id="reset-btn" class="btn btn-secondary"><i class="fa-solid fa-rotate-right"></i> Reset</button>
+                                <button type="submit" id="calculate-btn" class="btn btn-primary"><i class="fa-solid fa-calculator"></i> Calculate</button>
+                            </div>
+                        </form>
+                    </div>
+
+                    <!-- Right: Dynamic Legal Precedents & Live Preview -->
+                    <div class="panel" id="calculator-right-pane" style="position: relative; display: flex; flex-direction: column; padding: 0; gap: 0; overflow: hidden; height: 100%;">
+                        
+                        <!-- Right Pane Tabs Navigator -->
+                        <!-- Secondary Right Workspace Panel Navigation Tabs
+                             Toggle visibility of preview, database benchmarking, metrics, and quality inspector tabs. -->
+                        <div class="right-pane-tabs" id="right-pane-tabs" style="height: 44px; border-bottom: 1px solid var(--border-color); padding: 0 16px; display: flex; align-items: center; gap: 8px; background: var(--bg-card); flex-shrink: 0;">
+                            <!-- PDF Viewer Preview Panel -->
+                            <button type="button" class="pane-tab-btn active" data-pane-tab="pdf" style="background: rgba(11, 58, 114, 0.06); border: 1px solid rgba(11, 58, 114, 0.25); color: var(--color-primary); padding: 6px 12px; border-radius: var(--radius-sm); font-family: 'Outfit', sans-serif; font-size: 0.8rem; font-weight: 600; cursor: pointer; display: flex; align-items: center; gap: 6px; transition: all var(--transition-fast);">
+                                <i class="fa-solid fa-file-pdf" style="color: var(--color-danger);"></i> PDF Preview
+                            </button>
+                            <!-- Qdrant Precedents Database comparison and similarity scoring -->
+                            <button type="button" class="pane-tab-btn" data-pane-tab="benchmarking" style="background: transparent; border: 1px solid transparent; color: var(--text-secondary); padding: 6px 12px; border-radius: var(--radius-sm); font-family: 'Outfit', sans-serif; font-size: 0.8rem; font-weight: 600; cursor: pointer; display: flex; align-items: center; gap: 6px; transition: all var(--transition-fast); position: relative;">
+                                <i class="fa-solid fa-scale-balanced" style="color: var(--color-primary);"></i> Benchmarking
+                                <span id="benchmarking-tab-dot" class="notification-dot hidden"></span>
+                            </button>
+                            <!-- Classifies whether the appeal seeks enhancement or reduction of the award -->
+                            <button type="button" class="pane-tab-btn" data-pane-tab="enhancement-check" style="background: transparent; border: 1px solid transparent; color: var(--text-secondary); padding: 6px 12px; border-radius: var(--radius-sm); font-family: 'Outfit', sans-serif; font-size: 0.8rem; font-weight: 600; cursor: pointer; display: flex; align-items: center; gap: 6px; transition: all var(--transition-fast); position: relative;">
+                                <i class="fa-solid fa-gavel" style="color: var(--color-warning);"></i> Enhancement Check
+                                <span id="enhancement-check-tab-dot" class="notification-dot hidden"></span>
+                            </button>
+                        </div>
+
+                        <!-- Tab 1 Content: PDF Preview -->
+                        <div id="pane-tab-pdf-content" class="pane-tab-content active" style="flex: 1; display: flex; flex-direction: column; height: calc(100% - 44px); overflow: hidden; margin: 0; padding: 0;">
+                            <!-- High-Fidelity PDF Preview Panel -->
+                            <div class="card preview-card" id="single-preview-card" style="height: 100%; width: 100%; display: flex; flex-direction: column; margin: 0; padding: 0; border: none; box-shadow: none; background: transparent; flex: 1; overflow: hidden;">
+                                <div class="card-header" style="height: 40px; padding: 0 16px; border-bottom: 1px solid var(--border-color); display: flex; justify-content: space-between; align-items: center; margin: 0; flex-shrink: 0; background: var(--bg-panel);">
+                                    <div style="display: flex; align-items: center; gap: 8px;">
+                                        <h3><i class="fa-solid fa-eye text-glow"></i> Case PDF Preview</h3>
+                                        <span id="single-preview-filename" class="badge tech-badge">No File Loaded</span>
+                                    </div>
+                                    <div style="display: flex; align-items: center; gap: 8px;">
+                                        <button type="button" id="ai-extract-btn" class="btn btn-small btn-secondary" style="font-size: 0.72rem; padding: 4px 8px; display: none;">
+                                            <i class="fa-solid fa-wand-magic-sparkles"></i> Ask LLM to Extract
+                                        </button>
+                                        <button type="button" id="download-word-btn" class="btn btn-small btn-secondary" style="font-size: 0.72rem; padding: 4px 8px; display: none;">
+                                            <i class="fa-solid fa-file-word" style="color: #2b579a; margin-right: 4px;"></i> Download Word Doc
+                                        </button>
+                                    </div>
+                                </div>
+                                <div class="single-preview-container" id="single-preview-container" style="flex: 1; height: calc(100% - 40px); width: 100%; overflow: hidden; background: #ffffff; padding: 0; margin: 0; border: none; border-radius: 0;">
+                                    <div class="preview-empty-state" style="display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100%; gap: 10px; opacity: 0.5;">
+                                        <i class="fa-solid fa-file-pdf" style="font-size: 3rem; color: var(--color-primary)"></i>
+                                        <p style="font-size: 0.8rem; color: var(--text-secondary)">Upload a PDF on the left to see the live document preview here.</p>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Tab 2 Content: Benchmarking (now includes former Analysis & Metrics cards) -->
+                        <div id="pane-tab-benchmarking-content" class="pane-tab-content hidden" style="flex: 1; display: flex; flex-direction: column; gap: 20px; padding: 20px; overflow-y: auto; height: calc(100% - 44px);">
+                            <!-- Precedent Benchmarking Card -->
+                            <div class="card hidden-section" id="evaluator-card">
+                                <div class="card-header" style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid rgba(255, 255, 255, 0.05); padding-bottom: 10px;">
+                                    <h3 style="margin: 0;"><i class="fa-solid fa-scale-balanced text-glow"></i> Precedent Benchmarking</h3>
+                                    <button type="button" id="trigger-eval-btn" class="btn btn-small btn-primary" style="padding: 6px 12px; font-size: 0.78rem;" disabled>
+                                        <i class="fa-solid fa-wand-magic-sparkles"></i> Benchmark Precedents
+                                    </button>
+                                </div>
+                                <div class="card-body" id="evaluator-card-body" style="padding-top: 12px; color: var(--text-secondary); font-size: 0.85rem;">
+                                    <div class="empty-state" style="text-align: center; padding: 15px; opacity: 0.6;">
+                                        <i class="fa-solid fa-gavel" style="font-size: 2rem; color: var(--color-primary); margin-bottom: 8px; display: block;"></i>
+                                        Awaiting compensation calculation to perform comparative benchmarking against Qdrant database precedents.
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- Live Metrics Preview Card (moved from former Analysis & Metrics tab) -->
+                            <div class="card hidden-section" id="live-metrics-card">
+                                <div class="card-header">
+                                    <h3><i class="fa-solid fa-chart-simple text-glow"></i> Live Metrics Preview</h3>
+                                    <span class="badge tech-badge">Active</span>
+                                </div>
+                                <div class="metrics-grid">
+                                    <div class="metric-item">
+                                        <span class="label">Age</span>
+                                        <span class="value" id="live-age">—</span>
+                                    </div>
+                                    <div class="metric-item">
+                                        <span class="label">Multiplier</span>
+                                        <span class="value" id="live-multiplier">—</span>
+                                    </div>
+                                    <div class="metric-item full-width" id="live-prospects-item">
+                                        <span class="label">Future Prospects</span>
+                                        <div style="display: flex; align-items: center; gap: 10px; margin-top: 4px;">
+                                            <div class="progress-bar-wrapper" style="flex: 1;">
+                                                <div id="live-prospects-bar" class="progress-bar-fill" style="width: 0%;"></div>
+                                            </div>
+                                            <span class="value" id="live-prospects" style="font-size: 0.95rem; font-weight: 700; min-width: 40px; text-align: right;">—%</span>
+                                        </div>
+                                    </div>
+                                    <div class="metric-item full-width" id="live-deductions-item">
+                                        <span class="label">Personal Deductions</span>
+                                        <div style="display: flex; align-items: center; gap: 10px; margin-top: 4px;">
+                                            <div class="progress-bar-wrapper" style="flex: 1;">
+                                                <div id="live-deductions-bar" class="progress-bar-fill bg-danger" style="width: 0%;"></div>
+                                            </div>
+                                            <span class="value" id="live-deductions" style="font-size: 0.95rem; font-weight: 700; min-width: 40px; text-align: right;">—%</span>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- AI Legal Judgment Summary Card (moved from former Analysis & Metrics tab) -->
+                            <div class="card hidden-section" id="legal-ai-summary-card">
+                                <div class="card-header">
+                                    <h3><i class="fa-solid fa-brain-circuit text-purple"></i> AI Legal Judgment Summary</h3>
+                                    <span class="badge tech-badge">AI Analysis</span>
+                                </div>
+                                <div class="card-body" id="legal-ai-summary-body" style="padding-top: 12px; display: flex; flex-direction: column; gap: 14px;">
+                                    <div class="empty-summary-state" style="display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; opacity: 0.5; padding: 20px 0;">
+                                        <i class="fa-solid fa-gavel" style="font-size: 2.5rem; color: #c084fc;"></i>
+                                        <p style="font-size: 0.8rem; color: var(--text-secondary); text-align: center; margin: 0;">Upload a PDF to see the structured legal analysis summary and judicial anomaly checklist.</p>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- Extracted Compensation Table Card (moved from former Analysis & Metrics tab) -->
+                            <div class="card hidden-section" id="compensation-table-card">
+                                <div class="card-header">
+                                    <h3><i class="fa-solid fa-table-list text-green"></i> Judicial Compensation Heads</h3>
+                                    <span class="badge tech-badge">OCR Extract</span>
+                                </div>
+                                <div class="card-body" id="compensation-table-body" style="padding-top: 12px;">
+                                    <div class="empty-table-state" style="display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; opacity: 0.5; padding: 20px 0;">
+                                        <i class="fa-solid fa-table-list" style="font-size: 2.5rem; color: #34d399;"></i>
+                                        <p style="font-size: 0.8rem; color: var(--text-secondary); text-align: center; margin: 0;">Upload a PDF to view the detailed breakdown of the judicial award heads.</p>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Tab 3 Content: Enhancement Check -->
+                        <div id="pane-tab-enhancement-check-content" class="pane-tab-content hidden" style="flex: 1; display: flex; flex-direction: column; gap: 20px; padding: 20px; overflow-y: auto; height: calc(100% - 44px);">
+
+                            <!-- Unified Enhancement Check Page Card -->
+                            <div class="card" id="enhancement-check-main-card">
+                                <div class="card-header" style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--border-glass);">
+                                    <h3 style="margin: 0; font-size: 1.1rem; display: flex; align-items: center; gap: 8px;">
+                                        <i class="fa-solid fa-gavel text-glow" style="color: var(--color-warning);"></i> Enhancement & Reduction Check
+                                    </h3>
+                                    <span class="badge tech-badge" id="enhancement-verdict-confidence" style="display: none;">—</span>
+                                </div>
+                                <div class="card-body" id="enhancement-check-main-body" style="padding: 20px; display: flex; flex-direction: column; gap: 20px;">
+                                    <div class="empty-state" style="text-align: center; padding: 40px 15px; opacity: 0.6;">
+                                        <i class="fa-solid fa-circle-question" style="font-size: 2.5rem; color: var(--color-primary); margin-bottom: 12px; display: block;"></i>
+                                        <p style="margin: 0; font-size: 0.95rem; font-weight: 500;">No PDF Processed Yet</p>
+                                        <p style="margin: 4px 0 0 0; font-size: 0.8rem; color: var(--text-muted);">
+                                            Upload a PDF to view the Grounds of Appeal and Relief/Prayer clauses in bullet form.
+                                        </p>
+                                    </div>
+                                </div>
+                            </div>
+
+                        </div>
+
+                        <!-- Floating Tool Buttons -->
+                        <div class="preview-floating-toolbar" id="preview-floating-toolbar">
+                            <button type="button" class="floating-tool-btn" id="ai-assistant-trigger" title="🤖 AI Legal Assistant">
+                                <i class="fa-solid fa-robot"></i>
+                            </button>
+                        </div>
+
+                    </div>
+                </div>
+            </div>
+
+            <!-- TAB 2: CENTRALIZED PDF LIBRARY & QDRANT QUEUE -->
+            <div id="tab-library" class="tab-viewport">
+                <div class="workspace-grid split-40-60">
+                    
+                    <!-- Left: Batch PDF Queue List -->
+                    <div class="panel scroll-y">
+                        <div class="panel-header">
+                            <h3><i class="fa-solid fa-cloud-arrow-up text-glow"></i> Batch PDF Library</h3>
+                            <p class="panel-subtitle">Upload legal petitions or previous judgments. Centralized indexing is performed in background for semantic AI Chat.</p>
+                        </div>
+
+                        <!-- File Input / Drop Zone -->
+                        <div id="drop-zone" class="drop-zone">
+                            <div class="drop-zone-content">
+                                <i class="fa-solid fa-file-pdf drop-icon" style="color: var(--color-danger)"></i>
+                                <p class="drop-title">Drag & Drop legal PDFs here</p>
+                                <p class="drop-subtitle">Upload multiple case documents to Centralized Qdrant Database</p>
+                                <span class="btn btn-small btn-secondary">Select Files</span>
+                                <input type="file" id="file-input" accept="application/pdf" multiple style="display: none;">
+                            </div>
+                        </div>
+
+                        <!-- Centralized List Queue -->
+                        <div class="queue-container">
+                            <div class="queue-header">
+                                <h4>Centralized Uploads queue</h4>
+                                <span id="queue-count-label" class="badge tech-badge">0 Files</span>
+                            </div>
+                            
+                            <div id="batch-file-list" class="batch-file-list">
+                                <!-- Populated dynamically by app.js -->
+                                <div class="empty-state">
+                                    <i class="fa-solid fa-box-open"></i>
+                                    <p>No legal PDFs uploaded yet. Drag and drop PDF claim judgments above to begin centralized vector storage.</p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Right: High-Fidelity PDF Previewer -->
+                    <div class="panel split-preview-panel">
+                        <div class="panel-header" style="display: flex; justify-content: space-between; align-items: center;">
+                            <h3><i class="fa-solid fa-eye text-glow"></i> Document Preview</h3>
+                            <span id="preview-filename-badge" class="badge tech-badge hidden">No File Loaded</span>
+                        </div>
+                        
+                        <div class="preview-container" id="preview-container">
+                            <!-- In-process Blob URL iframe previewer -->
+                            <div class="preview-empty-state">
+                                <i class="fa-solid fa-file-pdf" style="font-size: 4rem; opacity: 0.3;"></i>
+                                <p>Select an uploaded PDF from the queue list on the left to preview it side-by-side.</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- TAB 3: AI LEGAL PRECEDENTS CHAT -->
+            <div id="tab-chat" class="tab-viewport">
+                <div class="panel chat-console-panel">
+                    <div class="panel-header" style="display: flex; justify-content: space-between; align-items: center;">
+                        <div>
+                            <h3><i class="fa-solid fa-brain-circuit text-glow"></i> AI Precedent Chat Assistant</h3>
+                            <p class="panel-subtitle">Runs semantic legal searches over your centralized Qdrant vector database.</p>
+                        </div>
+                        <div class="chat-filters" style="display: flex; gap: 8px;">
+                            <select id="chat-document-filter" class="btn btn-secondary btn-small">
+                                <option value="all">All Documents</option>
+                                <!-- Dynamically populated indexed files -->
+                            </select>
+                            <select id="chat-case-filter" class="btn btn-secondary btn-small">
+                                <option value="all">Search All Cases</option>
+                                <option value="injury">Injury Cases Only</option>
+                                <option value="death">Death Cases Only</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <div class="chat-workspace">
+                        <!-- Chat Log -->
+                        <div id="chat-messages" class="chat-messages">
+                            <div class="chat-bubble bot">
+                                <div class="chat-avatar"><i class="fa-solid fa-robot"></i></div>
+                                <div class="chat-text">
+                                    Hello! I am your **AI Legal Assistant** coupled with your centralized **Qdrant Vector Database**.
+                                    <br><br>
+                                    Once you index legal files in the **PDF Library**, you can ask me semantic questions such as:
+                                    <ul>
+                                        <li>*"Find cases where an unmarried deceased of age 32 had 4 dependents"*</li>
+                                        <li>*"Show me injury judgments with permanent disability above 40%"*</li>
+                                        <li>*"What compensation was awarded in cases involving salary of Rs 25,000?"*</li>
+                                    </ul>
+                                    I will automatically locate matching sentences in Qdrant, retrieve the judgments, and formulate legal summaries!
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Search Input bar -->
+                        <div class="chat-input-bar">
+                            <input type="text" id="chat-input" placeholder="Ask AI Search (e.g. Find cases with deceased aged 40 and 4 dependents)..." autocomplete="off">
+                            <button type="button" id="chat-send-btn" class="btn btn-primary"><i class="fa-solid fa-paper-plane"></i></button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- TAB 4: QDRANT VECTOR DB EXPLORER (OFFICIAL DASHBOARD EMULATION) -->
+            <div id="tab-qdrant" class="tab-viewport">
+                <div class="panel qdrant-explorer-panel scroll-y">
+                    <div class="panel-header" style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--border-glass); padding-bottom: 15px;">
+                        <div>
+                            <h3><i class="fa-solid fa-database text-glow-green" style="color: #34d399;"></i> Qdrant Collection Dashboard</h3>
+                            <p class="panel-subtitle">Visual point and vector payload explorer matching the official Qdrant Dashboard.</p>
+                        </div>
+                        <button type="button" id="refresh-qdrant-btn" class="btn btn-secondary btn-small">
+                            <i class="fa-solid fa-rotate"></i> Refresh Collection
+                        </button>
+                    </div>
+
+                    <!-- Meta cards / Stats row -->
+                    <div class="qdrant-stats-row" style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; margin: 15px 0;">
+                        <div class="qdrant-stat-card" style="background: rgba(10, 15, 30, 0.45); border: 1px solid var(--border-glass); border-radius: var(--radius-sm); padding: 16px; text-align: center;">
+                            <span style="font-size: 0.72rem; color: var(--text-muted); text-transform: uppercase; display: block; margin-bottom: 4px;">Collection</span>
+                            <strong style="font-size: 1.15rem; color: var(--text-primary);" id="qdrant-collection-name">legal_documents</strong>
+                        </div>
+                        <div class="qdrant-stat-card" style="background: rgba(10, 15, 30, 0.45); border: 1px solid var(--border-glass); border-radius: var(--radius-sm); padding: 16px; text-align: center;">
+                            <span style="font-size: 0.72rem; color: var(--text-muted); text-transform: uppercase; display: block; margin-bottom: 4px;">Total Points Count</span>
+                            <strong style="font-size: 1.6rem; color: var(--color-success);" id="qdrant-points-count">0</strong>
+                        </div>
+                        <div class="qdrant-stat-card" style="background: rgba(10, 15, 30, 0.45); border: 1px solid var(--border-glass); border-radius: var(--radius-sm); padding: 16px; text-align: center;">
+                            <span style="font-size: 0.72rem; color: var(--text-muted); text-transform: uppercase; display: block; margin-bottom: 4px;">Distance Metric</span>
+                            <strong style="font-size: 1.15rem; color: var(--color-primary);" id="qdrant-distance">Cosine</strong>
+                        </div>
+                        <div class="qdrant-stat-card" style="background: rgba(10, 15, 30, 0.45); border: 1px solid var(--border-glass); border-radius: var(--radius-sm); padding: 16px; text-align: center;">
+                            <span style="font-size: 0.72rem; color: var(--text-muted); text-transform: uppercase; display: block; margin-bottom: 4px;">Vector Size</span>
+                            <strong style="font-size: 1.15rem; color: var(--text-primary);" id="qdrant-vector-size">384 dims</strong>
+                        </div>
+                    </div>
+
+                    <!-- Points listing -->
+                    <div style="border-top: 1px solid var(--border-glass); padding-top: 20px;">
+                        <h4 style="font-family: 'Outfit', sans-serif; font-size: 0.95rem; margin-bottom: 12px; color: var(--text-secondary); display: flex; align-items: center; gap: 8px;"><i class="fa-solid fa-list-ul"></i> Indexed Collection Points</h4>
+                        
+                        <div class="qdrant-table-wrapper" style="overflow-x: auto; background: rgba(0, 0, 0, 0.25); border-radius: var(--radius-sm); border: 1px solid var(--border-glass);">
+                            <table style="width: 100%; border-collapse: collapse; text-align: left; font-size: 0.85rem;">
+                                <thead>
+                                    <tr style="border-bottom: 1px solid var(--border-glass); background: rgba(255, 255, 255, 0.02); color: var(--text-secondary);">
+                                        <th style="padding: 12px 16px; font-weight: 600;">Point ID</th>
+                                        <th style="padding: 12px 16px; font-weight: 600;">Document Name</th>
+                                        <th style="padding: 12px 16px; font-weight: 600;">Chunk ID</th>
+                                        <th style="padding: 12px 16px; font-weight: 600;">Text Extract</th>
+                                        <th style="padding: 12px 16px; font-weight: 600; text-align: right;">Action</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="qdrant-points-table-body">
+                                    <!-- Populated dynamically -->
+                                    <tr>
+                                        <td colspan="5" style="padding: 24px; text-align: center; color: var(--text-muted);">
+                                            <i class="fa-solid fa-box-open" style="font-size: 1.8rem; display: block; margin-bottom: 8px;"></i>
+                                            No points currently indexed in Qdrant collection.
+                                        </td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- ==========================================
+             MODAL RESULTS SUMMARY
+             ========================================== -->
+        <!-- ==========================================
+             MODAL RESULTS SUMMARY
+             ========================================== -->
+        <!-- Calculation Results Modal View
+             Displays after clicking Calculate to show final compensation amount, printing sheets, and dismissal options. -->
+        <div id="results-modal" class="modal">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h2><i class="fa-solid fa-gavel text-glow"></i> Compensation Award Summary</h2>
+                    <button type="button" id="close-modal-btn" class="close-btn">&times;</button>
+                </div>
+                
+                <!-- Injected breakdown and formulas display container -->
+                <div class="modal-body" id="modal-body-content">
+                    <!-- Dynamically injected math dashboard -->
+                </div>
+                
+                <!-- Final compensation aggregate indicator showing standard formatted Rupee value -->
+                <div style="text-align: center; padding: 15px; background: rgba(11, 58, 114, 0.05); border-top: 1px solid var(--border-glass);">
+                    <span style="font-size: 0.85rem; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 1px;">Calculated Settlement Value:</span>
+                    <div id="final-compensation" style="font-size: 2.2rem; font-weight: 800; color: var(--color-success); font-family: 'Outfit', sans-serif;">₹ 0</div>
+                </div>
+                
+                <div class="modal-footer">
+                    <button type="button" id="print-btn" class="btn btn-secondary"><i class="fa-solid fa-print"></i> Print Settlement Sheet</button>
+                    <button type="button" id="dismiss-modal-btn" class="btn btn-primary">Close</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- ==========================================
+             AUTO-FILL CHOICE SELECTION MODAL
+             ========================================== -->
+        <div id="autofill-choice-modal" class="modal">
+            <div class="modal-content" style="max-width: 500px;">
+                <div class="modal-header" style="border-bottom: 1px solid var(--border-glass);">
+                    <h2><i class="fa-solid fa-wand-magic-sparkles text-glow" style="color: var(--color-primary);"></i> Select Auto-Fill Mode</h2>
+                    <button type="button" id="close-autofill-choice-btn" class="close-btn">&times;</button>
+                </div>
+                <div class="modal-body" style="padding: 24px; display: flex; flex-direction: column; gap: 16px;">
+                    <p style="font-size: 0.9rem; color: var(--text-secondary); line-height: 1.5; margin: 0; margin-bottom: 8px;">
+                        How would you like to auto-fill the compensation workstation using this indexed document?
+                    </p>
+                    
+                    <!-- Choice 1: Quick OCR -->
+                    <button type="button" id="btn-quick-autofill" class="choice-card btn-quick">
+                        <div class="choice-card-icon">
+                            <i class="fa-solid fa-bolt"></i>
+                        </div>
+                        <div class="choice-card-content">
+                            <div class="choice-card-title">
+                                Quick OCR Auto-fill <span class="choice-badge badge-fast">FAST</span>
+                            </div>
+                            <div class="choice-card-desc">
+                                Instantly applies pre-parsed heuristic data extracted during indexing.
+                            </div>
+                        </div>
+                    </button>
+
+                    <!-- Choice 2: AI LLM Deep Extraction -->
+                    <button type="button" id="btn-ai-autofill" class="choice-card btn-smart">
+                        <div class="choice-card-icon">
+                            <i class="fa-solid fa-wand-magic-sparkles"></i>
+                        </div>
+                        <div class="choice-card-content">
+                            <div class="choice-card-title">
+                                AI LLM Deep Extraction <span class="choice-badge badge-smart">SMART</span>
+                            </div>
+                            <div class="choice-card-desc">
+                                Runs the local LLM on the raw text to recover complex/missing fields.
+                            </div>
+                        </div>
+                    </button>
+                </div>
+                <div class="modal-footer" style="border-top: 1px solid var(--border-glass);">
+                    <button type="button" id="dismiss-autofill-choice-btn" class="btn btn-secondary">Cancel</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- ==========================================
+             QDRANT PAYLOAD DETAIL VIEW MODAL
+             ========================================== -->
+        <div id="qdrant-payload-modal" class="modal">
+            <div class="modal-content" style="max-width: 650px;">
+                <div class="modal-header">
+                    <h2><i class="fa-solid fa-code text-glow"></i> Point Payload Details (JSON)</h2>
+                    <button type="button" id="close-payload-modal-btn" class="close-btn">&times;</button>
+                </div>
+                <div class="modal-body" style="padding: 20px;">
+                    <p style="font-size: 0.8rem; color: var(--text-muted); margin-bottom: 12px;">This JSON represents the exact key-value metadata payload stored alongside the vector inside the Qdrant database collection:</p>
+                    <pre id="qdrant-payload-codeblock" style="background: rgba(10, 15, 30, 0.9); color: #34d399; padding: 18px; border-radius: var(--radius-sm); font-family: monospace; font-size: 0.8rem; overflow-x: auto; border: 1px solid var(--border-glass); max-height: 400px; text-align: left;"></pre>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" id="dismiss-payload-modal-btn" class="btn btn-primary">Close Details</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Slide-over Drawer Panel -->
+        <div id="right-slideover" class="slideover-panel">
+            <div class="slideover-header">
+                <div style="display: flex; align-items: center; gap: 10px;">
+                    <h3 id="slideover-title">🤖 AI Legal Assistant</h3>
+                    <button type="button" id="expand-slideover-btn" class="slideover-expand-btn" title="Toggle Wide View" style="background: transparent; border: none; color: var(--text-muted); cursor: pointer; display: flex; align-items: center; justify-content: center; font-size: 1rem; transition: color 0.2s ease;">
+                        <i class="fa-solid fa-expand"></i>
+                    </button>
+                </div>
+                <button type="button" id="close-slideover" class="slideover-close-btn">&times;</button>
+            </div>
+            <div class="slideover-body" style="height: calc(100% - 70px); padding: 20px; display: flex; flex-direction: column; gap: 15px; overflow-y: auto;">
+                
+                <!-- 1. Suggested Questions Grid -->
+                <div id="assistant-suggested-section" style="margin-bottom: 5px;">
+                    <div style="font-family: 'Outfit', sans-serif; font-weight: 700; color: var(--text-secondary); font-size: 0.82rem; margin-bottom: 8px; text-transform: uppercase; letter-spacing: 0.5px;">
+                        Suggested Questions
+                    </div>
+                    <div class="assistant-suggested-grid" style="display: flex; gap: 10px; flex-wrap: wrap;">
+                        <button type="button" class="suggested-question-pill" data-question="Summarize this case" style="flex: 1; min-width: 120px; display: inline-flex; justify-content: center; padding: 10px 14px; font-weight: 600;">
+                            <i class="fa-solid fa-circle-question"></i> Summarize Case
+                        </button>
+                        <button type="button" class="suggested-question-pill" data-question="Is compensation correct?" style="flex: 1; min-width: 120px; display: inline-flex; justify-content: center; padding: 10px 14px; font-weight: 600;">
+                            <i class="fa-solid fa-circle-question"></i> Is compensation correct?
+                        </button>
+                        <button type="button" class="suggested-question-pill" data-question="JUSTIFY_COMPENSATION" data-display="Justify Compensation" style="flex: 1; min-width: 120px; display: inline-flex; justify-content: center; padding: 10px 14px; font-weight: 600; background: rgba(139,92,246,0.10); border-color: rgba(139,92,246,0.30); color: #a78bfa;">
+                            <i class="fa-solid fa-gavel"></i> Justify Compensation
+                        </button>
+                    </div>
+                </div>
+
+                <!-- 2. Unified AI Chat Interface -->
+                <div class="assistant-chat-container" style="display: flex; flex-direction: column; flex: 1; min-height: 460px; gap: 10px;">
+                    <div style="font-family: 'Outfit', sans-serif; font-weight: 700; color: var(--text-secondary); font-size: 0.82rem; text-transform: uppercase; letter-spacing: 0.5px;">
+                        Interactive Audit Chat
+                    </div>
+                    <div id="assistant-chat-messages" class="chat-messages" style="flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 12px; padding: 14px; background: var(--bg-card); border-radius: var(--radius-sm); border: 1px solid var(--border-glass); min-height: 380px;">
+                        <div class="chat-bubble bot">
+                            <div class="chat-avatar"><i class="fa-solid fa-robot"></i></div>
+                            <div class="chat-text">
+                                Hello! I am your AI Legal Assistant. Click questions above to start auditing the workstation state!
+                            </div>
+                        </div>
+                    </div>
+                    <div class="assistant-chat-input-bar" style="display: flex; gap: 8px; margin-top: auto;">
+                        <input type="text" id="assistant-chat-input" placeholder="Ask AI about this case..." autocomplete="off" style="flex: 1; padding: 10px 14px; background: var(--bg-panel); border: 1px solid var(--border-glass); border-radius: var(--radius-sm); color: var(--text-primary); outline: none;">
+                        <button type="button" id="assistant-chat-send-btn" class="btn btn-primary" style="padding: 10px 16px;"><i class="fa-solid fa-paper-plane"></i></button>
+                    </div>
+                </div>
+
+            </div>
+        </div>
+
+        <!-- Beautiful, premium modal for reading chats in a large box -->
+        <div id="chat-read-modal" class="modal">
+            <div class="modal-content" style="max-width: 850px; background: var(--bg-panel); backdrop-filter: blur(20px);">
+                <div class="modal-header" style="border-bottom: 1px solid var(--border-glass);">
+                    <h2><i class="fa-solid fa-comments text-glow"></i> Detailed Message View</h2>
+                    <button type="button" id="close-chat-modal-btn" class="close-btn">&times;</button>
+                </div>
+                <div class="modal-body" id="chat-modal-body-content" style="font-size: 1.1rem; line-height: 1.6; color: var(--text-primary); padding: 30px; overflow-y: auto; max-height: 60vh;">
+                    <!-- Message content goes here -->
+                </div>
+                <div class="modal-footer" style="border-top: 1px solid var(--border-glass);">
+                    <button type="button" id="dismiss-chat-modal-btn" class="btn btn-primary">Close Reader</button>
+                </div>
+            </div>
+        </div>
+
+    </div>
+ 
+    <!-- Core App Logic -->
+    <script src="app.js"></script>
+</body>
+</html>
