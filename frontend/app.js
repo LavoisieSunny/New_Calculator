@@ -1212,11 +1212,7 @@ document.addEventListener("DOMContentLoaded", () => {
                             if (liveMetricsCard) liveMetricsCard.classList.add("show");
                             if (evaluatorCard) evaluatorCard.classList.add("show");
 
-                            // Show the enhancement check button and card
-                            const enhancementBtn = document.getElementById("enhancement-btn");
-                            if (enhancementBtn) {
-                                enhancementBtn.style.display = "inline-flex";
-                            }
+                            // Show the enhancement check card
                             const mainCard = document.getElementById("enhancement-check-main-card");
                             if (mainCard) {
                                 mainCard.classList.remove("hidden-section");
@@ -3130,11 +3126,6 @@ This cannot be undone.`)) return;
 
         if (triggerEvalBtn) triggerEvalBtn.disabled = true;
         currentCalculationAmount = 0;
-
-        const enhancementBtn = document.getElementById("enhancement-btn");
-        if (enhancementBtn) {
-            enhancementBtn.style.display = "none";
-        }
         const mainCard = document.getElementById("enhancement-check-main-card");
         if (mainCard) {
             mainCard.classList.remove("show");
