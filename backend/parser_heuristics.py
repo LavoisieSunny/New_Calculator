@@ -3967,3 +3967,39 @@ def parse_extracted_text(text_lines):
     print(f"  Disability: {suggestions.get('disability')}")
 
     return suggestions
+
+
+def extract_hindi_narrative_income(raw_text: str):
+    if not raw_text:
+        return None, None
+
+    amount_re = re.compile(r'(\d[\d,]{2,8})\s*/?\-?\s*(?:रूपये|रुपये)\s*प्रतिमाह', re.UNICODE)
+    # Split on clause boundaries so an unrelated nearby clause's keywords
+    # can't bleed into the wrong amount's score.
+    clauses = re.split(r'(?:जबकि|।|\n)', raw_text)
+
+    candidates = []
+    for clause in clauses:
+        for m in amount_re.finditer(clause):
+            try:
+                amount = float(m.group(1).replace(",", ""))
+            except ValueError:
+                continue
+            if amount < 1000 or amount > 500000:
+                continue
+            score = 0
+            if "अभिवचनित" in clause or "मूल याचिका" in clause:
+                score += 10   # explicitly pleaded in the original petition
+            elif "याचिका" in clause:
+                score += 2
+            if "निर्धारित" in clause or "मानते हुए" in clause:
+                score -= 6    # tribunal's own notional/assessed figure
+            if "मुख्य परीक्षण" in clause and "अर्जित" in clause:
+                score -= 3    # oral testimony figure, not the pleaded claim
+            candidates.append((score, amount, clause.strip()))
+
+    if not candidates:
+        return None, None
+    candidates.sort(key=lambda c: -c[0])
+    _, best_amount, best_clause = candidates[0]
+    return best_amount, best_clause

@@ -61,11 +61,12 @@ router = APIRouter()
 
 # Configurable OCR Options (Phase 1 stabilization)
 OCR_PRIMARY_ENGINE = os.getenv("OCR_PRIMARY_ENGINE", "paddle").lower()  # 'paddle' or 'tesseract'
-OCR_RENDER_DPI = int(os.getenv("OCR_RENDER_DPI", "180"))
-OCR_PAGE_TIMEOUT = float(os.getenv("OCR_PAGE_TIMEOUT", "60"))
+# 160 DPI chosen as a balance between speed and legibility for standard 12pt+ legal text; can be raised back via env var per-deployment if quality regresses.
+OCR_RENDER_DPI = int(os.getenv("OCR_RENDER_DPI", "160"))
+OCR_PAGE_TIMEOUT = float(os.getenv("OCR_PAGE_TIMEOUT", "45"))
 OCR_MAX_PAGES_FIRST_PASS = int(os.getenv("OCR_MAX_PAGES_FIRST_PASS", "10"))
 OCR_MAX_PARALLEL_WORKERS = int(os.getenv("OCR_MAX_PARALLEL_WORKERS", "8"))
-OCR_RETRY_DPI = int(os.getenv("OCR_RETRY_DPI", "216"))
+OCR_RETRY_DPI = int(os.getenv("OCR_RETRY_DPI", "195"))
 DEBUG_OCR = os.getenv("DEBUG_OCR", "false").lower() == "true"
  
 # Global PaddleOCR instance (lazy initialized cached singleton)

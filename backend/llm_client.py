@@ -683,65 +683,63 @@ def extract_smart_context_for_llm(raw_ocr_text: str) -> str:
         selected_text = selected_text[:25000] + "\n\n... [Truncated] ..."
     end_context = raw_ocr_text[-8000:]
 
-    # For death cases, unconditionally extract and merge Cause Title, Prayer, and Grounds
-    case_type = classify_case_type_by_ocr_text(raw_ocr_text)
-    extra_death_context = ""
-    if case_type == "death":
-        try:
-            # Segment text into pages
-            pages_list = []
-            current_page_num = 1
-            current_page_lines = []
-            text_lines = raw_ocr_text.split("\n")
-            for line in text_lines:
-                line_strip = line.strip()
-                if line_strip.startswith("--- PAGE"):
-                    if current_page_lines:
-                        pages_list.append({
-                            "page_number": current_page_num,
-                            "lines": current_page_lines,
-                            "text": "\n".join(current_page_lines)
-                        })
-                    m = re.search(r'PAGE\s+(\d+)', line_strip, re.IGNORECASE)
-                    if m:
-                        current_page_num = int(m.group(1))
-                    current_page_lines = []
-                else:
-                    current_page_lines.append(line)
-            if current_page_lines or not pages_list:
-                pages_list.append({
-                    "page_number": current_page_num,
-                    "lines": current_page_lines,
-                    "text": "\n".join(current_page_lines)
-                })
+    # For all cases, unconditionally extract and merge Cause Title, Prayer, and Grounds
+    extra_case_context = ""
+    try:
+        # Segment text into pages
+        pages_list = []
+        current_page_num = 1
+        current_page_lines = []
+        text_lines = raw_ocr_text.split("\n")
+        for line in text_lines:
+            line_strip = line.strip()
+            if line_strip.startswith("--- PAGE"):
+                if current_page_lines:
+                    pages_list.append({
+                        "page_number": current_page_num,
+                        "lines": current_page_lines,
+                        "text": "\n".join(current_page_lines)
+                    })
+                m = re.search(r'PAGE\s+(\d+)', line_strip, re.IGNORECASE)
+                if m:
+                    current_page_num = int(m.group(1))
+                current_page_lines = []
+            else:
+                current_page_lines.append(line)
+        if current_page_lines or not pages_list:
+            pages_list.append({
+                "page_number": current_page_num,
+                "lines": current_page_lines,
+                "text": "\n".join(current_page_lines)
+            })
 
-            from backend.parser_heuristics import detect_document_sections
-            sections_metadata = detect_document_sections(raw_ocr_text, pages_list)
+        from backend.parser_heuristics import detect_document_sections
+        sections_metadata = detect_document_sections(raw_ocr_text, pages_list)
 
-            claimant_sec = sections_metadata.get("claimant_section", {}).get("content", "").strip()
-            relief_sec = sections_metadata.get("relief_section", {}).get("content", "").strip()
-            grounds_sec = sections_metadata.get("grounds_section", {}).get("content", "").strip()
+        claimant_sec = sections_metadata.get("claimant_section", {}).get("content", "").strip()
+        relief_sec = sections_metadata.get("relief_section", {}).get("content", "").strip()
+        grounds_sec = sections_metadata.get("grounds_section", {}).get("content", "").strip()
 
-            death_parts = []
-            if claimant_sec:
-                claimant_sec_trunc = claimant_sec if len(claimant_sec) <= 8000 else claimant_sec[:8000] + "\n... [Truncated Claimant Section] ..."
-                death_parts.append(f"=== CAUSE TITLE / CLAIMANT SECTION ===\n{claimant_sec_trunc}")
-            if relief_sec:
-                relief_sec_trunc = relief_sec if len(relief_sec) <= 8000 else relief_sec[:8000] + "\n... [Truncated Relief Section] ..."
-                death_parts.append(f"=== PRAYER / RELIEF CLAIMS SECTION ===\n{relief_sec_trunc}")
-            if grounds_sec:
-                grounds_sec_trunc = grounds_sec if len(grounds_sec) <= 8000 else grounds_sec[:8000] + "\n... [Truncated Grounds Section] ..."
-                death_parts.append(f"=== GROUNDS OF APPEAL SECTION ===\n{grounds_sec_trunc}")
+        case_parts = []
+        if claimant_sec:
+            claimant_sec_trunc = claimant_sec if len(claimant_sec) <= 8000 else claimant_sec[:8000] + "\n... [Truncated Claimant Section] ..."
+            case_parts.append(f"=== CAUSE TITLE / CLAIMANT SECTION ===\n{claimant_sec_trunc}")
+        if relief_sec:
+            relief_sec_trunc = relief_sec if len(relief_sec) <= 8000 else relief_sec[:8000] + "\n... [Truncated Relief Section] ..."
+            case_parts.append(f"=== PRAYER / RELIEF CLAIMS SECTION ===\n{relief_sec_trunc}")
+        if grounds_sec:
+            grounds_sec_trunc = grounds_sec if len(grounds_sec) <= 8000 else grounds_sec[:8000] + "\n... [Truncated Grounds Section] ..."
+            case_parts.append(f"=== GROUNDS OF APPEAL SECTION ===\n{grounds_sec_trunc}")
 
-            if death_parts:
-                extra_death_context = "\n\n".join(death_parts)
-        except Exception as ex:
-            logger.error(f"Failed to extract death-specific context sections: {str(ex)}")
+        if case_parts:
+            extra_case_context = "\n\n".join(case_parts)
+    except Exception as ex:
+        logger.error(f"Failed to extract case-specific context sections: {str(ex)}")
 
-    if extra_death_context:
+    if extra_case_context:
         return (
-            f"=== IMPORTANT DEATH CASE SECTIONS (CAUSE TITLE, PRAYER, GROUNDS) ===\n\n"
-            f"{extra_death_context}\n\n"
+            f"=== KEY CASE SECTIONS (CAUSE TITLE, PRAYER/RELIEF, GROUNDS OF APPEAL) ===\n\n"
+            f"{extra_case_context}\n\n"
             f"=== FRONT PAGE METADATA ===\n\n"
             f"{front_context}\n\n"
             f"=== RELEVANT QUANTUM & COMPENSATION EXTRACTS ===\n\n"
@@ -828,13 +826,26 @@ def ai_data_recovery(raw_ocr_text: str) -> dict:
 
         "RULES:\n"
         "1. monetary values as plain floats with no Rs/commas/symbols\n"
-        "2. For monthly_income: if annual given divide by 12; if notional stated use that value\n"
+        "2. For monthly_income: if annual given divide by 12; if notional stated use that value.\n"
+        "   If the claimant's income appears in Hindi as a pleaded figure in the original\n"
+        "   petition (words like 'अभिवचनित' or 'मूल याचिका में...आय' near a 'रुपये प्रतिमाह'\n"
+        "   amount), prefer THAT pleaded figure over any oral-testimony figure ('मुख्य परीक्षण\n"
+        "   में बताया') or the tribunal's own notionally-assessed/minimum-wage figure\n"
+        "   ('निर्धारित', 'मानते हुए'). Never invent or estimate an income figure that is not\n"
+        "   explicitly stated in the text — if no income figure is present, return null.\n"
         "3. disability_percentage: extract number from phrases like '40% permanent disability'\n"
         "4. multiplier: look for 'multiplier of 17' or Sarla Verma table references\n"
         "5. future_prospect: look for '25% future prospects' or '40% addition'\n"
         "6. For death cases always try to fill loss_of_dependency, funeral_expenses, loss_of_consortium\n"
         "7. confidence 0.95+ only when exact number found in text; 0.7-0.94 for inferred values\n"
         "8. In death cases, NEVER default deceased_name to claimant_name. They are distinct individuals.\n"
+        "9. NEVER guess, round, or fabricate a numeric value merely to fill a field. If a field is not\n"
+        "   clearly and explicitly stated anywhere in the text, return null for its value and 0.0 for\n"
+        "   confidence rather than estimating. A missing field is far better than a wrong one.\n"
+        "10. For every date field (accident_date, decision_date, dob), return strictly DD-MM-YYYY.\n"
+        "    Convert whatever date format appears in the text (DD/MM/YYYY, 'DD Month YYYY', etc.)\n"
+        "    into DD-MM-YYYY. If a date is only partially legible or ambiguous, return null rather\n"
+        "    than guessing the missing part.\n"
     )
 
     smart_text = extract_smart_context_for_llm(raw_ocr_text)
@@ -932,6 +943,38 @@ def ai_data_recovery(raw_ocr_text: str) -> dict:
 
         data["confidence_scores"] = confidence_scores
         data["ocr_evidence_case"] = ocr_evidence_str
+
+        # ── Hindi "pleaded income" override ──────────────────────────────
+        try:
+            from backend.parser_heuristics import extract_hindi_narrative_income
+            hindi_income, hindi_ctx = extract_hindi_narrative_income(raw_ocr_text)
+            if hindi_income is not None:
+                llm_val = data.get("monthly_income")
+                llm_conf = confidence_scores.get("monthly_income", {}).get("confidence", 0.0)
+                should_override = False
+                reason = ""
+                if llm_conf < 0.85:
+                    should_override = True
+                    reason = f"LLM monthly_income confidence ({llm_conf}) is below 0.85"
+                elif llm_val is None or llm_val == 0 or llm_val == "":
+                    should_override = True
+                    reason = "LLM monthly_income is missing or zero"
+                else:
+                    try:
+                        llm_float = float(llm_val)
+                        diff_ratio = abs(llm_float - hindi_income) / hindi_income
+                        if diff_ratio > 0.20:
+                            should_override = True
+                            reason = f"LLM monthly_income ({llm_float}) differs from Hindi pleaded income ({hindi_income}) by {diff_ratio:.1%}"
+                    except (ValueError, TypeError):
+                        should_override = True
+                        reason = f"LLM monthly_income ({llm_val}) is not a valid number"
+                if should_override:
+                    logger.info(f"[HINDI OVERRIDE] Overwriting monthly_income from {llm_val} to {hindi_income}. Reason: {reason}. Context: {hindi_ctx}")
+                    data["monthly_income"] = hindi_income
+                    confidence_scores["monthly_income"] = {"confidence": 0.9}
+        except Exception as override_err:
+            logger.error(f"Failed to run Hindi narrative income override: {str(override_err)}")
 
         logger.info(f"AI Data Recovery successful with structured confidences: {list(data.keys())}")
         return data

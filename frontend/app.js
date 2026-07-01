@@ -1421,7 +1421,7 @@ document.addEventListener("DOMContentLoaded", () => {
                 const id = btn.getAttribute("data-id");
                 const matchedFile = fileQueue.find(f => f.file_id === id);
                 if (matchedFile) {
-                    showAutofillChoiceModal(matchedFile);
+                    performFullAutofill(matchedFile);
                 }
             });
         });
@@ -1472,6 +1472,51 @@ This cannot be undone.`)) return;
 
         // Sync chatbot document filter select options
         syncChatDocumentFilter();
+    }
+
+    // Automatically perform OCR autofill and AI data recovery (combined batch pipeline)
+    function performFullAutofill(matchedFile) {
+        if (!matchedFile.suggestions) {
+            showToast("No pre-parsed heuristic data available for this file.", "warning");
+            return;
+        }
+
+        stopOcrTimerSuccess();
+
+        // Store raw text for AI data recovery
+        currentOcrRawText = matchedFile.raw_text || [];
+        if (downloadWordBtn) {
+            if (currentOcrRawText.length > 0) {
+                downloadWordBtn.style.display = "inline-flex";
+            } else {
+                downloadWordBtn.style.display = "none";
+            }
+        }
+
+        // Update workstation preview card with the batch-loaded PDF if possible
+        const fileObj = uploadedFileObjects[matchedFile.filename];
+        if (fileObj && singlePreviewContainer && singlePreviewFilename) {
+            const blobUrl = URL.createObjectURL(fileObj);
+            singlePreviewFilename.innerHTML = `${matchedFile.filename} <span class="badge source-badge" style="margin-left: 8px; background: rgba(59, 130, 246, 0.2); color: #60a5fa; border: 1px solid rgba(59, 130, 246, 0.3); font-size: 0.7rem; padding: 2px 6px; border-radius: 4px; display: inline-block;">Source: Batch Library</span>`;
+            singlePreviewContainer.innerHTML = `
+                <iframe class="pdf-iframe" src="${blobUrl}#toolbar=0" width="100%" height="100%"></iframe>
+            `;
+            if (singlePreviewCard) {
+                singlePreviewCard.classList.remove("hidden-section");
+                singlePreviewCard.classList.add("show");
+            }
+        }
+
+        applyAllOcrSuggestions(matchedFile.suggestions, null, null, null, true);
+
+        window.lastRawText = (matchedFile.raw_text || []).join("\n");
+        checkCaseType(caseTypeSelect.value, window.lastRawText);
+
+        switchTab("calculator");
+
+        if (currentOcrRawText.length > 0) {
+            runAiRecovery(currentOcrRawText);
+        }
     }
 
     // Open Autofill Selection Modal to choose between OCR and AI Deep Extraction
@@ -1903,7 +1948,7 @@ This cannot be undone.`)) return;
     }
 
     // Apply parsed suggestions
-    function applyAllOcrSuggestions(suggestions, confidenceScores = null, ocrEvidence = null, rawRecovered = null) {
+    function applyAllOcrSuggestions(suggestions, confidenceScores = null, ocrEvidence = null, rawRecovered = null, isSilent = false) {
         if (!suggestions) return;
 
         // Normalize flat suggestions into expected nested structure
@@ -2115,10 +2160,12 @@ This cannot be undone.`)) return;
 
         updateAuditLog(loggedUserCaseType, loggedLlmCaseType, evidenceStr, avgConf, overwriteBlocked);
 
-        if (overwriteBlocked) {
-            showToast(`Preserved manually selected Case Type (${loggedUserCaseType})! Overwrite blocked.`, "warning");
-        } else {
-            showToast(`Workstation variables successfully auto-filled!`, "success");
+        if (!isSilent) {
+            if (overwriteBlocked) {
+                showToast(`Preserved manually selected Case Type (${loggedUserCaseType})! Overwrite blocked.`, "warning");
+            } else {
+                showToast(`Workstation variables successfully auto-filled!`, "success");
+            }
         }
 
         // Auto trigger automatic recalculation after autofill is completed (Task 18)
@@ -2173,8 +2220,8 @@ This cannot be undone.`)) return;
             if (data.success) {
                 const confidenceScores = data.raw_recovered ? data.raw_recovered.confidence_scores : null;
                 const ocrEvidence = data.raw_recovered ? data.raw_recovered.ocr_evidence_case : null;
-                applyAllOcrSuggestions(data.suggestions, confidenceScores, ocrEvidence, data.raw_recovered);
-                showToast("AI extraction complete — fields refined automatically.", "success");
+                applyAllOcrSuggestions(data.suggestions, confidenceScores, ocrEvidence, data.raw_recovered, true);
+                showToast("Case analyzed — fields auto-filled and refined by AI.", "success");
             } else {
                 showToast("AI extraction could not recover additional fields.", "warning");
             }
