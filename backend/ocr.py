@@ -1380,16 +1380,21 @@ def find_relevant_pages_by_heading(
 
     found = {}
     target_keys = {k for k in heading_keywords.keys() if not k.startswith("skip_")}
-    scanned = 0
 
     try:
         with pdfium.PdfDocument(pdf_path) as doc:
             total_pages = len(doc)
-            scan_limit = min(total_pages, max_scan_pages)
-            scale = quick_dpi / 72.0
+            if total_pages <= max_scan_pages:
+                pages_to_scan = list(range(total_pages))
+            else:
+                half = max_scan_pages // 2
+                pages_to_scan = list(range(half)) + list(range(total_pages - half, total_pages))
 
-            for idx in range(scan_limit):
-                scanned = idx + 1
+            scale = quick_dpi / 72.0
+            scanned = 0
+
+            for idx in pages_to_scan:
+                scanned += 1
                 try:
                     page_obj = doc[idx]
                     bitmap = page_obj.render(scale=scale)
@@ -1416,10 +1421,13 @@ def find_relevant_pages_by_heading(
 
                 text = " ".join(lines).lower()
                 for key, kws in heading_keywords.items():
-                    if key.startswith("skip_") or key in found:
+                    if key.startswith("skip_"):
+                        continue
+                    matched_pages = found.setdefault(key, [])
+                    if len(matched_pages) >= 3 or idx in matched_pages:
                         continue
                     if any(kw.lower() in text for kw in kws):
-                        found[key] = idx
+                        matched_pages.append(idx)
                         _tlog(f"[HEADING-SCAN] '{key}' matched on page {idx+1} (of {total_pages})")
 
                 if stop_after_all_found and target_keys <= found.keys():
@@ -1455,10 +1463,22 @@ def perform_targeted_ocr_lower_court(
     vision_available = is_vision_model_available()
     paddle_available = is_paddle_available()
 
-    target_pages = find_relevant_pages_by_heading(file_path, heading_keywords)
-    page_idxs = sorted(set(target_pages.values()))
+    with pdfium.PdfDocument(file_path) as doc:
+        total_pages = len(doc)
 
-    if not page_idxs:
+    unconditional = [0, 1]
+    if total_pages > 2:
+        unconditional.append(total_pages - 1)
+
+    target_pages = find_relevant_pages_by_heading(file_path, heading_keywords)
+    matched_idxs = []
+    for val in target_pages.values():
+        if isinstance(val, list):
+            matched_idxs.extend(val)
+        else:
+            matched_idxs.append(val)
+
+    if not matched_idxs:
         # Nothing matched within the default cap — widen the scan once,
         # still bounded (never fall back to OCRing the whole bundle).
         _tlog(f"[TARGETED-OCR] no headings matched in first pass — widening scan to "
@@ -1466,10 +1486,14 @@ def perform_targeted_ocr_lower_court(
         target_pages = find_relevant_pages_by_heading(
             file_path, heading_keywords, max_scan_pages=OCR_HEADING_SCAN_WIDEN_MAX_PAGES
         )
-        page_idxs = sorted(set(target_pages.values()))
+        matched_idxs = []
+        for val in target_pages.values():
+            if isinstance(val, list):
+                matched_idxs.extend(val)
+            else:
+                matched_idxs.append(val)
 
-    with pdfium.PdfDocument(file_path) as doc:
-        total_pages = len(doc)
+    page_idxs = sorted(set(matched_idxs + unconditional))
 
     if not page_idxs:
         _tlog(f"[TARGETED-OCR] no target-heading pages found in {total_pages}-page bundle "

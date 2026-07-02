@@ -1583,7 +1583,12 @@ def format_suggestions_for_calculator(suggestions):
             elif flat_key == "permanent_disability":
                 raw_val = suggestions.get("disability")
             elif flat_key == "injured_name" or flat_key == "deceased_name":
-                raw_val = suggestions.get("name") or suggestions.get("claimant_name")
+                raw_val = (
+                    suggestions.get("name") or
+                    suggestions.get("claimant_name") or
+                    suggestions.get("injured_name") or
+                    suggestions.get("deceased_name")
+                )
 
         if raw_val is None:
             raw_val = default_val
@@ -4187,7 +4192,7 @@ def extract_hindi_narrative_income(raw_text: str):
 # whitespace only and keep line breaks as real boundaries.
 
 _DEVA_RANGE = r'\u0900-\u097F'
-_HI_NAME_TOK = rf'[{_DEVA_RANGE}]+(?:[.\-][{_DEVA_RANGE}]+)*'
+_HI_NAME_TOK = rf'[{_DEVA_RANGE}a-zA-Z]+(?:[.\-][{_DEVA_RANGE}a-zA-Z]+)*'
 _HI_NAME_SPAN = rf'{_HI_NAME_TOK}(?: {_HI_NAME_TOK}){{0,2}}'        # tight span, low-noise
 _HI_NAME_SPAN_WIDE = rf'{_HI_NAME_TOK}(?: {_HI_NAME_TOK}){{0,7}}'   # wide span for labeled rows
 
@@ -4202,38 +4207,45 @@ HINDI_HEADING_KEYWORDS = {
     # income of the claimant, in a clean numbered label:value table.
     "central_filing_counter": [
         "केन्द्रीय भरण काउन्टर", "केंद्रीय भरण काउंटर", "भरण काउन्टर",
+        "central filing counter", "filing counter", "filing counter sheet",
     ],
     # District Court header details
     "district_court_hi": [
-        "जिला न्यायालय", "व्यवहार न्यायालय",
+        "जिला न्यायालय", "व्यवहार न्यायालय", "district court", "civil court",
     ],
     # Claims Tribunal details / Presiding Officer
     "claims_tribunal_hi": [
         "न्यायालय श्रीमान सदस्य मोटर दुर्घटना दावा अधिकरण",
         "सदस्य मोटर दुर्घटना दावा अधिकरण",
         "दुर्घटना दावा अधिकरण",
+        "motor accident claims tribunal", "claims tribunal", "mact",
     ],
     # Tribunal's own computer/registration sheet — case no., filing no.,
     # CNR, registration/institution dates.
     "computer_sheet_hi": [
         "कम्प्यूटर शीट", "संगणक पत्रक", "पंजीयन क्रमांक", "फाइलिंग नंबर",
+        "computer sheet", "registration number", "institution date",
     ],
     # Operative part of the award — carries the actual compensation figure,
     # interest rate, and liability apportionment.
     "award_operative_hi": [
         "अधिनिर्णय", "अवार्ड", "अधिकरण द्वारा पारित",
+        "award", "judgment", "operative part", "final order",
     ],
     # Issues + findings table — trial-court functional equivalent of an
     # HC appeal's "Grounds"; not currently parsed field-by-field, kept as
     # a heading target so callers can decide to fetch it too.
     "issues_findings_hi": [
         "वाद प्रश्न", "वादप्रश्न", "निष्कर्ष",
+        "issues", "findings",
     ],
     "compensation_table_hi": [
         "क्षतिपूर्ति राशि", "कुल प्रतिकर", "कुल क्षतिपूर्ति", "मुआवजा राशि",
+        "compensation table", "compensation awarded", "awarded amount", "quantum of compensation",
     ],
     "prayer_hi": [
         "प्रार्थना", "निवेदन किया गया",
+        "prayer", "relief claimed", "relief",
     ],
     # Recognized but intentionally excluded from "pages we still need" —
     # registry/admin pages with no autofill-relevant content. Not searched
@@ -4242,6 +4254,7 @@ HINDI_HEADING_KEYWORDS = {
     # what NOT to bother targeting.
     "skip_admin_hi": [
         "वकालतनामा", "नोटरी", "स्टाम्प", "कोर्ट फीस रसीद",
+        "vakalatnama", "notary", "court fee receipt",
     ],
 }
 
@@ -4278,47 +4291,38 @@ def parse_hindi_extracted_text(text_lines: list) -> dict:
     out, conf = {}, {}
 
     # ---- name + father's name -------------------------------------------------
-    # 1) Preferred: labeled row "नाम और पिता का नाम <value>" (Central Filing
-    #    Counter format) — high confidence, it's a literal table cell.
-    m = re.search(rf'नाम और पिता का नाम ({_HI_NAME_SPAN_WIDE})', flat)
+    # 1) Preferred: labeled row "नाम और पिता का नाम <value>" or "Name & Father's Name <value>"
+    m = re.search(rf'(?:नाम(?: और| एवं|/)? पिता का नाम|Name\s*(?:&|and|/)?\s*Father\'s\s*Name) *(?:[:\-]+)? *({_HI_NAME_SPAN_WIDE})', flat, re.IGNORECASE)
     if m:
         val = m.group(1).strip()
-        m2 = re.match(rf'^({_HI_NAME_SPAN_WIDE}?) *(?:पुत्र|पुत्री) +(?:श्री +)?({_HI_NAME_SPAN_WIDE})$', val)
+        m2 = re.match(rf'^({_HI_NAME_SPAN_WIDE}?) *(?:पुत्र|पुत्री|son of|daughter of|s/o|d/o|w/o|पत्नी|husband of) +(?:श्री|shri|late|स्व\.)? *({_HI_NAME_SPAN_WIDE})$', val, re.IGNORECASE)
         if m2:
             out["injured_name"] = _hi_trim_stopwords(m2.group(1))
             out["father_name"] = _hi_trim_stopwords(m2.group(2))
             conf["injured_name"] = conf["father_name"] = 0.90
 
-    # 2) Fallback: first "<Name> पुत्र/पुत्री [श्री] <Father>" occurrence
-    #    anywhere in the matched pages. Deliberately anchored on
-    #    पुत्र/पुत्री, not on पिता alone — "पिता" alone also appears in
-    #    unrelated guardian/"बलि संरक्षक" clauses later on award pages,
-    #    which would otherwise be mismatched as the claimant's own parentage.
-    #    Lower confidence — free text, not a table cell — so it shows up in
-    #    low_confidence_fields for manual review rather than being trusted blindly.
+    # 2) Fallback: first "<Name> पुत्र/पुत्री [श्री] <Father>" or "<Name> s/o <Father>" occurrence
     if "injured_name" not in out:
-        m = re.search(rf'({_HI_NAME_SPAN}) +(?:पुत्र|पुत्री) +(?:श्री +)?({_HI_NAME_SPAN})', flat)
+        m = re.search(rf'({_HI_NAME_SPAN}) +(?:पुत्र|पुत्री|son of|daughter of|s/o|d/o|w/o|पत्नी) +(?:श्री +|shri +|late +|स्व\. +)?({_HI_NAME_SPAN})', flat, re.IGNORECASE)
         if m:
             out["injured_name"] = _hi_trim_stopwords(m.group(1))
             out["father_name"] = _hi_trim_stopwords(m.group(2))
             conf["injured_name"] = conf["father_name"] = 0.65
 
     # ---- age --------------------------------------------------------------
-    m = re.search(r'आयु *(?:लगभग)?[ \-]*?(\d{1,3}) *वर्ष', flat)
+    m = re.search(r'(?:आयु|उम्र|age) *(?:लगभग)?[ \-:]*?(\d{1,3}) *(?:वर्ष|years|yrs)', flat, re.IGNORECASE)
     if m:
         out["age"] = int(m.group(1))
         conf["age"] = 0.85
 
     # ---- monthly income -----------------------------------------------------
-    m = re.search(r'मासिक आय ([\d,]+) */?-? *(?:रु|रूपये)?', flat)
+    m = re.search(r'(?:मासिक आय|मासिक वेतन|monthly income|monthly salary) *(?:[:\-]+)? *(?:लगभग)? *([\d,]+\.?\d*) *(?:रु|रूपये|rs|rupees)?', flat, re.IGNORECASE)
     if m:
         out["monthly_income"] = _hi_clean_amount(m.group(1))
         conf["monthly_income"] = 0.85
 
     # ---- date of accident ---------------------------------------------------
-    m = re.search(r'दिनांक[ –\-]*(\d{1,2}[./]\d{1,2}[./]\d{4}) +को +हुई', flat)
-    if not m:
-        m = re.search(r'दिनांक[ –\-]*(\d{1,2}[./]\d{1,2}[./]\d{4})', flat)
+    m = re.search(r'(?:दिनांक|date of accident|accident date) *(?:[:\-]+)? *(\d{1,2}[./-]\d{1,2}[./-]\d{4})', flat, re.IGNORECASE)
     if m:
         out["date_of_accident"] = m.group(1).replace("/", ".")
         conf["date_of_accident"] = 0.55   # best-effort: first date-like token near "दिनांक", not always the accident date
