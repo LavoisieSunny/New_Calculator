@@ -153,15 +153,15 @@ async def evaluate_precedents(request: EvaluateRequest):
         raise HTTPException(status_code=500, detail=f"Comparative evaluation failed: {str(e)}")
 
 class PDFChatRequest(BaseModel):
-    question: str = None
-    message: str = None  # Backwards compatibility
-    filename: str = None  # if provided, chats strictly with this PDF
+    question: str | None = None
+    message: str | None = None  # Backwards compatibility
+    filename: str | None = None  # if provided, chats strictly with this PDF
     case_type: str = "all"  # 'injury', 'death', or 'all'
     
     # Validation context fields
-    ocr_text: str = None
-    parsed_fields: dict = None
-    calculator_result: dict = None
+    ocr_text: str | None = None
+    parsed_fields: dict | None = None
+    calculator_result: dict | None = None
     is_justify: bool = False
 
 @app.post("/api/chat/pdf")
