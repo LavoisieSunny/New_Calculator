@@ -1602,7 +1602,8 @@ def perform_ocr_on_scanned_pdf(
     progress_callback=None,
     page_callback=None,
     scan_all_pages: bool = False,
-    original_filename: str = None
+    original_filename: str = None,
+    track: str = "high_court"
 ) -> tuple:
     """
     Main pipeline for scanned PDF OCR — hybrid PaddleOCR + qwen2.5vl:7b.
@@ -1741,7 +1742,8 @@ def perform_ocr_on_scanned_pdf(
                         fitz_text=ft,
                         pdf_path=file_path,
                         vision_available=vision_available,
-                        paddle_available=paddle_available
+                        paddle_available=paddle_available,
+                        track=track
                     )
                 except Exception as e:
                     # Critical: without this, an exception on ANY single page
@@ -2204,12 +2206,12 @@ async def process_single_file(file: UploadFile = File(...)):
                     loop = asyncio.get_event_loop()
 
                     if track == "lower_court":
-                        yield f"data: {json.dumps({'status': 'ocr', 'progress': 50, 'message': 'Lower-court bundle detected — locating relevant Hindi pages...'})}\n\n"
+                        yield f"data: {json.dumps({'status': 'ocr', 'progress': 50, 'message': 'Lower-court bundle detected — running hybrid OCR...'})}\n\n"
                         await asyncio.sleep(0.01)
                         ocr_future = loop.run_in_executor(
                             None,
-                            lambda: perform_targeted_ocr_lower_court(
-                                temp_path, page_callback=_page_cb
+                            lambda: perform_ocr_on_scanned_pdf(
+                                temp_path, page_callback=_page_cb, original_filename=file.filename, track="lower_court"
                             )
                         )
                     else:
@@ -2218,7 +2220,7 @@ async def process_single_file(file: UploadFile = File(...)):
                         ocr_future = loop.run_in_executor(
                             None,
                             lambda: perform_ocr_on_scanned_pdf(
-                                temp_path, page_callback=_page_cb, original_filename=file.filename
+                                temp_path, page_callback=_page_cb, original_filename=file.filename, track="high_court"
                             )
                         )
 
