@@ -14,7 +14,8 @@ from backend.parser_heuristics import (
     parse_chronological_events,
     extract_compensation_table_fields,
     parse_extracted_text,
-    extract_hindi_narrative_income
+    extract_hindi_narrative_income,
+    parse_compensation_table
 )
 
 class TestParserHeuristics(unittest.TestCase):
@@ -102,6 +103,34 @@ class TestParserHeuristics(unittest.TestCase):
         self.assertEqual(fields["funeral_expenses"], 15000.0)
         self.assertEqual(fields["consortium"], 40000.0)
         self.assertEqual(fields["total_compensation"], 1255000.0)
+
+    def test_comma_separated_compensation_table_extraction(self):
+        """Verify parsing of comma-separated compensation clauses."""
+        text = (
+            "Amount of general damages awarded by the Tribunal: Rs. 140118/- "
+            "for future loss of income, Rs. 25,000/- for mental and physical "
+            "pain and sufferings, Rs. 10000/- for attendant, Rs. 5000/- for "
+            "special diet."
+        )
+        table = parse_compensation_table(text)
+
+        # Expected: all four clauses present with correct amounts.
+        self.assertTrue(any("loss of income" in k.lower() for k in table))
+        self.assertTrue(any("pain" in k.lower() for k in table))
+        self.assertTrue(any("attendant" in k.lower() for k in table))
+        self.assertTrue(any("diet" in k.lower() for k in table))
+
+        def get_table_value(keys):
+            for k in keys:
+                for t_key, t_val in table.items():
+                    if k.lower() in t_key.lower():
+                        return t_val
+            return None
+
+        self.assertEqual(get_table_value(["loss of income", "future loss of income"]), 140118.0)
+        self.assertEqual(get_table_value(["pain"]), 25000.0)
+        self.assertEqual(get_table_value(["attender", "attendant", "nursing"]), 10000.0)
+        self.assertEqual(get_table_value(["diet"]), 5000.0)
 
     def test_dynamic_section_detection_and_fallback(self):
         """Verify dynamic sections are detected by headings, and fall back correctly when missing."""

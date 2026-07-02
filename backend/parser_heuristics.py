@@ -857,6 +857,61 @@ def parse_indian_rupee_value(text):
     return 0.0
 
 
+_VALID_HEADS = [
+    "dependency", "consortium", "funeral", "estate", "pain", "medical", 
+    "transport", "nourishment", "diet", "attender", "attendant", 
+    "disability", "amenities", "earning", "structure", "litigation", 
+    "miscellaneous", "marriage", "expectation", "love", "enjoyment", 
+    "lumpsum", "spouse", "parental", "children", "wife", "mother", 
+    "father", "husband", "brother", "sister", "income", "damages", 
+    "general", "loss", "treatment", "expenses"
+]
+
+
+def is_valid_head(head_str):
+    hl = head_str.lower()
+    if len(head_str) <= 3:
+        return False
+    if not any(kw in hl for kw in _VALID_HEADS):
+        return False
+    reject_kws = ["total", "interest", "passed", "order", "judgment"]
+    if any(kw in hl for kw in reject_kws):
+        return False
+    if "awarded" in hl and "awarded by" not in hl:
+        return False
+    return True
+
+
+_CLAUSE_PATTERN = re.compile(
+    r'(?:rs\.?|inr)\s*([\d,]+(?:\.\d+)?)\s*/?-?\s+for\s+'
+    r'([a-zA-Z][a-zA-Z\s&]{2,60}?)'
+    r'(?=\s*,\s*(?:rs\.?|inr)|[.;]|$)',
+    re.IGNORECASE
+)
+
+
+def parse_comma_separated_compensation_clauses(text: str) -> dict:
+    """
+    Handles the common MACT/HC template sentence:
+    'Rs. X/- for <head>, Rs. Y/- for <head>, Rs. Z/- for <head>.'
+    — a format parse_compensation_table's line-based pattern_single
+    cannot match at all, because its head-capture group excludes
+    commas and therefore cannot bridge between clauses. Returns
+    {head.title(): amount} for every clause found, using the same
+    is_valid_head() gate as the rest of the table so garbage clause
+    fragments are rejected the same way.
+    """
+    found = {}
+    if not text:
+        return found
+    for m in _CLAUSE_PATTERN.finditer(text):
+        amount = parse_indian_rupee_value(m.group(1))
+        head = re.sub(r'\s+', ' ', m.group(2)).strip()
+        if amount > 0 and is_valid_head(head):
+            found[head.title()] = amount
+    return found
+
+
 def parse_compensation_table(text):
     """
     Layer 3: Compensation Table Parser.
@@ -869,15 +924,6 @@ def parse_compensation_table(text):
     table = {}
     lines = [line.strip() for line in text.split("\n") if line.strip()]
     
-    valid_heads = [
-        "dependency", "consortium", "funeral", "estate", "pain", "medical", 
-        "transport", "nourishment", "attender", "disability", "amenities", 
-        "earning", "structure", "litigation", "miscellaneous", "marriage", 
-        "expectation", "love", "enjoyment", "lumpsum", "spouse", "parental", 
-        "children", "wife", "mother", "father", "husband", "brother", "sister",
-        "income", "damages", "general", "loss", "treatment", "expenses"
-    ]
-    
     cleaned_lines = []
     for line in lines:
         cleaned = re.sub(r'[\(\)]', ' ', line)
@@ -886,19 +932,6 @@ def parse_compensation_table(text):
         
     pattern_single = r'(?:\d+[\.\)\-]\s*)?([A-Za-z\s&\(\)/\-\’\‘\“\”]+)\s*(?:[:\-–]|\b\.?\s*rs\.?\b)\s*(?:rs\.?|inr)?\s*([\d,\.\s]+lakhs?|[\d,\.\-\/]+)\b'
     
-    def is_valid_head(head_str):
-        hl = head_str.lower()
-        if len(head_str) <= 3:
-            return False
-        if not any(kw in hl for kw in valid_heads):
-            return False
-        reject_kws = ["total", "interest", "passed", "order", "judgment"]
-        if any(kw in hl for kw in reject_kws):
-            return False
-        if "awarded" in hl and "awarded by" not in hl:
-            return False
-        return True
-
     i = 0
     while i < len(cleaned_lines):
         line = cleaned_lines[i]
@@ -950,6 +983,11 @@ def parse_compensation_table(text):
                 
         i += 1
         
+    clause_matches = parse_comma_separated_compensation_clauses(text)
+    for head, val in clause_matches.items():
+        if head not in table:
+            table[head] = val
+            
     return table
 
 
