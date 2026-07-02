@@ -1582,6 +1582,18 @@ def format_suggestions_for_calculator(suggestions):
                 raw_val = suggestions.get("loss_of_estate")
             elif flat_key == "permanent_disability":
                 raw_val = suggestions.get("disability")
+            elif flat_key == "disability":
+                raw_val = suggestions.get("disability_percentage") or suggestions.get("permanent_disability") or suggestions.get("disability")
+            elif flat_key == "medical_expenses":
+                raw_val = suggestions.get("medical_expenses") or suggestions.get("medical_expense")
+            elif flat_key == "future_medical_expenses":
+                raw_val = suggestions.get("future_medical_expenses") or suggestions.get("future_medical_expense")
+            elif flat_key == "pain_and_suffering":
+                raw_val = suggestions.get("pain_and_suffering") or suggestions.get("pain_suffering")
+            elif flat_key == "attender_charges":
+                raw_val = suggestions.get("attender_charges") or suggestions.get("attendant_charges")
+            elif flat_key == "loss_of_income":
+                raw_val = suggestions.get("loss_of_income") or suggestions.get("loss_income") or suggestions.get("loss_of_earnings")
             elif flat_key == "injured_name" or flat_key == "deceased_name":
                 raw_val = (
                     suggestions.get("name") or
@@ -4365,6 +4377,56 @@ def parse_hindi_extracted_text(text_lines: list) -> dict:
     if m:
         out["interest_rate"] = float(m.group(1))
         conf["interest_rate"] = 0.70
+
+    # ---- Detailed Compensation Heads (Hindi) -----------------------------------
+    for line in lines_norm:
+        # 1. Medical Expenses
+        m_med = re.search(r'(?:चिकित्सा|इलाज|दवा|औषधि|उपचार) *व्यय? *(?:रुपये|रूपये|रू|रु)?[:\- ]*([\d,]+\.?\d*)', line)
+        if m_med and "medical_expenses" not in out:
+            out["medical_expenses"] = _hi_clean_amount(m_med.group(1))
+            conf["medical_expenses"] = 0.80
+
+        # 2. Pain and Suffering
+        m_pain = re.search(r'(?:कष्ट|पीड़ा|वेदना|शारीरिक एवं मानसिक वेदना) *(?:रुपये|रूपये|रू|रु)?[:\- ]*([\d,]+\.?\d*)', line)
+        if m_pain and "pain_and_suffering" not in out:
+            out["pain_and_suffering"] = _hi_clean_amount(m_pain.group(1))
+            conf["pain_and_suffering"] = 0.80
+
+        # 3. Transportation
+        m_trans = re.search(r'(?:परिवहन|आवागमन|वाहन|यातायात) *व्यय? *(?:रुपये|रूपये|रू|रु)?[:\- ]*([\d,]+\.?\d*)', line)
+        if m_trans and "transportation" not in out:
+            out["transportation"] = _hi_clean_amount(m_trans.group(1))
+            conf["transportation"] = 0.80
+
+        # 4. Special Diet
+        m_diet = re.search(r'(?:विशेष भोजन|पौष्टिक आहार|विशेष खुराक|पौष्टिक भोजन) *व्यय? *(?:रुपये|रूपये|रू|रु)?[:\- ]*([\d,]+\.?\d*)', line)
+        if m_diet and "special_diet" not in out:
+            out["special_diet"] = _hi_clean_amount(m_diet.group(1))
+            conf["special_diet"] = 0.80
+
+        # 5. Attender Charges
+        m_att = re.search(r'(?:परिचारक|अटेंडर|सहायक|अटेण्डर) *व्यय? *(?:रुपये|रूपये|रू|रु)?[:\- ]*([\d,]+\.?\d*)', line)
+        if m_att and "attender_charges" not in out:
+            out["attender_charges"] = _hi_clean_amount(m_att.group(1))
+            conf["attender_charges"] = 0.80
+
+        # 6. Future Medical Expenses
+        m_fut = re.search(r'(?:भविष्य|आगामी) *(?:चिकित्सा|इलाज|उपचार) *व्यय? *(?:रुपये|रूपये|रू|रु)?[:\- ]*([\d,]+\.?\d*)', line)
+        if m_fut and "future_medical_expenses" not in out:
+            out["future_medical_expenses"] = _hi_clean_amount(m_fut.group(1))
+            conf["future_medical_expenses"] = 0.80
+
+        # 7. Loss of Income
+        m_inc = re.search(r'(?:इलाज के दौरान|उपचार अवधि|इलाज अवधि) *(?:आय|वेतन) की *(?:हानि|क्षति|नुकसान) *(?:रुपये|रूपये|रू|रु)?[:\- ]*([\d,]+\.?\d*)', line)
+        if m_inc and "loss_of_income" not in out:
+            out["loss_of_income"] = _hi_clean_amount(m_inc.group(1))
+            conf["loss_of_income"] = 0.80
+
+        # 8. Disability Percentage
+        m_dis = re.search(r'(?:स्थायी|स्थाई)? *(?:अपंगता|विकलांगता|निरोग्यता) *(?:का प्रतिशत)? *(?:लगभग)?[:\- ]*(\d{1,3}) *(?:%|प्रतिशत)?', line)
+        if m_dis and "disability" not in out:
+            out["disability"] = int(m_dis.group(1))
+            conf["disability"] = 0.80
 
     # ---- case type: death vs injury ----------------------------------------------
     death_kws = ["मृत्यु", "मृतक", "स्वर्गीय", "दिवंगत"]
