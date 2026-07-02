@@ -4127,3 +4127,208 @@ def extract_hindi_narrative_income(raw_text: str):
     candidates.sort(key=lambda c: -c[0])
     _, best_amount, best_clause = candidates[0]
     return best_amount, best_clause
+
+# ======================================================================
+# LOWER COURT / HINDI TARGETED FIELD PARSER
+# ======================================================================
+#
+# Deliberately separate from parse_extracted_text() above (which is
+# English-only by design — see the Devanagari-strip note near its start).
+# This parser is only ever called on the small set of heading-matched pages
+# produced by backend.ocr.find_relevant_pages_by_heading() (the "केन्द्रीय
+# भरण काउन्टर" cover sheet and/or the award's operative/compensation-table
+# page) — a handful of dense, mostly-tabular pages, not free-flowing
+# judgment prose. That's what makes regex extraction viable here.
+#
+# IMPORTANT: Python's \w does NOT match Devanagari combining vowel signs /
+# virama (Unicode categories Mn/Mc — e.g. ि ् ू), which appear in almost
+# every Hindi word. Any \w-based pattern silently fails on Hindi text.
+# Always use an explicit [\u0900-\u097F] range instead. Similarly, \s
+# matches newlines, so an unguarded {0,n} token span can silently jump
+# across unrelated lines — the helpers below normalize horizontal
+# whitespace only and keep line breaks as real boundaries.
+
+_DEVA_RANGE = r'\u0900-\u097F'
+_HI_NAME_TOK = rf'[{_DEVA_RANGE}]+(?:[.\-][{_DEVA_RANGE}]+)*'
+_HI_NAME_SPAN = rf'{_HI_NAME_TOK}(?: {_HI_NAME_TOK}){{0,2}}'        # tight span, low-noise
+_HI_NAME_SPAN_WIDE = rf'{_HI_NAME_TOK}(?: {_HI_NAME_TOK}){{0,7}}'   # wide span for labeled rows
+
+_HI_STOPWORDS = {
+    "आवेदिका", "आवेदक", "अनावेदक", "अनावेदकगण", "श्री", "श्रीमती", "कुमारी",
+    "कुमार", "सुश्री", "स्व", "की", "ओर", "से", "हेतु", "द्वारा", "को", "के",
+}
+
+HINDI_HEADING_KEYWORDS = {
+    # Structured cover-sheet used across MP eCourts trial-court bundles —
+    # highest-value single page for autofill: name/father/age/occupation/
+    # income of the claimant, in a clean numbered label:value table.
+    "central_filing_counter": [
+        "केन्द्रीय भरण काउन्टर", "केंद्रीय भरण काउंटर", "भरण काउन्टर",
+    ],
+    # Tribunal's own computer/registration sheet — case no., filing no.,
+    # CNR, registration/institution dates.
+    "computer_sheet_hi": [
+        "कम्प्यूटर शीट", "संगणक पत्रक", "पंजीयन क्रमांक", "फाइलिंग नंबर",
+    ],
+    # Operative part of the award — carries the actual compensation figure,
+    # interest rate, and liability apportionment.
+    "award_operative_hi": [
+        "अधिनिर्णय", "अवार्ड", "अधिकरण द्वारा पारित",
+    ],
+    # Issues + findings table — trial-court functional equivalent of an
+    # HC appeal's "Grounds"; not currently parsed field-by-field, kept as
+    # a heading target so callers can decide to fetch it too.
+    "issues_findings_hi": [
+        "वाद प्रश्न", "वादप्रश्न", "निष्कर्ष",
+    ],
+    "compensation_table_hi": [
+        "क्षतिपूर्ति राशि", "कुल प्रतिकर", "कुल क्षतिपूर्ति", "मुआवजा राशि",
+    ],
+    "prayer_hi": [
+        "प्रार्थना", "निवेदन किया गया",
+    ],
+    # Recognized but intentionally excluded from "pages we still need" —
+    # registry/admin pages with no autofill-relevant content. Not searched
+    # for (keys starting with "skip_" are skipped by
+    # find_relevant_pages_by_heading), kept here only as documentation of
+    # what NOT to bother targeting.
+    "skip_admin_hi": [
+        "वकालतनामा", "नोटरी", "स्टाम्प", "कोर्ट फीस रसीद",
+    ],
+}
+
+
+def _hi_trim_stopwords(text: str) -> str:
+    tokens = text.strip().split(" ")
+    while tokens and tokens[0] in _HI_STOPWORDS:
+        tokens = tokens[1:]
+    while tokens and tokens[-1] in _HI_STOPWORDS:
+        tokens = tokens[:-1]
+    return " ".join(tokens).strip()
+
+
+def _hi_clean_amount(raw: str):
+    raw = raw.replace(",", "")
+    m = re.search(r'\d+\.?\d*', raw)
+    return float(m.group(0)) if m else None
+
+
+def parse_hindi_extracted_text(text_lines: list) -> dict:
+    """
+    Regex field extractor for the small set of targeted Hindi pages (Central
+    Filing Counter cover sheet + award operative/compensation pages).
+    Returns a `suggestions` dict shaped compatibly with
+    format_suggestions_for_calculator() (case_type, flat field keys,
+    confidence_scores), so it's a drop-in alternative to
+    parse_extracted_text() for the lower_court track — same downstream
+    consumers, no changes needed elsewhere.
+    """
+    full_text = "\n".join(l for l in text_lines if not l.strip().startswith("--- PAGE"))
+    lines_norm = [re.sub(r'[ \t]+', ' ', l).strip() for l in full_text.split('\n')]
+    flat = "\n".join(lines_norm)   # horizontal whitespace normalized, newlines preserved as boundaries
+
+    out, conf = {}, {}
+
+    # ---- name + father's name -------------------------------------------------
+    # 1) Preferred: labeled row "नाम और पिता का नाम <value>" (Central Filing
+    #    Counter format) — high confidence, it's a literal table cell.
+    m = re.search(rf'नाम और पिता का नाम ({_HI_NAME_SPAN_WIDE})', flat)
+    if m:
+        val = m.group(1).strip()
+        m2 = re.match(rf'^({_HI_NAME_SPAN_WIDE}?) *(?:पुत्र|पुत्री) +(?:श्री +)?({_HI_NAME_SPAN_WIDE})$', val)
+        if m2:
+            out["injured_name"] = _hi_trim_stopwords(m2.group(1))
+            out["father_name"] = _hi_trim_stopwords(m2.group(2))
+            conf["injured_name"] = conf["father_name"] = 0.90
+
+    # 2) Fallback: first "<Name> पुत्र/पुत्री [श्री] <Father>" occurrence
+    #    anywhere in the matched pages. Deliberately anchored on
+    #    पुत्र/पुत्री, not on पिता alone — "पिता" alone also appears in
+    #    unrelated guardian/"बलि संरक्षक" clauses later on award pages,
+    #    which would otherwise be mismatched as the claimant's own parentage.
+    #    Lower confidence — free text, not a table cell — so it shows up in
+    #    low_confidence_fields for manual review rather than being trusted blindly.
+    if "injured_name" not in out:
+        m = re.search(rf'({_HI_NAME_SPAN}) +(?:पुत्र|पुत्री) +(?:श्री +)?({_HI_NAME_SPAN})', flat)
+        if m:
+            out["injured_name"] = _hi_trim_stopwords(m.group(1))
+            out["father_name"] = _hi_trim_stopwords(m.group(2))
+            conf["injured_name"] = conf["father_name"] = 0.65
+
+    # ---- age --------------------------------------------------------------
+    m = re.search(r'आयु *(?:लगभग)?[ \-]*?(\d{1,3}) *वर्ष', flat)
+    if m:
+        out["age"] = int(m.group(1))
+        conf["age"] = 0.85
+
+    # ---- monthly income -----------------------------------------------------
+    m = re.search(r'मासिक आय ([\d,]+) */?-? *(?:रु|रूपये)?', flat)
+    if m:
+        out["monthly_income"] = _hi_clean_amount(m.group(1))
+        conf["monthly_income"] = 0.85
+
+    # ---- date of accident ---------------------------------------------------
+    m = re.search(r'दिनांक[ –\-]*(\d{1,2}[./]\d{1,2}[./]\d{4}) +को +हुई', flat)
+    if not m:
+        m = re.search(r'दिनांक[ –\-]*(\d{1,2}[./]\d{1,2}[./]\d{4})', flat)
+    if m:
+        out["date_of_accident"] = m.group(1).replace("/", ".")
+        conf["date_of_accident"] = 0.55   # best-effort: first date-like token near "दिनांक", not always the accident date
+
+    # ---- vehicle number -------------------------------------------------------
+    m = re.search(
+        r'(?:मो\.? *सा\.?|वाहन) *(?:क्रं|क्रमांक|नं)?\.? *([A-Z]{2}[ \-]?\d{1,2}[ \-]?[A-Z]{1,3}[ \-]?\d{3,4})',
+        flat, re.IGNORECASE
+    )
+    if m:
+        out["vehicle_number"] = m.group(1).strip()
+        conf["vehicle_number"] = 0.75
+
+    # ---- policy number ---------------------------------------------------------
+    m = re.search(r'(?:पॉलिसी|पालिसी) *(?:कवर *नोट)? *नं?\.? *([A-Za-z0-9\-/]{5,20})', flat)
+    if m:
+        out["policy_number"] = m.group(1).strip()
+        conf["policy_number"] = 0.75
+
+    # ---- insurance company -------------------------------------------------------
+    m = re.search(
+        rf'({_HI_NAME_SPAN} +(?:इन्शोरेंस|इंश्योरेंस|इंश्योरेन्स|इन्श्योरेंस) +{_HI_NAME_TOK}(?: +{_HI_NAME_TOK}){{0,2}})',
+        flat
+    )
+    if m:
+        out["insurance_company"] = m.group(1).strip()
+        conf["insurance_company"] = 0.70
+
+    # ---- award / total compensation amount --------------------------------------
+    m = re.search(r'प्रतिकर राशि रूपये *([\d,]+\.?\d*)', flat)
+    if not m:
+        m = re.search(r'कुल *(?:क्षतिपूर्ति|प्रतिकर) *(?:राशि)?[^\d]{0,10}([\d,]+\.?\d*)', flat)
+    if m:
+        out["award_amount"] = _hi_clean_amount(m.group(1))
+        out["total_compensation"] = out["award_amount"]
+        conf["award_amount"] = 0.90
+
+    # ---- interest rate (debug/reference field, not in calculator schema) --------
+    m = re.search(r'(\d{1,2}) *(?:%|प्रतिशत) *वार्षिक', flat)
+    if m:
+        out["interest_rate"] = float(m.group(1))
+        conf["interest_rate"] = 0.70
+
+    # ---- case type: death vs injury ----------------------------------------------
+    death_kws = ["मृत्यु", "मृतक", "स्वर्गीय", "दिवंगत"]
+    injury_kws = ["उपहति", "क्षतिग्रस्त", "घायल", "चोट", "अपंगता", "निर्योग्यता", "विकलांगता"]
+    death_hits = sum(flat.count(k) for k in death_kws)
+    injury_hits = sum(flat.count(k) for k in injury_kws)
+    out["case_type"] = "death" if death_hits > injury_hits else "injury"
+
+    # ---- case number (metadata, not a calculator field, kept for traceability) --
+    m = re.search(
+        r'(?:एम\.?ए\.?सी\.?सी\.?|MACC)[.\s]*(?:क्\.?|No\.?|नं\.?)? *[-–:]? *(\d{1,6} */ *\d{4})',
+        flat, re.IGNORECASE
+    )
+    if m:
+        out["case_number"] = m.group(1).replace(" ", "")
+
+    out["confidence_scores"] = {k: {"confidence": v} for k, v in conf.items()}
+    out["ai_recovery_triggered"] = False
+    return out
