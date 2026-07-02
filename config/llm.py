@@ -14,9 +14,9 @@ LLM_PROVIDER = os.getenv("LLM_PROVIDER", "ollama")
 
 # Model identifier
 # Gemini options: "gemini-1.5-flash", "gemini-2.5-flash"
-# Ollama options: "qwen2.5:7b", "llama3", "mistral"
+# Ollama options: "qwen2.5:14b", "llama3", "mistral"
 # OpenAI options: "gpt-4o-mini", "gpt-4o"
-LLM_MODEL_NAME = os.getenv("LLM_MODEL_NAME", "qwen2.5:7b")
+LLM_MODEL_NAME = os.getenv("LLM_MODEL_NAME", "qwen2.5:14b")
 
 # API Keys (Loaded from environment variable, or hardcoded for ease of development)
 LLM_API_KEY = os.getenv("LLM_API_KEY", "")
