@@ -2298,7 +2298,7 @@ async def process_single_file(file: UploadFile = File(...)):
                 os.unlink(temp_path)
                 temp_path = None
 
-            yield f"data: {json.dumps({'status': 'done', 'progress': 100, 'success': True, 'filename': file.filename, 'ocr_status': 'loaded', 'fallback_source': fallback_source, 'suggestions': formatted_suggestions, 'raw_text': text_lines, 'ocr_debug': ocr_debug})}\n\n"
+            yield f"data: {json.dumps({'status': 'done', 'progress': 100, 'success': True, 'filename': file.filename, 'ocr_status': 'loaded', 'fallback_source': fallback_source, 'suggestions': formatted_suggestions, 'track': active_track, 'raw_text': text_lines, 'ocr_debug': ocr_debug})}\n\n"
 
         except Exception as e:
             logger.error(f"Streaming OCR error: {e}")

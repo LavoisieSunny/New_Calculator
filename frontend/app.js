@@ -1171,6 +1171,7 @@ document.addEventListener("DOMContentLoaded", () => {
                             // Store raw text for AI data recovery
                             currentOcrRawText = data.raw_text || [];
                             window.lastRawText = currentOcrRawText.join("\n");
+                            window.detectedTrack = data.track || "high_court";
                             checkCaseType(caseTypeSelect.value, window.lastRawText);
 
                             // Automatically run AI (LLM) extraction right after OCR completes —
@@ -1178,7 +1179,7 @@ document.addEventListener("DOMContentLoaded", () => {
                             // above; this refines/fills in anything the heuristics missed and
                             // re-applies the merged result directly onto the form.
                             if (currentOcrRawText.length > 0) {
-                                runAiRecovery(currentOcrRawText);
+                                runAiRecovery(currentOcrRawText, window.detectedTrack);
                             }
                             if (downloadWordBtn) {
                                 if (currentOcrRawText.length > 0) {
@@ -2188,7 +2189,7 @@ This cannot be undone.`)) return;
     // AI DATA RECOVERY (LLM OPTIMIZED PARSING EXTRACTION) (Part 3, Part 4 & Part 5 integration)
     // Runs automatically right after every OCR completion (no manual button) —
     // called from handleSinglePdfUpload's success branch below.
-    async function runAiRecovery(rawTextLines) {
+    async function runAiRecovery(rawTextLines, track = "high_court") {
         if (!rawTextLines || rawTextLines.length === 0) return;
 
         const formPanel = document.querySelector("#tab-calculator .panel.scroll-y");
@@ -2208,7 +2209,7 @@ This cannot be undone.`)) return;
             const response = await fetch("/api/ocr/ai-recover", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ raw_text: rawTextLines })
+                body: JSON.stringify({ raw_text: rawTextLines, track: track })
             });
 
             loader.remove();
