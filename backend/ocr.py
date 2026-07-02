@@ -1007,7 +1007,8 @@ def ocr_page_with_vision(
     fitz_text: str = "",         # cached digital text from fitz (may be empty)
     pdf_path: str = None,        # original PDF path (for retry renders)
     vision_available: bool = True,
-    paddle_available: bool = True
+    paddle_available: bool = True,
+    track: str = "high_court"
 ) -> tuple:
     """
     Processes a single page through the hybrid OCR pipeline.
@@ -1112,8 +1113,26 @@ def ocr_page_with_vision(
     ocr_start = time.time()
     confidence = 0.0
 
+    force_vision = (
+        track == "lower_court" and
+        page_idx in (0, 1) and
+        vision_available and
+        not _vision_is_paused()
+    )
+
+    if force_vision:
+        logger.info(f"Page {page_num}: Lower Court Page {page_num} override → using qwen2.5vl:7b directly")
+        img_b64 = image_to_base64(_get_processed(), quality=85)
+        raw_text = call_vision_model(img_b64, page_num=page_num)
+        del img_b64
+        vis_lines = [l.strip() for l in raw_text.split("\n") if l.strip()] if raw_text and raw_text.strip() != "[BLANK PAGE]" else []
+        if vis_lines:
+            lines, engine_used, confidence = vis_lines, "qwen2.5vl:7b", 0.95
+
+    if lines:
+        pass
     # ── 5a. Low-content → PaddleOCR (fast, no GPU needed) ────────────
-    if classification == "low-content":
+    elif classification == "low-content":
         paddle_lines, paddle_conf, paddle_q = [], 0.0, 0.0
         if paddle_available:
             logger.info(f"Page {page_num}: low-content → PaddleOCR")
@@ -1534,11 +1553,15 @@ def perform_targeted_ocr_lower_court(
         lines, meta = ocr_page_with_vision(
             page_idx=idx, total_pages=total_pages, rendered_img_path=img_path,
             pdf_path=file_path, vision_available=vision_available, paddle_available=paddle_available,
+            track="lower_court"
         )
         if os.path.exists(img_path):
             os.unlink(img_path)
 
-        matched_headings = [k for k, v in target_pages.items() if v == idx]
+        matched_headings = [
+            k for k, v in target_pages.items()
+            if (idx in v if isinstance(v, list) else v == idx)
+        ]
         meta["matched_headings"] = matched_headings
         pages_meta.append(meta)
         text_lines.append(f"--- PAGE {idx + 1} ---")
@@ -1565,7 +1588,10 @@ def perform_targeted_ocr_lower_court(
         OCR_HYBRID_LABEL, 0, avg_q, [], [p + 1 for p in page_idxs], ["rgb_convert", "clahe_contrast"],
         "none", avg_q, average_page_confidence=avg_conf, pages=pages_meta, total_ocr_time=total_time
     )
-    ocr_debug["targeted_pages"] = {k: v + 1 for k, v in target_pages.items()}
+    ocr_debug["targeted_pages"] = {
+        k: ([x + 1 for x in v] if isinstance(v, list) else v + 1)
+        for k, v in target_pages.items()
+    }
     ocr_debug["total_pages_in_bundle"] = total_pages
     ocr_debug["pages_skipped"] = total_pages - len(page_idxs)
     return text_lines, ocr_debug
