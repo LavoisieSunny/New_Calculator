@@ -630,13 +630,21 @@ def get_ollama_embedding(text: str) -> list:
     """
     import urllib.request
     import json
+    
+    # Clean text to remove control/non-printable characters and limit length to prevent Ollama HTTP 500 errors
+    clean_text = "".join(c for c in text if c.isprintable() or c in "\n\r\t").strip()
+    if not clean_text:
+        return None
+    if len(clean_text) > 4000:
+        clean_text = clean_text[:4000]
+
     # Use config endpoint or default to local Ollama port
     from config.llm import LLM_API_ENDPOINT
     base_url = LLM_API_ENDPOINT if LLM_API_ENDPOINT else "http://localhost:11434"
     url = f"{base_url.rstrip('/')}/api/embeddings"
     payload = {
         "model": "nomic-embed-text",
-        "prompt": text
+        "prompt": clean_text
     }
     try:
         req_body = json.dumps(payload).encode("utf-8")
@@ -910,8 +918,8 @@ def index_document(filename: str, text_lines: list, suggestions: dict) -> bool:
             
             vector = get_ollama_embedding(chunk)
             if vector is None:
-                logger.error(f"Embedding generation failed for chunk {idx} of '{filename}'. Skipping this document indexing.")
-                return False
+                logger.warning(f"Embedding generation failed for chunk {idx} of '{filename}'. Skipping this chunk.")
+                continue
                 
             # MD5 hex of filename + chunk_index, converted to UUID string for stable point ID across restarts
             unique_str = f"{filename}_{idx}"
@@ -947,12 +955,16 @@ def index_document(filename: str, text_lines: list, suggestions: dict) -> bool:
                 payload=payload
             ))
             
+        if not points:
+            logger.warning(f"No points successfully embedded for document '{filename}'. Indexing aborted.")
+            return False
+
         # Upsert batch into Qdrant
         client.upsert(
             collection_name=COLLECTION_NAME,
             points=points
         )
-        logger.info(f"Indexed {len(chunks_with_page)} points for document '{filename}' in Qdrant successfully!")
+        logger.info(f"Indexed {len(points)} points for document '{filename}' in Qdrant successfully!")
         return True
     except Exception as e:
         logger.error(f"Error during Qdrant indexing: {str(e)}")
