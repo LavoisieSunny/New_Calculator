@@ -1401,7 +1401,7 @@ def find_relevant_pages_by_heading(
 
                 pil_img = guard_and_downscale_image(pil_img)
                 classification = classify_scanned_page(pil_img)
-                if classification == "blank":
+                if classification in ("blank", "image-heavy"):
                     del pil_img
                     continue
 
@@ -1489,6 +1489,20 @@ def perform_targeted_ocr_lower_court(
             pil_img = bitmap.to_pil()
             del bitmap, page_obj
         pil_img = guard_and_downscale_image(pil_img)
+        classification = classify_scanned_page(pil_img)
+        if classification in ("blank", "image-heavy"):
+            del pil_img
+            _tlog(f"[TARGETED-OCR] Page {idx+1} is {classification} — skipping expensive OCR")
+            if page_callback:
+                page_callback({
+                    "page": idx + 1, "total_pages": total_pages,
+                    "pages_done": i + 1, "engine": f"Skipped ({classification})",
+                    "confidence": 0.0,
+                    "quality_score": 0.0,
+                    "lines": 0
+                })
+            continue
+
         img_path = os.path.join(tempfile.gettempdir(), f"_targeted_{uuid.uuid4().hex}.png")
         pil_img.save(img_path, format="PNG")
         del pil_img

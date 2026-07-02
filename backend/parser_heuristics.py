@@ -4203,6 +4203,16 @@ HINDI_HEADING_KEYWORDS = {
     "central_filing_counter": [
         "केन्द्रीय भरण काउन्टर", "केंद्रीय भरण काउंटर", "भरण काउन्टर",
     ],
+    # District Court header details
+    "district_court_hi": [
+        "जिला न्यायालय", "व्यवहार न्यायालय",
+    ],
+    # Claims Tribunal details / Presiding Officer
+    "claims_tribunal_hi": [
+        "न्यायालय श्रीमान सदस्य मोटर दुर्घटना दावा अधिकरण",
+        "सदस्य मोटर दुर्घटना दावा अधिकरण",
+        "दुर्घटना दावा अधिकरण",
+    ],
     # Tribunal's own computer/registration sheet — case no., filing no.,
     # CNR, registration/institution dates.
     "computer_sheet_hi": [
