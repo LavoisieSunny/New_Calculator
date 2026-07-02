@@ -2117,15 +2117,24 @@ def run_background_pdf_indexing(file_id: str, temp_path: str, filename: str):
         if award_amount > 0:
             suggestions["award_amount"] = award_amount
             suggestions["total_compensation"] = award_amount
-            from backend.parser_heuristics import deduce_notional_income
-            suggestions["monthly_income"] = deduce_notional_income(
-                award_amount,
-                suggestions.get("age") or 30,
-                suggestions.get("marital_status") or "married",
-                suggestions.get("dependents") or "",
-                suggestions.get("future_prospect") or 25.0,
-                suggestions.get("multiplier") or 15
-            )
+            has_income = False
+            if suggestions.get("monthly_income"):
+                try:
+                    inc_val = float(str(suggestions.get("monthly_income")).replace(",", ""))
+                    if inc_val > 0:
+                        has_income = True
+                except ValueError:
+                    pass
+            if not has_income:
+                from backend.parser_heuristics import deduce_notional_income
+                suggestions["monthly_income"] = deduce_notional_income(
+                    award_amount,
+                    suggestions.get("age") or 30,
+                    suggestions.get("marital_status") or "married",
+                    suggestions.get("dependents") or "",
+                    suggestions.get("future_prospect") or 25.0,
+                    suggestions.get("multiplier") or 15
+                )
 
         BATCH_QUEUE[file_id]["status"] = "indexing"
         success = index_document(filename, text_lines, suggestions)
@@ -2281,18 +2290,34 @@ async def process_single_file(file: UploadFile = File(...)):
             if award_amount > 0:
                 suggestions["award_amount"] = award_amount
                 suggestions["total_compensation"] = award_amount
-                from backend.parser_heuristics import deduce_notional_income
-                suggestions["monthly_income"] = deduce_notional_income(
-                    award_amount,
-                    suggestions.get("age") or 30,
-                    suggestions.get("marital_status") or "married",
-                    suggestions.get("dependents") or "",
-                    suggestions.get("future_prospect") or 25.0,
-                    suggestions.get("multiplier") or 15
-                )
+                has_income = False
+                if suggestions.get("monthly_income"):
+                    try:
+                        inc_val = float(str(suggestions.get("monthly_income")).replace(",", ""))
+                        if inc_val > 0:
+                            has_income = True
+                    except ValueError:
+                        pass
+                if not has_income:
+                    from backend.parser_heuristics import deduce_notional_income
+                    suggestions["monthly_income"] = deduce_notional_income(
+                        award_amount,
+                        suggestions.get("age") or 30,
+                        suggestions.get("marital_status") or "married",
+                        suggestions.get("dependents") or "",
+                        suggestions.get("future_prospect") or 25.0,
+                        suggestions.get("multiplier") or 15
+                    )
 
             from backend.parser_heuristics import format_suggestions_for_calculator
             formatted_suggestions = format_suggestions_for_calculator(suggestions)
+
+            # Index document into Qdrant in background so Chat Assistant works for this file
+            try:
+                from backend.ocr import index_document
+                asyncio.create_task(asyncio.to_thread(index_document, file.filename, text_lines, suggestions))
+            except Exception as index_err:
+                logger.error(f"Failed to index single document {file.filename}: {index_err}")
 
             if temp_path and os.path.exists(temp_path):
                 os.unlink(temp_path)
