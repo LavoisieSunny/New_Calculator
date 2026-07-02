@@ -988,6 +988,14 @@ def _build_ocr_debug(
     }
 
 
+def _paddle_result_is_trustworthy(lines, confidence, quality_score):
+    return (
+        bool(lines)
+        and confidence >= OCR_PADDLE_CONF_THRESHOLD
+        and quality_score >= OCR_PADDLE_QUALITY_THRESHOLD
+    )
+
+
 # ======================================================
 # CORE VISION OCR — SINGLE PAGE
 # ======================================================
@@ -1037,7 +1045,8 @@ def ocr_page_with_vision(
                 "confidence": 1.0, "text_length": len(fitz_text),
                 "quality_score": 1.0, "preprocessing_applied": [],
                 "lines": len(lines), "ocr_boxes": [],
-                "render_time": 0.0, "ocr_time": elapsed, "total_page_time": elapsed
+                "render_time": 0.0, "ocr_time": elapsed, "total_page_time": elapsed,
+                "confidence_untrusted": False
             }
             logger.info(f"Page {page_num}: PyMuPDF fast path ({len(lines)} lines, {elapsed:.2f}s)")
             return lines, meta
@@ -1048,7 +1057,8 @@ def ocr_page_with_vision(
             "page": page_num, "engine": "Error", "dpi": OCR_RENDER_DPI,
             "confidence": 0.0, "text_length": 0, "quality_score": 0.0,
             "preprocessing_applied": [], "lines": 0, "ocr_boxes": [],
-            "render_time": 0.0, "ocr_time": 0.0, "total_page_time": time.time() - start
+            "render_time": 0.0, "ocr_time": 0.0, "total_page_time": time.time() - start,
+            "confidence_untrusted": False
         }
         return [], meta
 
@@ -1060,7 +1070,8 @@ def ocr_page_with_vision(
             "page": page_num, "engine": "Error", "dpi": OCR_RENDER_DPI,
             "confidence": 0.0, "text_length": 0, "quality_score": 0.0,
             "preprocessing_applied": [], "lines": 0, "ocr_boxes": [],
-            "render_time": 0.0, "ocr_time": 0.0, "total_page_time": time.time() - start
+            "render_time": 0.0, "ocr_time": 0.0, "total_page_time": time.time() - start,
+            "confidence_untrusted": False
         }
 
     # ── 3. Blank page check ───────────────────────────────────────────
@@ -1074,7 +1085,8 @@ def ocr_page_with_vision(
             "page": page_num, "engine": "Skipped-blank", "dpi": OCR_RENDER_DPI,
             "confidence": 1.0, "text_length": 0, "quality_score": 0.0,
             "preprocessing_applied": [], "lines": 0, "ocr_boxes": [],
-            "render_time": 0.0, "ocr_time": 0.0, "total_page_time": elapsed
+            "render_time": 0.0, "ocr_time": 0.0, "total_page_time": elapsed,
+            "confidence_untrusted": False
         }
 
     # ── 4. Downscale only — defer the (CPU/RAM-costly) CLAHE/colour-space
@@ -1102,11 +1114,32 @@ def ocr_page_with_vision(
 
     # ── 5a. Low-content → PaddleOCR (fast, no GPU needed) ────────────
     if classification == "low-content":
+        paddle_lines, paddle_conf, paddle_q = [], 0.0, 0.0
         if paddle_available:
             logger.info(f"Page {page_num}: low-content → PaddleOCR")
-            lines, confidence, _ = call_paddle_ocr(rendered_img_path, page_num=page_num)
-            if lines:
-                engine_used = "PaddleOCR"
+            paddle_lines, paddle_conf, _ = call_paddle_ocr(rendered_img_path, page_num=page_num)
+            paddle_q = score_ocr_page_quality(paddle_lines)
+
+        if _paddle_result_is_trustworthy(paddle_lines, paddle_conf, paddle_q):
+            lines, engine_used, confidence = paddle_lines, "PaddleOCR", paddle_conf
+        elif vision_available and OCR_ENABLE_VISION_ESCALATION and not _vision_is_paused():
+            _tlog(f"[OCR] Page {page_num}: low-content Paddle result untrusted "
+                  f"(conf={paddle_conf:.2f}, q={paddle_q:.2f}, lines={len(paddle_lines)}) "
+                  f"-> escalating to vision")
+            img_b64 = image_to_base64(_get_processed(), quality=85)
+            raw_text = call_vision_model(img_b64, page_num=page_num)
+            del img_b64
+            vis_lines = [l.strip() for l in raw_text.split("\n") if l.strip()] if raw_text and raw_text.strip() != "[BLANK PAGE]" else []
+            if vis_lines:
+                lines, engine_used, confidence = vis_lines, "qwen2.5vl:7b", 0.85
+            elif paddle_lines and paddle_conf > 0.0:
+                # vision found nothing either — Paddle's untrusted output is
+                # still strictly better than nothing; keep it but flag it
+                lines, engine_used, confidence = paddle_lines, "PaddleOCR", paddle_conf
+        elif paddle_lines and paddle_conf > 0.0:
+            # vision unavailable/paused/disabled — same "best we have" fallback
+            lines, engine_used, confidence = paddle_lines, "PaddleOCR", paddle_conf
+
         if not lines:
             lines = run_tesseract_fallback(_get_processed())
             engine_used = "Tesseract"
@@ -1119,10 +1152,10 @@ def ocr_page_with_vision(
             logger.info(f"Page {page_num}: {classification} → PaddleOCR")
             paddle_lines, paddle_conf, paddle_is_tabular = call_paddle_ocr(rendered_img_path, page_num=page_num)
             paddle_q = score_ocr_page_quality(paddle_lines)
-            paddle_good = bool(paddle_lines) and paddle_conf >= OCR_PADDLE_CONF_THRESHOLD and paddle_q >= OCR_PADDLE_QUALITY_THRESHOLD
+            paddle_good = _paddle_result_is_trustworthy(paddle_lines, paddle_conf, paddle_q)
             if paddle_good:
                 lines, engine_used, confidence = paddle_lines, "PaddleOCR", paddle_conf
-            elif vision_available and OCR_ENABLE_VISION_ESCALATION:
+            elif vision_available and OCR_ENABLE_VISION_ESCALATION and not _vision_is_paused():
                 logger.info(f"Page {page_num}: PaddleOCR quality low (conf={paddle_conf:.2f}, q={paddle_q:.2f}) → escalating to qwen2.5vl:7b")
                 img_b64 = image_to_base64(_get_processed(), quality=85)
                 raw_text = call_vision_model(img_b64, page_num=page_num)
@@ -1141,12 +1174,17 @@ def ocr_page_with_vision(
                 )
                 if vision_wins:
                     lines, engine_used, confidence = vis_lines, "qwen2.5vl:7b", 0.90
-                elif paddle_lines:
+                elif _paddle_result_is_trustworthy(paddle_lines, paddle_conf, paddle_q):
                     lines, engine_used, confidence = paddle_lines, "PaddleOCR", paddle_conf
                 elif vis_lines:
-                    # Neither cleared its bar outright, but vision is all we have
                     lines, engine_used, confidence = vis_lines, "qwen2.5vl:7b", 0.75
-            elif paddle_lines:
+                elif paddle_lines and paddle_conf > 0.0:
+                    # last resort: vision tried and found nothing usable either,
+                    # Paddle's untrusted output is still the best we have (if > 0.0)
+                    lines, engine_used, confidence = paddle_lines, "PaddleOCR", paddle_conf
+                    _tlog(f"[OCR] Page {page_num}: accepting untrusted PaddleOCR output "
+                          f"(conf={paddle_conf:.2f}) — vision escalation found nothing better")
+            elif _paddle_result_is_trustworthy(paddle_lines, paddle_conf, paddle_q):
                 # Paddle's result is the best we have (vision unavailable/disabled)
                 lines, engine_used, confidence = paddle_lines, "PaddleOCR", paddle_conf
         elif vision_available:
@@ -1264,7 +1302,8 @@ def ocr_page_with_vision(
         "quality_score": q_score,
         "preprocessing_applied": ["rgb_convert", "clahe_contrast"],
         "lines": len(lines), "ocr_boxes": [],
-        "render_time": 0.0, "ocr_time": ocr_time, "total_page_time": elapsed
+        "render_time": 0.0, "ocr_time": ocr_time, "total_page_time": elapsed,
+        "confidence_untrusted": confidence == 0.0 and bool(lines)
     }
     return lines, meta
 
