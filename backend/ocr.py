@@ -365,7 +365,9 @@ def get_ocr_instance():
     with _PADDLE_INIT_LOCK:
         if _PADDLE_INSTANCE is None:
             from paddleocr import PaddleOCR
-            _tlog(f"Loading PaddleOCR singleton (PP-OCRv5, lang={OCR_PADDLE_LANG})...")
+            import paddle
+            use_gpu = paddle.device.is_compiled_with_cuda()
+            _tlog(f"Loading PaddleOCR singleton (PP-OCRv5, lang={OCR_PADDLE_LANG}, use_gpu={use_gpu})...")
             t0 = time.time()
             _PADDLE_INSTANCE = PaddleOCR(
                 lang=OCR_PADDLE_LANG,
@@ -373,6 +375,7 @@ def get_ocr_instance():
                 use_doc_unwarping=False,              # not photographed/curved pages
                 use_textline_orientation=False,       # skip per-line angle model for speed
                 enable_mkldnn=False,                  # prevents local static model runner crash on Windows CPU
+                use_gpu=use_gpu
             )
             _tlog(f"PaddleOCR singleton ready in {time.time() - t0:.1f}s.")
     return _PADDLE_INSTANCE
@@ -423,13 +426,16 @@ def get_structure_instance():
     with _STRUCTURE_INIT_LOCK:
         if _STRUCTURE_INSTANCE is None:
             from paddleocr import PPStructureV3
-            _tlog(f"Loading PP-StructureV3 singleton (table/layout, lang={OCR_PADDLE_LANG})...")
+            import paddle
+            use_gpu = paddle.device.is_compiled_with_cuda()
+            _tlog(f"Loading PP-StructureV3 singleton (table/layout, lang={OCR_PADDLE_LANG}, use_gpu={use_gpu})...")
             t0 = time.time()
             _STRUCTURE_INSTANCE = PPStructureV3(
                 lang=OCR_PADDLE_LANG,
                 use_doc_orientation_classify=False,
                 use_doc_unwarping=False,
                 use_textline_orientation=False,
+                use_gpu=use_gpu
             )
             _tlog(f"PP-StructureV3 singleton ready in {time.time() - t0:.1f}s.")
     return _STRUCTURE_INSTANCE
