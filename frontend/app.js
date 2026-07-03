@@ -240,91 +240,7 @@ document.addEventListener("DOMContentLoaded", () => {
         }
     }
 
-    // --- LLM CASE TYPE SUGGESTION ENGINE (Issue 2) ---
-    async function checkCaseType(selectedType, rawText) {
-        const container = document.getElementById("case-type-suggestion");
-        if (!container) return;
 
-        if (!rawText || !rawText.trim()) {
-            container.innerHTML = "";
-            container.classList.add("hidden-section");
-            return;
-        }
-
-        container.classList.remove("hidden-section");
-        container.innerHTML = `<div class="suggestion-loading">Analyzing case type...</div>`;
-
-        try {
-            const response = await fetch("/api/ocr/suggest-case-type", {
-                method: "POST",
-                headers: {
-                    "Content-Type": "application/json"
-                },
-                body: JSON.stringify({
-                    raw_text: rawText,
-                    selected_case_type: selectedType
-                })
-            });
-
-            if (!response.ok) {
-                throw new Error("Failed to fetch case type suggestions");
-            }
-
-            const data = await response.json();
-            const suggestions = data.suggestions || [];
-
-            if (suggestions.length === 0) {
-                container.innerHTML = "";
-                container.classList.add("hidden-section");
-                return;
-            }
-
-            // First item is the top prediction (since it is sorted descending by the backend)
-            const topPrediction = suggestions[0];
-            const topCategory = topPrediction.case_type;
-            const topConfidence = topPrediction.confidence;
-
-            const topIsDeath = (topCategory === "Death");
-            const selectedIsDeath = (selectedType === "death");
-            const isMismatch = (topConfidence > 0.50) && (topIsDeath !== selectedIsDeath);
-
-            let warningHtml = "";
-            if (isMismatch) {
-                warningHtml = `
-                    <div class="case-warning">
-                        <i class="fa-solid fa-triangle-exclamation"></i>
-                        <span>⚠️ Document suggests ${topCategory} — please verify</span>
-                    </div>
-                `;
-            }
-
-            let barsHtml = '<div class="case-type-bars">';
-            suggestions.forEach(item => {
-                const isDeathItem = (item.case_type === "Death");
-                const isSelectedCategory = (isDeathItem && selectedIsDeath) || (!isDeathItem && !selectedIsDeath);
-                const confidencePct = Math.round(item.confidence * 100);
-                const selectedClass = isSelectedCategory ? "selected" : "";
-
-                barsHtml += `
-                    <div class="case-bar-row ${selectedClass}">
-                        <span class="case-label" title="${item.case_type}">${item.case_type}</span>
-                        <div class="bar-track">
-                            <div class="bar-fill" style="width: ${confidencePct}%"></div>
-                        </div>
-                        <span class="case-pct">${confidencePct}%</span>
-                    </div>
-                `;
-            });
-            barsHtml += '</div>';
-
-            container.innerHTML = warningHtml + barsHtml;
-
-        } catch (error) {
-            console.error("Error checking case type:", error);
-            container.innerHTML = "";
-            container.classList.add("hidden-section");
-        }
-    }
 
     // --- DOM REFERENCES ---
     const navItems = document.querySelectorAll(".nav-item");
@@ -765,15 +681,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
         updateLiveCalculations();
 
-        if (window.lastRawText) {
-            checkCaseType(caseType, window.lastRawText);
-        } else {
-            const container = document.getElementById("case-type-suggestion");
-            if (container) {
-                container.innerHTML = "";
-                container.classList.add("hidden-section");
-            }
-        }
+
     });
 
     // Trigger change event dynamically to handle browser auto-restored values on page refresh
@@ -1172,7 +1080,6 @@ document.addEventListener("DOMContentLoaded", () => {
                             currentOcrRawText = data.raw_text || [];
                             window.lastRawText = currentOcrRawText.join("\n");
                             window.detectedTrack = data.track || "high_court";
-                            checkCaseType(caseTypeSelect.value, window.lastRawText);
 
                             // Automatically run AI (LLM) extraction right after OCR completes —
                             // no manual button needed. Heuristic suggestions are already applied
@@ -1215,12 +1122,7 @@ document.addEventListener("DOMContentLoaded", () => {
                             if (liveMetricsCard) liveMetricsCard.classList.add("show");
                             if (evaluatorCard) evaluatorCard.classList.add("show");
 
-                            // Show the enhancement check card
-                            const mainCard = document.getElementById("enhancement-check-main-card");
-                            if (mainCard) {
-                                mainCard.classList.remove("hidden-section");
-                                mainCard.classList.add("show");
-                            }
+
 
                             updateEnhancementCheck(data);
 
@@ -1516,7 +1418,7 @@ This cannot be undone.`)) return;
         applyAllOcrSuggestions(matchedFile.suggestions, null, null, null, true);
 
         window.lastRawText = (matchedFile.raw_text || []).join("\n");
-        checkCaseType(caseTypeSelect.value, window.lastRawText);
+
 
         switchTab("calculator");
 
@@ -1575,7 +1477,7 @@ This cannot be undone.`)) return;
                 applyAllOcrSuggestions(matchedFile.suggestions);
 
                 window.lastRawText = (matchedFile.raw_text || []).join("\n");
-                checkCaseType(caseTypeSelect.value, window.lastRawText);
+
 
                 switchTab("calculator");
             } else {
@@ -1600,7 +1502,7 @@ This cannot be undone.`)) return;
             // Set currentOcrRawText from batch file
             currentOcrRawText = rawTextLines;
             window.lastRawText = currentOcrRawText.join("\n");
-            checkCaseType(caseTypeSelect.value, window.lastRawText);
+
 
             if (downloadWordBtn) {
                 downloadWordBtn.style.display = "inline-flex";
@@ -1972,6 +1874,7 @@ This cannot be undone.`)) return;
                 fallback_source_used: fallback_source_used
             };
         }
+        updateEnhancementCheck({ suggestions: suggestions });
 
         // Clear all previous low-confidence warning labels, styles, and AI metadata badges
         document.querySelectorAll(".verification-warning").forEach(el => el.remove());
@@ -2771,13 +2674,28 @@ This cannot be undone.`)) return;
     // ENHANCEMENT CHECK RENDERER
     // ==========================================================================
     function updateEnhancementCheck(data) {
-        const classification = data && data.suggestions ? data.suggestions.case_classification : null;
-        if (!classification) return;
+        let classification = null;
+        if (data) {
+            if (data.suggestions && data.suggestions.case_classification) {
+                classification = data.suggestions.case_classification;
+            } else if (data.case_classification) {
+                classification = data.case_classification;
+            } else if (data.suggestions && data.suggestions.fields && data.suggestions.fields.case_classification) {
+                classification = data.suggestions.fields.case_classification;
+            } else if (data.fields && data.fields.case_classification) {
+                classification = data.fields.case_classification;
+            }
+        }
+        const container = document.getElementById("case-type-suggestion");
+        if (!container) return;
 
-        const mainBody = document.getElementById("enhancement-check-main-body");
-        const confBadge = document.getElementById("enhancement-verdict-confidence");
+        if (!classification) {
+            container.innerHTML = "";
+            container.classList.add("hidden-section");
+            return;
+        }
 
-        if (!mainBody) return;
+        container.classList.remove("hidden-section");
 
         const VERDICT_LABELS = {
             enhancement: { text: "Appeal for Enhancement", color: "var(--color-success)" },
@@ -2789,87 +2707,65 @@ This cannot be undone.`)) return;
         const label = VERDICT_LABELS[verdict] || VERDICT_LABELS.not_determinable;
         const confidencePct = Math.round((classification.confidence || 0) * 100);
 
-        if (confBadge) {
-            confBadge.style.display = "inline-block";
-            confBadge.textContent = verdict === "not_determinable" ? "—" : `${confidencePct}% confidence`;
-        }
-
         let basisNote = "";
         if (classification.basis === "conflict") {
-            basisNote = `The Grounds of Appeal and the Prayer/Relief clause point in different directions — review both signals below.`;
+            basisNote = `Grounds of Appeal and Prayer clauses point in different directions.`;
         } else if (classification.basis === "no_signal") {
-            basisNote = `No clear enhancement or reduction language was found in the Grounds of Appeal or Relief sections. Manual review recommended.`;
+            basisNote = `No clear appeal direction language found.`;
         } else if (classification.basis === "single_source") {
-            basisNote = `Based on a single source section (see evidence below).`;
+            basisNote = `Determined from grounds or prayer clauses.`;
         } else if (classification.basis === "agreement") {
-            basisNote = `Both the Grounds of Appeal and the Prayer/Relief clause are in agreement.`;
+            basisNote = `Grounds of Appeal and Prayer clauses are in agreement.`;
         }
 
-        // Render the grounds points
         const groundsPoints = classification.grounds_points || [];
-        const groundsVerdictVal = classification.grounds_signal ? classification.grounds_signal.verdict : "unclear";
-        const groundsLabel = VERDICT_LABELS[groundsVerdictVal] || { text: "No signal", color: "var(--text-secondary)" };
-
-        let groundsListHTML = `<span style="opacity: 0.6; font-size: 0.82rem;">No matching grounds statement found.</span>`;
+        let groundsListHTML = `<span style="opacity: 0.6; font-size: 0.8rem;">No matching grounds statement found.</span>`;
         if (groundsPoints.length > 0) {
-            groundsListHTML = `<ul style="margin: 8px 0 0 0; padding-left: 20px; display: flex; flex-direction: column; gap: 8px;">
-                ${groundsPoints.map(p => `<li style="font-size: 0.88rem; line-height: 1.4; color: var(--text-secondary);"><span style="color: var(--text-secondary);">${p}</span></li>`).join('')}
+            groundsListHTML = `<ul style="margin: 4px 0 0 0; padding-left: 16px; display: flex; flex-direction: column; gap: 4px;">
+                ${groundsPoints.map(p => `<li style="font-size: 0.82rem; line-height: 1.3; color: var(--text-secondary);">${p}</li>`).join('')}
             </ul>`;
         }
 
-        // Render the relief points
         const reliefPoints = classification.relief_points || [];
-        const reliefVerdictVal = classification.relief_signal ? classification.relief_signal.verdict : "unclear";
-        const reliefLabel = VERDICT_LABELS[reliefVerdictVal] || { text: "No signal", color: "var(--text-secondary)" };
-
-        let reliefListHTML = `<span style="opacity: 0.6; font-size: 0.82rem;">No matching prayer/relief clause found.</span>`;
+        let reliefListHTML = `<span style="opacity: 0.6; font-size: 0.8rem;">No matching prayer/relief clause found.</span>`;
         if (reliefPoints.length > 0) {
-            reliefListHTML = `<ul style="margin: 8px 0 0 0; padding-left: 20px; display: flex; flex-direction: column; gap: 8px;">
-                ${reliefPoints.map(p => `<li style="font-size: 0.88rem; line-height: 1.4; color: var(--text-secondary);"><span style="color: var(--text-secondary);">${p}</span></li>`).join('')}
+            reliefListHTML = `<ul style="margin: 4px 0 0 0; padding-left: 16px; display: flex; flex-direction: column; gap: 4px;">
+                ${reliefPoints.map(p => `<li style="font-size: 0.82rem; line-height: 1.3; color: var(--text-secondary);">${p}</li>`).join('')}
             </ul>`;
         }
 
-        mainBody.innerHTML = `
-            <!-- Verdict Banner -->
-            <div style="background: rgba(255, 255, 255, 0.02); border: 1px solid var(--border-glass); border-radius: var(--radius-md); padding: 16px; display: flex; flex-direction: column; gap: 8px;">
-                <div style="display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px;">
-                    <span style="font-size: 0.85rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px; font-weight: 600;">Overall Classification Verdict</span>
-                    <span class="badge" style="background: ${label.color}; color: #fff; font-weight: 700; padding: 6px 14px; border-radius: var(--radius-sm); font-size: 0.85rem;">
-                        ${label.text}
-                    </span>
+        container.innerHTML = `
+            <div style="display: flex; flex-direction: column; gap: 12px;">
+                <div style="display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid rgba(255,255,255,0.06); padding-bottom: 8px;">
+                    <span style="font-size: 0.85rem; font-weight: 700; color: var(--text-primary); text-transform: uppercase;">Enhancement Verdict</span>
+                    <div style="display: flex; align-items: center; gap: 8px;">
+                        <span class="badge" style="background: ${label.color}; color: #fff; font-weight: 700; padding: 4px 10px; border-radius: var(--radius-sm); font-size: 0.8rem;">
+                            ${label.text}
+                        </span>
+                        ${verdict !== "not_determinable" ? `<span style="font-size: 0.8rem; color: var(--text-muted); font-weight: 600;">(${confidencePct}%)</span>` : ""}
+                    </div>
                 </div>
-                <div style="font-size: 0.82rem; color: var(--text-secondary); line-height: 1.4; margin-top: 4px;">
+                
+                <div style="font-size: 0.78rem; color: var(--text-muted); line-height: 1.4; margin-top: -4px;">
                     ${basisNote}
                 </div>
-            </div>
 
-            <!-- Grounds of Appeal Section -->
-            <div style="display: flex; flex-direction: column; gap: 10px; margin-top: 5px;">
-                <div style="display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid rgba(255,255,255,0.05); padding-bottom: 6px;">
-                    <h4 style="margin: 0; font-size: 0.95rem; font-weight: 600; display: flex; align-items: center; gap: 8px; color: var(--text-primary);">
-                        <i class="fa-solid fa-list-check" style="color: var(--color-primary);"></i> Grounds of Appeal
-                    </h4>
-                    <span class="badge" style="background: rgba(255, 255, 255, 0.05); border: 1px solid var(--border-glass); color: ${groundsLabel.color}; font-size: 0.72rem; padding: 3px 8px; font-weight: 600; border-radius: var(--radius-sm);">
-                        ${groundsVerdictVal === "unclear" ? "No signal" : groundsLabel.text}
-                    </span>
+                <div style="display: flex; flex-direction: column; gap: 6px;">
+                    <div style="font-size: 0.82rem; font-weight: 600; color: var(--text-primary); display: flex; align-items: center; gap: 6px;">
+                        <i class="fa-solid fa-list-check" style="color: var(--color-primary); font-size: 0.75rem;"></i> Grounds of Appeal
+                    </div>
+                    <div style="padding-left: 4px;">
+                        ${groundsListHTML}
+                    </div>
                 </div>
-                <div style="padding-left: 4px;">
-                    ${groundsListHTML}
-                </div>
-            </div>
 
-            <!-- Prayer / Relief Claimed Section -->
-            <div style="display: flex; flex-direction: column; gap: 10px; margin-top: 10px;">
-                <div style="display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid rgba(255,255,255,0.05); padding-bottom: 6px;">
-                    <h4 style="margin: 0; font-size: 0.95rem; font-weight: 600; display: flex; align-items: center; gap: 8px; color: var(--text-primary);">
-                        <i class="fa-solid fa-scroll" style="color: var(--color-success);"></i> Relief Claimed / Prayer
-                    </h4>
-                    <span class="badge" style="background: rgba(255, 255, 255, 0.05); border: 1px solid var(--border-glass); color: ${reliefLabel.color}; font-size: 0.72rem; padding: 3px 8px; font-weight: 600; border-radius: var(--radius-sm);">
-                        ${reliefVerdictVal === "unclear" ? "No signal" : reliefLabel.text}
-                    </span>
-                </div>
-                <div style="padding-left: 4px;">
-                    ${reliefListHTML}
+                <div style="display: flex; flex-direction: column; gap: 6px; margin-top: 4px;">
+                    <div style="font-size: 0.82rem; font-weight: 600; color: var(--text-primary); display: flex; align-items: center; gap: 6px;">
+                        <i class="fa-solid fa-scroll" style="color: var(--color-success); font-size: 0.75rem;"></i> Relief Claimed / Prayer
+                    </div>
+                    <div style="padding-left: 4px;">
+                        ${reliefListHTML}
+                    </div>
                 </div>
             </div>
         `;
@@ -3131,46 +3027,7 @@ This cannot be undone.`)) return;
 
         if (triggerEvalBtn) triggerEvalBtn.disabled = true;
         currentCalculationAmount = 0;
-        const mainCard = document.getElementById("enhancement-check-main-card");
-        if (mainCard) {
-            mainCard.classList.remove("show");
-            mainCard.classList.add("hidden-section");
-        }
-
-        const enhancementMainBody = document.getElementById("enhancement-check-main-body");
-        const enhancementConfBadge = document.getElementById("enhancement-verdict-confidence");
-        if (enhancementConfBadge) {
-            enhancementConfBadge.style.display = "none";
-            enhancementConfBadge.textContent = "—";
-        }
-        if (enhancementMainBody) {
-            enhancementMainBody.innerHTML = `
-                <div class="empty-state" style="text-align: center; padding: 20px 10px; opacity: 0.6;">
-                    <i class="fa-solid fa-circle-question" style="font-size: 2rem; color: var(--color-primary); margin-bottom: 8px; display: block;"></i>
-                    <p style="margin: 0; font-size: 0.85rem; font-weight: 500;">No PDF Processed Yet</p>
-                    <p style="margin: 4px 0 0 0; font-size: 0.75rem; color: var(--text-muted);">
-                        Upload a PDF to view the Grounds of Appeal and Relief/Prayer clauses in bullet form.
-                    </p>
-                </div>
-            `;
-        }
-    });
-
-    // --- ENHANCEMENT CHECK BUTTON SCROLL ACTION ---
-    const enhancementBtnEl = document.getElementById("enhancement-btn");
-    if (enhancementBtnEl) {
-        enhancementBtnEl.addEventListener("click", () => {
-            const targetCard = document.getElementById("enhancement-check-main-card");
-            if (targetCard) {
-                targetCard.scrollIntoView({ behavior: "smooth" });
-                targetCard.style.transition = "box-shadow 0.3s ease";
-                targetCard.style.boxShadow = "0 0 20px rgba(245, 158, 11, 0.4)";
-                setTimeout(() => {
-                    targetCard.style.boxShadow = "";
-                }, 1500);
-            }
-        });
-    }
+        // Removed old enhancement card and button references
 
     // ==========================================================================
     const slideover = document.getElementById("right-slideover");
