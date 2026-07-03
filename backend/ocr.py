@@ -67,6 +67,7 @@ OCR_MAX_PARALLEL_WORKERS = int(os.getenv("OCR_MAX_PARALLEL_WORKERS", "4"))  # Pa
 # stalling behind it.
 OCR_PAGE_WORKER_POOL_SIZE = int(os.getenv("OCR_PAGE_WORKER_POOL_SIZE", str(min(16, max(4, (os.cpu_count() or 2) * 2)))))
 OCR_PAGE_TIMEOUT    = float(os.getenv("OCR_PAGE_TIMEOUT", "60.0"))  # Per-page timeout (vision is slower)
+OCR_TOTAL_BUDGET_SECONDS = float(os.getenv("OCR_TOTAL_BUDGET_SECONDS", "180.0"))  # Total OCR budget timeout
 OCR_VISION_MODEL    = os.getenv("OCR_VISION_MODEL", "qwen2.5vl:7b") # Ollama vision model
 OCR_OLLAMA_ENDPOINT = os.getenv("LLM_API_ENDPOINT", "http://localhost:11434")
 DEBUG_OCR           = os.getenv("DEBUG_OCR", "false").lower() == "true"
@@ -286,7 +287,12 @@ def call_vision_model(image_b64: str, page_num: int = 0) -> str:
         method="POST"
     )
 
-    with _VISION_SEMAPHORE:
+    acquired = _VISION_SEMAPHORE.acquire(blocking=True, timeout=90.0)
+    if not acquired:
+        logger.warning(f"[OCR-TIMING] Page {page_num}: Vision semaphore acquisition timed out after 90s — falling back to Paddle-only/Tesseract fallback.")
+        return ""
+
+    try:
         try:
             with urllib.request.urlopen(req, timeout=OCR_PAGE_TIMEOUT) as resp:
                 result = json.loads(resp.read().decode("utf-8"))
@@ -294,13 +300,27 @@ def call_vision_model(image_b64: str, page_num: int = 0) -> str:
                 _record_vision_result(success=bool(content), page_num=page_num)
                 return content
         except urllib.error.URLError as e:
-            logger.error(f"Page {page_num}: Ollama vision request failed: {e}")
+            import socket
+            is_timeout = isinstance(e.reason, socket.timeout) or isinstance(e.reason, TimeoutError) or "timed out" in str(e).lower()
+            if is_timeout:
+                logger.error(f"[OCR-TIMING] page {page_num} vision call timed out after {OCR_PAGE_TIMEOUT}s — falling back to Paddle-only result")
+            else:
+                logger.error(f"Page {page_num}: Ollama vision request failed: {e}")
+            _record_vision_result(success=False, page_num=page_num)
+            return ""
+        except TimeoutError as e:
+            logger.error(f"[OCR-TIMING] page {page_num} vision call timed out after {OCR_PAGE_TIMEOUT}s — falling back to Paddle-only result")
             _record_vision_result(success=False, page_num=page_num)
             return ""
         except Exception as e:
-            logger.error(f"Page {page_num}: Vision model call error: {e}")
+            if "time" in str(e).lower() or "timeout" in str(e).lower():
+                logger.error(f"[OCR-TIMING] page {page_num} vision call timed out after {OCR_PAGE_TIMEOUT}s — falling back to Paddle-only result")
+            else:
+                logger.error(f"Page {page_num}: Vision model call error: {e}")
             _record_vision_result(success=False, page_num=page_num)
             return ""
+    finally:
+        _VISION_SEMAPHORE.release()
 
 
 def is_vision_model_available() -> bool:
@@ -352,6 +372,7 @@ def get_ocr_instance():
                 use_doc_orientation_classify=False,  # scans are upright; skip for speed
                 use_doc_unwarping=False,              # not photographed/curved pages
                 use_textline_orientation=False,       # skip per-line angle model for speed
+                enable_mkldnn=False,                  # prevents local static model runner crash on Windows CPU
             )
             _tlog(f"PaddleOCR singleton ready in {time.time() - t0:.1f}s.")
     return _PADDLE_INSTANCE
@@ -1030,6 +1051,23 @@ def ocr_page_with_vision(
     page_num = page_idx + 1
     start = time.time()
 
+    paddle_time = 0.0
+    vision_time = 0.0
+
+    def _call_paddle(*args, **kwargs):
+        nonlocal paddle_time
+        t0 = time.monotonic()
+        res = call_paddle_ocr(*args, **kwargs)
+        paddle_time += time.monotonic() - t0
+        return res
+
+    def _call_vision(*args, **kwargs):
+        nonlocal vision_time
+        t0 = time.monotonic()
+        res = call_vision_model(*args, **kwargs)
+        vision_time += time.monotonic() - t0
+        return res
+
     # ── 1. Fast path: trust fitz digital text ───────────────────────
     if fitz_text and len(fitz_text.strip()) > 200:
         keywords = ["court", "claimant", "petitioner", "respondent", "accident",
@@ -1047,7 +1085,8 @@ def ocr_page_with_vision(
                 "quality_score": 1.0, "preprocessing_applied": [],
                 "lines": len(lines), "ocr_boxes": [],
                 "render_time": 0.0, "ocr_time": elapsed, "total_page_time": elapsed,
-                "confidence_untrusted": False
+                "confidence_untrusted": False,
+                "paddle_time": 0.0, "vision_time": 0.0
             }
             logger.info(f"Page {page_num}: PyMuPDF fast path ({len(lines)} lines, {elapsed:.2f}s)")
             return lines, meta
@@ -1059,7 +1098,8 @@ def ocr_page_with_vision(
             "confidence": 0.0, "text_length": 0, "quality_score": 0.0,
             "preprocessing_applied": [], "lines": 0, "ocr_boxes": [],
             "render_time": 0.0, "ocr_time": 0.0, "total_page_time": time.time() - start,
-            "confidence_untrusted": False
+            "confidence_untrusted": False,
+            "paddle_time": 0.0, "vision_time": 0.0
         }
         return [], meta
 
@@ -1072,7 +1112,8 @@ def ocr_page_with_vision(
             "confidence": 0.0, "text_length": 0, "quality_score": 0.0,
             "preprocessing_applied": [], "lines": 0, "ocr_boxes": [],
             "render_time": 0.0, "ocr_time": 0.0, "total_page_time": time.time() - start,
-            "confidence_untrusted": False
+            "confidence_untrusted": False,
+            "paddle_time": 0.0, "vision_time": 0.0
         }
 
     # ── 3. Blank page check ───────────────────────────────────────────
@@ -1087,7 +1128,8 @@ def ocr_page_with_vision(
             "confidence": 1.0, "text_length": 0, "quality_score": 0.0,
             "preprocessing_applied": [], "lines": 0, "ocr_boxes": [],
             "render_time": 0.0, "ocr_time": 0.0, "total_page_time": elapsed,
-            "confidence_untrusted": False
+            "confidence_untrusted": False,
+            "paddle_time": 0.0, "vision_time": 0.0
         }
 
     # ── 4. Downscale only — defer the (CPU/RAM-costly) CLAHE/colour-space
@@ -1123,7 +1165,7 @@ def ocr_page_with_vision(
     if force_vision:
         logger.info(f"Page {page_num}: Lower Court Page {page_num} override → using qwen2.5vl:7b directly")
         img_b64 = image_to_base64(_get_processed(), quality=85)
-        raw_text = call_vision_model(img_b64, page_num=page_num)
+        raw_text = _call_vision(img_b64, page_num=page_num)
         del img_b64
         vis_lines = [l.strip() for l in raw_text.split("\n") if l.strip()] if raw_text and raw_text.strip() != "[BLANK PAGE]" else []
         if vis_lines:
@@ -1136,7 +1178,7 @@ def ocr_page_with_vision(
         paddle_lines, paddle_conf, paddle_q = [], 0.0, 0.0
         if paddle_available:
             logger.info(f"Page {page_num}: low-content → PaddleOCR")
-            paddle_lines, paddle_conf, _ = call_paddle_ocr(rendered_img_path, page_num=page_num)
+            paddle_lines, paddle_conf, _ = _call_paddle(rendered_img_path, page_num=page_num)
             paddle_q = score_ocr_page_quality(paddle_lines)
 
         if _paddle_result_is_trustworthy(paddle_lines, paddle_conf, paddle_q):
@@ -1146,7 +1188,7 @@ def ocr_page_with_vision(
                   f"(conf={paddle_conf:.2f}, q={paddle_q:.2f}, lines={len(paddle_lines)}) "
                   f"-> escalating to vision")
             img_b64 = image_to_base64(_get_processed(), quality=85)
-            raw_text = call_vision_model(img_b64, page_num=page_num)
+            raw_text = _call_vision(img_b64, page_num=page_num)
             del img_b64
             vis_lines = [l.strip() for l in raw_text.split("\n") if l.strip()] if raw_text and raw_text.strip() != "[BLANK PAGE]" else []
             if vis_lines:
@@ -1169,7 +1211,7 @@ def ocr_page_with_vision(
         paddle_is_tabular = False
         if paddle_available:
             logger.info(f"Page {page_num}: {classification} → PaddleOCR")
-            paddle_lines, paddle_conf, paddle_is_tabular = call_paddle_ocr(rendered_img_path, page_num=page_num)
+            paddle_lines, paddle_conf, paddle_is_tabular = _call_paddle(rendered_img_path, page_num=page_num)
             paddle_q = score_ocr_page_quality(paddle_lines)
             paddle_good = _paddle_result_is_trustworthy(paddle_lines, paddle_conf, paddle_q)
             if paddle_good:
@@ -1177,7 +1219,7 @@ def ocr_page_with_vision(
             elif vision_available and OCR_ENABLE_VISION_ESCALATION and not _vision_is_paused():
                 logger.info(f"Page {page_num}: PaddleOCR quality low (conf={paddle_conf:.2f}, q={paddle_q:.2f}) → escalating to qwen2.5vl:7b")
                 img_b64 = image_to_base64(_get_processed(), quality=85)
-                raw_text = call_vision_model(img_b64, page_num=page_num)
+                raw_text = _call_vision(img_b64, page_num=page_num)
                 del img_b64
                 vis_lines = [l.strip() for l in raw_text.split("\n") if l.strip()] if raw_text and raw_text.strip() != "[BLANK PAGE]" else []
                 vis_q = score_ocr_page_quality(vis_lines)
@@ -1209,7 +1251,7 @@ def ocr_page_with_vision(
         elif vision_available:
             logger.info(f"Page {page_num}: PaddleOCR unavailable → qwen2.5vl:7b")
             img_b64 = image_to_base64(_get_processed(), quality=85)
-            raw_text = call_vision_model(img_b64, page_num=page_num)
+            raw_text = _call_vision(img_b64, page_num=page_num)
             del img_b64
             if raw_text and raw_text.strip() != "[BLANK PAGE]":
                 lines = [l.strip() for l in raw_text.split("\n") if l.strip()]
@@ -1272,7 +1314,7 @@ def ocr_page_with_vision(
             retry_proc = preprocess_for_vision(Image.open(retry_img_path).convert("RGB"))
             retry_lines_best = []
             if paddle_available:
-                retry_lines_best, retry_paddle_conf, _ = call_paddle_ocr(retry_img_path, page_num=page_num)
+                retry_lines_best, retry_paddle_conf, _ = _call_paddle(retry_img_path, page_num=page_num)
                 if retry_lines_best and len(retry_lines_best) > len(lines):
                     lines = retry_lines_best
                     engine_used = "PaddleOCR-retry"
@@ -1280,7 +1322,7 @@ def ocr_page_with_vision(
                     q_score = score_ocr_page_quality(lines)
             if (not retry_lines_best or q_score < OCR_PADDLE_QUALITY_THRESHOLD) and vision_available and OCR_ENABLE_VISION_ESCALATION:
                 retry_b64 = image_to_base64(retry_proc, quality=85)
-                retry_text = call_vision_model(retry_b64, page_num=page_num)
+                retry_text = _call_vision(retry_b64, page_num=page_num)
                 del retry_b64
                 if retry_text and retry_text.strip() != "[BLANK PAGE]":
                     retry_vis_lines = [l.strip() for l in retry_text.split("\n") if l.strip()]
@@ -1322,7 +1364,9 @@ def ocr_page_with_vision(
         "preprocessing_applied": ["rgb_convert", "clahe_contrast"],
         "lines": len(lines), "ocr_boxes": [],
         "render_time": 0.0, "ocr_time": ocr_time, "total_page_time": elapsed,
-        "confidence_untrusted": confidence == 0.0 and bool(lines)
+        "confidence_untrusted": confidence == 0.0 and bool(lines),
+        "paddle_time": round(paddle_time, 2),
+        "vision_time": round(vision_time, 2)
     }
     return lines, meta
 
@@ -1440,20 +1484,21 @@ def find_relevant_pages_by_heading(
 
                 text = " ".join(lines).lower()
                 for key, kws in heading_keywords.items():
-                    if key.startswith("skip_"):
+                    if key.startswith("skip_") and key != "skip_admin_hi":
                         continue
-                    matched_pages = found.setdefault(key, [])
+                    matched_pages = found.get(key, [])
                     if len(matched_pages) >= 3 or idx in matched_pages:
                         continue
                     if any(kw.lower() in text for kw in kws):
-                        matched_pages.append(idx)
+                        found.setdefault(key, []).append(idx)
                         _tlog(f"[HEADING-SCAN] '{key}' matched on page {idx+1} (of {total_pages})")
 
-                if stop_after_all_found and target_keys <= found.keys():
+                non_empty_found = {k for k, v in found.items() if v}
+                if stop_after_all_found and target_keys <= non_empty_found:
                     break
 
             _tlog(f"[HEADING-SCAN] scanned {scanned}/{total_pages} pages, "
-                  f"found {len(found)}/{len(target_keys)} target headings: {list(found.keys())}")
+                  f"found {len(non_empty_found)}/{len(target_keys)} target headings: {list(non_empty_found)}")
     except Exception as e:
         logger.error(f"[HEADING-SCAN] failed: {e}")
 
@@ -1464,6 +1509,7 @@ def perform_targeted_ocr_lower_court(
     file_path: str,
     page_callback=None,
     heading_keywords: dict = None,
+    result_container: dict = None,
 ) -> tuple:
     """
     Lower-court / Hindi bundle entrypoint. Instead of OCRing every page
@@ -1478,9 +1524,19 @@ def perform_targeted_ocr_lower_court(
     special-case the return type — only which parser they feed it to.
     """
     start_time = time.time()
+    
+    if result_container is not None:
+        result_container["text_lines"] = []
+        result_container["pages_meta"] = []
+        result_container["page_idxs"] = []
+        result_container["target_pages"] = {}
+
     heading_keywords = heading_keywords or HINDI_HEADING_KEYWORDS
-    vision_available = is_vision_model_available()
     paddle_available = is_paddle_available()
+    vision_available = is_vision_model_available()
+    
+    if not vision_available:
+        _tlog("[OCR] Ollama unavailable, Paddle-only mode for this request")
 
     with pdfium.PdfDocument(file_path) as doc:
         total_pages = len(doc)
@@ -1490,6 +1546,9 @@ def perform_targeted_ocr_lower_court(
         unconditional.append(total_pages - 1)
 
     target_pages = find_relevant_pages_by_heading(file_path, heading_keywords)
+    if result_container is not None:
+        result_container["target_pages"] = target_pages
+
     matched_idxs = []
     for val in target_pages.values():
         if isinstance(val, list):
@@ -1505,6 +1564,9 @@ def perform_targeted_ocr_lower_court(
         target_pages = find_relevant_pages_by_heading(
             file_path, heading_keywords, max_scan_pages=OCR_HEADING_SCAN_WIDEN_MAX_PAGES
         )
+        if result_container is not None:
+            result_container["target_pages"] = target_pages
+
         matched_idxs = []
         for val in target_pages.values():
             if isinstance(val, list):
@@ -1513,6 +1575,8 @@ def perform_targeted_ocr_lower_court(
                 matched_idxs.append(val)
 
     page_idxs = sorted(set(matched_idxs + unconditional))
+    if result_container is not None:
+        result_container["page_idxs"] = list(page_idxs)
 
     if not page_idxs:
         _tlog(f"[TARGETED-OCR] no target-heading pages found in {total_pages}-page bundle "
@@ -1526,6 +1590,8 @@ def perform_targeted_ocr_lower_court(
     pages_meta = []
     scale = OCR_RENDER_DPI / 72.0
     for i, idx in enumerate(page_idxs):
+        t_page_start = time.monotonic()
+        t_render_start = time.monotonic()
         with pdfium.PdfDocument(file_path) as doc:
             page_obj = doc[idx]
             bitmap = page_obj.render(scale=scale)
@@ -1533,9 +1599,13 @@ def perform_targeted_ocr_lower_court(
             del bitmap, page_obj
         pil_img = guard_and_downscale_image(pil_img)
         classification = classify_scanned_page(pil_img)
+        t_render = time.monotonic() - t_render_start
+
         if classification in ("blank", "image-heavy"):
             del pil_img
             _tlog(f"[TARGETED-OCR] Page {idx+1} is {classification} — skipping expensive OCR")
+            total_duration = time.monotonic() - t_page_start
+            _tlog(f"[OCR-TIMING] page {idx+1}: engine=Skipped-{classification} render={t_render:.2f}s paddle=0.00s vision=0.00s total={total_duration:.2f}s")
             if page_callback:
                 page_callback({
                     "page": idx + 1, "total_pages": total_pages,
@@ -1566,6 +1636,12 @@ def perform_targeted_ocr_lower_court(
         pages_meta.append(meta)
         text_lines.append(f"--- PAGE {idx + 1} ---")
         text_lines.extend(lines)
+        if result_container is not None:
+            result_container["text_lines"] = list(text_lines)
+            result_container["pages_meta"] = list(pages_meta)
+
+        total_duration = time.monotonic() - t_page_start
+        _tlog(f"[OCR-TIMING] page {idx+1}: engine={meta.get('engine')} render={t_render:.2f}s paddle={meta.get('paddle_time', 0.0):.2f}s vision={meta.get('vision_time', 0.0):.2f}s total={total_duration:.2f}s")
 
         if page_callback:
             page_callback({
@@ -1623,8 +1699,8 @@ def perform_ocr_on_scanned_pdf(
     remains the last-resort safety net if both are unavailable or both fail.
     """
     start_time = time.time()
-    vision_available = is_vision_model_available()
     paddle_available = is_paddle_available()
+    vision_available = is_vision_model_available()
 
     if not vision_available and not paddle_available and not _init_tesseract():
         _tlog("CRITICAL: No OCR engine available (PaddleOCR, vision, and Tesseract all unavailable)!")
@@ -1910,8 +1986,8 @@ def perform_ocr_on_scanned_pdf(
 def perform_ocr_on_image(file_path: str) -> tuple:
     """Single image file OCR — hybrid PaddleOCR + qwen2.5vl:7b (same order as the PDF pipeline)."""
     start_time = time.time()
-    vision_available = is_vision_model_available()
     paddle_available = is_paddle_available()
+    vision_available = is_vision_model_available()
     lines = []
     engine_used = ""
     confidence = 0.0
@@ -2214,13 +2290,15 @@ async def process_single_file(file: UploadFile = File(...)):
 
                     loop = asyncio.get_event_loop()
 
+                    result_container = {"text_lines": [], "pages_meta": [], "page_idxs": [], "target_pages": {}}
+
                     if track == "lower_court":
                         yield f"data: {json.dumps({'status': 'ocr', 'progress': 50, 'message': 'Lower-court bundle detected — running hybrid OCR...'})}\n\n"
                         await asyncio.sleep(0.01)
                         ocr_future = loop.run_in_executor(
                             None,
-                            lambda: perform_ocr_on_scanned_pdf(
-                                temp_path, page_callback=_page_cb, original_filename=file.filename, track="lower_court"
+                            lambda: perform_targeted_ocr_lower_court(
+                                temp_path, page_callback=_page_cb, result_container=result_container
                             )
                         )
                     else:
@@ -2233,14 +2311,52 @@ async def process_single_file(file: UploadFile = File(...)):
                             )
                         )
 
-                    while not ocr_future.done():
-                        await asyncio.sleep(0.1)
-                        while not page_event_queue.empty():
-                            pg = page_event_queue.get_nowait()
-                            progress_val = 50 + int((pg["pages_done"] / max(pg["total_pages"], 1)) * 40)
-                            msg = f"OCR page {pg['page']}/{pg['total_pages']}"
-                            payload = json.dumps({"status": "page_progress", "progress": progress_val, "message": msg, "page_info": pg})
-                            yield f"data: {payload}\n\n"
+                    start_wait = time.time()
+                    try:
+                        while not ocr_future.done():
+                            elapsed = time.time() - start_wait
+                            remaining = OCR_TOTAL_BUDGET_SECONDS - elapsed
+                            if remaining <= 0:
+                                raise asyncio.TimeoutError()
+
+                            try:
+                                await asyncio.wait_for(asyncio.shield(ocr_future), timeout=min(0.1, remaining))
+                            except asyncio.TimeoutError:
+                                pass
+
+                            while not page_event_queue.empty():
+                                pg = page_event_queue.get_nowait()
+                                progress_val = 50 + int((pg["pages_done"] / max(pg["total_pages"], 1)) * 40)
+                                msg = f"OCR page {pg['page']}/{pg['total_pages']}"
+                                payload = json.dumps({"status": "page_progress", "progress": progress_val, "message": msg, "page_info": pg})
+                                yield f"data: {payload}\n\n"
+
+                        text_lines, ocr_debug = await ocr_future
+                    except asyncio.TimeoutError:
+                        logger.error(f"[OCR-TIMING] perform_targeted_ocr_lower_court timed out after {OCR_TOTAL_BUDGET_SECONDS}s — returning partially processed pages.")
+                        
+                        # Retrieve partial results
+                        text_lines = result_container.get("text_lines", [])
+                        pages_meta = result_container.get("pages_meta", [])
+                        page_idxs = result_container.get("page_idxs", [])
+                        target_pages = result_container.get("target_pages", {})
+
+                        # Build a partial ocr_debug
+                        avg_conf = (sum(m.get("confidence", 0.0) for m in pages_meta) / len(pages_meta)) if pages_meta else 0.0
+                        avg_q = (sum(m.get("quality_score", 0.0) for m in pages_meta) / len(pages_meta)) if pages_meta else 0.0
+                        total_time = time.time() - start_wait
+
+                        ocr_debug = _build_ocr_debug(
+                            OCR_HYBRID_LABEL, 0, avg_q, [], [p + 1 for p in page_idxs[:len(pages_meta)]], ["rgb_convert", "clahe_contrast"],
+                            "none", avg_q, average_page_confidence=avg_conf, pages=pages_meta, total_ocr_time=total_time
+                        )
+                        ocr_debug["targeted_pages"] = {
+                            k: ([x + 1 for x in v] if isinstance(v, list) else v + 1)
+                            for k, v in target_pages.items()
+                        }
+                        ocr_debug["total_pages_in_bundle"] = total_pages
+                        ocr_debug["pages_skipped"] = total_pages - len(pages_meta)
+                        ocr_debug["timeout_triggered"] = True
 
                     while not page_event_queue.empty():
                         pg = page_event_queue.get_nowait()
@@ -2249,7 +2365,6 @@ async def process_single_file(file: UploadFile = File(...)):
                         payload = json.dumps({"status": "page_progress", "progress": progress_val, "message": msg, "page_info": pg})
                         yield f"data: {payload}\n\n"
 
-                    text_lines, ocr_debug = await ocr_future
                     fallback_source = OCR_HYBRID_LABEL
                     ocr_debug["track"] = track_info
 
