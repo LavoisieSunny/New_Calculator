@@ -799,10 +799,10 @@ def extract_smart_context_for_llm(raw_ocr_text: str, track: str = "high_court") 
     # them here would throw away the exact content this call exists to recover.
     if track != "lower_court":
         raw_ocr_text = _strip_devanagari_lines(raw_ocr_text)
-    if len(raw_ocr_text) <= 30000:
+    if len(raw_ocr_text) <= 15000:
         return raw_ocr_text
-    front_context = raw_ocr_text[:12000]
-    remainder_text = raw_ocr_text[12000:]
+    front_context = raw_ocr_text[:3000]
+    remainder_text = raw_ocr_text[3000:]
     lines = remainder_text.split("\n")
     high_value_keywords = [
         "compensation", "multiplier", "dependency", "consortium",
@@ -830,9 +830,9 @@ def extract_smart_context_for_llm(raw_ocr_text: str, track: str = "high_court") 
         else:
             i += 1
     selected_text = "\n\n... [Section Extract] ...\n\n".join(selected_chunks)
-    if len(selected_text) > 25000:
-        selected_text = selected_text[:25000] + "\n\n... [Truncated] ..."
-    end_context = raw_ocr_text[-8000:]
+    if len(selected_text) > 8000:
+        selected_text = selected_text[:8000] + "\n\n... [Truncated] ..."
+    end_context = raw_ocr_text[-3000:]
  
     # For all cases, unconditionally extract and merge Cause Title, Prayer, and Grounds
     extra_case_context = ""
@@ -873,13 +873,13 @@ def extract_smart_context_for_llm(raw_ocr_text: str, track: str = "high_court") 
  
         case_parts = []
         if claimant_sec:
-            claimant_sec_trunc = claimant_sec if len(claimant_sec) <= 8000 else claimant_sec[:8000] + "\n... [Truncated Claimant Section] ..."
+            claimant_sec_trunc = claimant_sec if len(claimant_sec) <= 3000 else claimant_sec[:3000] + "\n... [Truncated Claimant Section] ..."
             case_parts.append(f"=== CAUSE TITLE / CLAIMANT SECTION ===\n{claimant_sec_trunc}")
         if relief_sec:
-            relief_sec_trunc = relief_sec if len(relief_sec) <= 8000 else relief_sec[:8000] + "\n... [Truncated Relief Section] ..."
+            relief_sec_trunc = relief_sec if len(relief_sec) <= 3000 else relief_sec[:3000] + "\n... [Truncated Relief Section] ..."
             case_parts.append(f"=== PRAYER / RELIEF CLAIMS SECTION ===\n{relief_sec_trunc}")
         if grounds_sec:
-            grounds_sec_trunc = grounds_sec if len(grounds_sec) <= 8000 else grounds_sec[:8000] + "\n... [Truncated Grounds Section] ..."
+            grounds_sec_trunc = grounds_sec if len(grounds_sec) <= 3000 else grounds_sec[:3000] + "\n... [Truncated Grounds Section] ..."
             case_parts.append(f"=== GROUNDS OF APPEAL SECTION ===\n{grounds_sec_trunc}")
  
         if case_parts:
