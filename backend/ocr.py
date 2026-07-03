@@ -148,6 +148,7 @@ def _record_vision_result(success: bool, page_num: int = 0):
 # actual model call is serialized — same pattern as the vision semaphore above.
 _PADDLE_INIT_LOCK  = threading.Lock()
 _PADDLE_INFER_LOCK = threading.Lock()
+_PDFIUM_LOCK       = threading.Lock()
 
 # ------------------------------------------------------------------
 # REAL memory release (glibc malloc doesn't return freed arenas to the OS
@@ -1679,11 +1680,12 @@ def perform_ocr_on_scanned_pdf(
 
         def render_one_page(idx):
             try:
-                with pdfium.PdfDocument(file_path) as doc:
-                    page_obj = doc[idx]
-                    bitmap = page_obj.render(scale=scale)
-                    pil_img = bitmap.to_pil()
-                    del bitmap, page_obj
+                with _PDFIUM_LOCK:
+                    with pdfium.PdfDocument(file_path) as doc:
+                        page_obj = doc[idx]
+                        bitmap = page_obj.render(scale=scale)
+                        pil_img = bitmap.to_pil()
+                        del bitmap, page_obj
                 pil_img = guard_and_downscale_image(pil_img)
                 img_path = os.path.join(render_dir, f"page_{idx:04d}.png")
                 pil_img.save(img_path, format="PNG")
@@ -1694,14 +1696,19 @@ def perform_ocr_on_scanned_pdf(
                 return idx, "error"
 
         if render_idxs:
-            # Rendering is pure CPU + I/O with no shared mutable model state,
-            # so it is safe to run at full worker parallelism (independent of
-            # the OCR-stage semaphores below, which guard the actual model calls).
             with _cf.ThreadPoolExecutor(max_workers=OCR_MAX_PARALLEL_WORKERS) as render_pool:
                 for idx, result in render_pool.map(render_one_page, render_idxs):
                     rendered_paths[idx] = result
                     if len(rendered_paths) % 25 == 0 or len(rendered_paths) == total_pages:
                         _tlog(f"[RENDER] {len(rendered_paths)}/{total_pages} pages rendered")
+            
+            # Gating: fail loudly if >10% of pages fail to render
+            error_count = sum(1 for p in rendered_paths.values() if p == "error")
+            if total_pages > 0 and (error_count / total_pages) > 0.10:
+                warn_msg = f"[OCR] {error_count}/{total_pages} pages failed to render — results are likely incomplete, do not treat as a valid extraction"
+                logger.error(warn_msg)
+                print(warn_msg, flush=True, file=sys.stderr)
+                raise RuntimeError(warn_msg)
             gc.collect()
 
         _tlog(f"[RENDER] Done. {len(rendered_paths)} pages mapped. Starting vision OCR...")
