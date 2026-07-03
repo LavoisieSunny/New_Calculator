@@ -1505,56 +1505,51 @@ def classify_enhancement_or_reduction(sections):
     g_has_signal = g_verdict in ("enhancement", "reduction")
     r_has_signal = r_verdict in ("enhancement", "reduction")
 
-    # Extract detailed bullet points (extract all points as they are in the file)
-    grounds_points = _extract_all_points(grounds_text)
-    relief_points = _extract_all_points(relief_text)
+    # Determine resolved verdict
+    resolved_verdict = "not_determinable"
+    resolved_conf = 0.0
+    resolved_basis = "no_signal"
 
-    # Fallback to snippet if no points were parsed but a signal was detected
-    if g_has_signal and not grounds_points and g_snippet:
-        grounds_points = [g_snippet.lstrip("…").rstrip("…").strip()]
-    if r_has_signal and not relief_points and r_snippet:
-        relief_points = [r_snippet.lstrip("…").rstrip("…").strip()]
+    if g_has_signal and r_has_signal:
+        if g_verdict == r_verdict:
+            resolved_verdict = g_verdict
+            resolved_conf = round((g_conf + r_conf) / 2, 2)
+            resolved_basis = "agreement"
+        else:
+            resolved_verdict = "not_determinable"
+            resolved_conf = 0.0
+            resolved_basis = "conflict"
+    elif r_has_signal:  # relief/prayer clause is the authoritative ask when only one side has a signal
+        resolved_verdict = r_verdict
+        resolved_conf = round(r_conf * 0.9, 2)
+        resolved_basis = "single_source"
+    elif g_has_signal:
+        resolved_verdict = g_verdict
+        resolved_conf = round(g_conf * 0.85, 2)  # grounds alone is weaker evidence than relief alone
+        resolved_basis = "single_source"
 
-    base_result = {
+    # Extract detailed matching bullet points
+    if resolved_verdict in ("enhancement", "reduction"):
+        grounds_points = _extract_matching_points(grounds_text, resolved_verdict)
+        relief_points = _extract_matching_points(relief_text, resolved_verdict)
+        # Fallback to snippet if no points were parsed but a signal was detected
+        if not grounds_points and g_has_signal and g_verdict == resolved_verdict and g_snippet:
+            grounds_points = [g_snippet.lstrip("…").rstrip("…").strip()]
+        if not relief_points and r_has_signal and r_verdict == resolved_verdict and r_snippet:
+            relief_points = [r_snippet.lstrip("…").rstrip("…").strip()]
+    else:
+        grounds_points = []
+        relief_points = []
+
+    return {
+        "verdict": resolved_verdict,
+        "confidence": resolved_conf,
+        "basis": resolved_basis,
         "grounds_signal": grounds_signal,
         "relief_signal": relief_signal,
         "grounds_points": grounds_points,
         "relief_points": relief_points,
     }
-
-    if g_has_signal and r_has_signal:
-        if g_verdict == r_verdict:
-            base_result.update({
-                "verdict": g_verdict,
-                "confidence": round((g_conf + r_conf) / 2, 2),
-                "basis": "agreement",
-            })
-        else:
-            base_result.update({
-                "verdict": "not_determinable",
-                "confidence": 0.0,
-                "basis": "conflict",
-            })
-    elif r_has_signal:  # relief/prayer clause is the authoritative ask when only one side has a signal
-        base_result.update({
-            "verdict": r_verdict,
-            "confidence": round(r_conf * 0.9, 2),
-            "basis": "single_source",
-        })
-    elif g_has_signal:
-        base_result.update({
-            "verdict": g_verdict,
-            "confidence": round(g_conf * 0.85, 2),  # grounds alone is weaker evidence than relief alone
-            "basis": "single_source",
-        })
-    else:
-        base_result.update({
-            "verdict": "not_determinable",
-            "confidence": 0.0,
-            "basis": "no_signal",
-        })
-
-    return base_result
 
 
 def format_suggestions_for_calculator(suggestions):

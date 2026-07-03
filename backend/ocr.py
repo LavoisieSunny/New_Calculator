@@ -1187,22 +1187,10 @@ def ocr_page_with_vision(
                 # would otherwise let a worse transcription win purely on line count).
                 # Require a real quality margin; only fall back to the line-count
                 # signal when Paddle produced essentially nothing to compare against.
-                vision_wins = (
-                    (vis_lines and not paddle_lines) or
-                    (vis_lines and vis_q >= paddle_q + 0.05)
-                )
-                if vision_wins:
+                if vis_lines:
                     lines, engine_used, confidence = vis_lines, "qwen2.5vl:7b", 0.90
-                elif _paddle_result_is_trustworthy(paddle_lines, paddle_conf, paddle_q):
-                    lines, engine_used, confidence = paddle_lines, "PaddleOCR", paddle_conf
-                elif vis_lines:
-                    lines, engine_used, confidence = vis_lines, "qwen2.5vl:7b", 0.75
                 elif paddle_lines and paddle_conf > 0.0:
-                    # last resort: vision tried and found nothing usable either,
-                    # Paddle's untrusted output is still the best we have (if > 0.0)
                     lines, engine_used, confidence = paddle_lines, "PaddleOCR", paddle_conf
-                    _tlog(f"[OCR] Page {page_num}: accepting untrusted PaddleOCR output "
-                          f"(conf={paddle_conf:.2f}) — vision escalation found nothing better")
             elif _paddle_result_is_trustworthy(paddle_lines, paddle_conf, paddle_q):
                 # Paddle's result is the best we have (vision unavailable/disabled)
                 lines, engine_used, confidence = paddle_lines, "PaddleOCR", paddle_conf
@@ -1284,7 +1272,7 @@ def ocr_page_with_vision(
                 del retry_b64
                 if retry_text and retry_text.strip() != "[BLANK PAGE]":
                     retry_vis_lines = [l.strip() for l in retry_text.split("\n") if l.strip()]
-                    if len(retry_vis_lines) > len(lines):
+                    if retry_vis_lines:
                         lines = retry_vis_lines
                         engine_used = "qwen2.5vl:7b-retry"
                         confidence = 0.90
@@ -1941,6 +1929,13 @@ def perform_ocr_on_image(file_path: str) -> tuple:
                     lines, confidence, _ = call_paddle_ocr(temp_img_path, page_num=1)
                     if lines:
                         engine_used = "PaddleOCR"
+                if not lines and vision_available and OCR_ENABLE_VISION_ESCALATION:
+                    img_b64 = image_to_base64(processed, quality=85)
+                    raw_text = call_vision_model(img_b64, page_num=1)
+                    del img_b64
+                    vis_lines = [l.strip() for l in raw_text.split("\n") if l.strip()] if raw_text and raw_text.strip() != "[BLANK PAGE]" else []
+                    if vis_lines:
+                        lines, engine_used, confidence = vis_lines, "qwen2.5vl:7b", 0.85
                 if not lines:
                     lines = run_tesseract_fallback(processed)
                     engine_used = "Tesseract"
@@ -1959,7 +1954,7 @@ def perform_ocr_on_image(file_path: str) -> tuple:
                         del img_b64
                         vis_lines = [l.strip() for l in raw_text.split("\n") if l.strip()] if raw_text and raw_text.strip() != "[BLANK PAGE]" else []
                         vis_q = score_ocr_page_quality(vis_lines)
-                        if vis_lines and (len(vis_lines) > len(paddle_lines) * 1.1 or vis_q > paddle_q):
+                        if vis_lines:
                             lines, engine_used, confidence = vis_lines, "qwen2.5vl:7b", 0.90
                         elif paddle_lines:
                             lines, engine_used, confidence = paddle_lines, "PaddleOCR", paddle_conf
