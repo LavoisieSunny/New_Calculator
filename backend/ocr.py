@@ -369,14 +369,28 @@ def get_ocr_instance():
             use_gpu = paddle.device.is_compiled_with_cuda()
             _tlog(f"Loading PaddleOCR singleton (PP-OCRv5, lang={OCR_PADDLE_LANG}, use_gpu={use_gpu})...")
             t0 = time.time()
-            _PADDLE_INSTANCE = PaddleOCR(
-                lang=OCR_PADDLE_LANG,
-                use_doc_orientation_classify=False,  # scans are upright; skip for speed
-                use_doc_unwarping=False,              # not photographed/curved pages
-                use_textline_orientation=False,       # skip per-line angle model for speed
-                enable_mkldnn=False,                  # prevents local static model runner crash on Windows CPU
-                use_gpu=use_gpu
-            )
+            try:
+                _PADDLE_INSTANCE = PaddleOCR(
+                    lang=OCR_PADDLE_LANG,
+                    use_doc_orientation_classify=False,  # scans are upright; skip for speed
+                    use_doc_unwarping=False,              # not photographed/curved pages
+                    use_textline_orientation=False,       # skip per-line angle model for speed
+                    enable_mkldnn=False,                  # prevents local static model runner crash on Windows CPU
+                    use_gpu=use_gpu
+                )
+            except Exception as gpu_err:
+                if use_gpu:
+                    _tlog(f"WARNING: PaddleOCR failed to initialize with GPU ({gpu_err}). Falling back to CPU mode.")
+                    _PADDLE_INSTANCE = PaddleOCR(
+                        lang=OCR_PADDLE_LANG,
+                        use_doc_orientation_classify=False,
+                        use_doc_unwarping=False,
+                        use_textline_orientation=False,
+                        enable_mkldnn=False,
+                        use_gpu=False
+                    )
+                else:
+                    raise
             _tlog(f"PaddleOCR singleton ready in {time.time() - t0:.1f}s.")
     return _PADDLE_INSTANCE
 
@@ -430,13 +444,26 @@ def get_structure_instance():
             use_gpu = paddle.device.is_compiled_with_cuda()
             _tlog(f"Loading PP-StructureV3 singleton (table/layout, lang={OCR_PADDLE_LANG}, use_gpu={use_gpu})...")
             t0 = time.time()
-            _STRUCTURE_INSTANCE = PPStructureV3(
-                lang=OCR_PADDLE_LANG,
-                use_doc_orientation_classify=False,
-                use_doc_unwarping=False,
-                use_textline_orientation=False,
-                use_gpu=use_gpu
-            )
+            try:
+                _STRUCTURE_INSTANCE = PPStructureV3(
+                    lang=OCR_PADDLE_LANG,
+                    use_doc_orientation_classify=False,
+                    use_doc_unwarping=False,
+                    use_textline_orientation=False,
+                    use_gpu=use_gpu
+                )
+            except Exception as gpu_err:
+                if use_gpu:
+                    _tlog(f"WARNING: PP-StructureV3 failed to initialize with GPU ({gpu_err}). Falling back to CPU mode.")
+                    _STRUCTURE_INSTANCE = PPStructureV3(
+                        lang=OCR_PADDLE_LANG,
+                        use_doc_orientation_classify=False,
+                        use_doc_unwarping=False,
+                        use_textline_orientation=False,
+                        use_gpu=False
+                    )
+                else:
+                    raise
             _tlog(f"PP-StructureV3 singleton ready in {time.time() - t0:.1f}s.")
     return _STRUCTURE_INSTANCE
 
@@ -2289,6 +2316,8 @@ async def process_single_file(file: UploadFile = File(...)):
                 _tlog(f"[TRACK] {file.filename}: {track_info}")
 
                 if is_extracted_text_sparse(text_lines):
+                    with pdfium.PdfDocument(temp_path) as doc:
+                        total_pages = len(doc)
                     page_event_queue = _queue.Queue()
 
                     def _page_cb(page_info):
