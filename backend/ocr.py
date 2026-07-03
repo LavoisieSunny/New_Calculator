@@ -378,9 +378,18 @@ def get_ocr_instance():
                     enable_mkldnn=False,                  # prevents local static model runner crash on Windows CPU
                     use_gpu=use_gpu
                 )
-            except Exception as gpu_err:
-                if use_gpu:
-                    _tlog(f"WARNING: PaddleOCR failed to initialize with GPU ({gpu_err}). Falling back to CPU mode.")
+            except Exception as e:
+                if "use_gpu" in str(e) or "Unknown argument" in str(e):
+                    _tlog(f"WARNING: use_gpu is not supported as an argument by this PaddleOCR version ({e}). Initializing without use_gpu.")
+                    _PADDLE_INSTANCE = PaddleOCR(
+                        lang=OCR_PADDLE_LANG,
+                        use_doc_orientation_classify=False,
+                        use_doc_unwarping=False,
+                        use_textline_orientation=False,
+                        enable_mkldnn=False,
+                    )
+                elif use_gpu:
+                    _tlog(f"WARNING: PaddleOCR failed to initialize with GPU ({e}). Falling back to CPU mode.")
                     _PADDLE_INSTANCE = PaddleOCR(
                         lang=OCR_PADDLE_LANG,
                         use_doc_orientation_classify=False,
@@ -452,9 +461,17 @@ def get_structure_instance():
                     use_textline_orientation=False,
                     use_gpu=use_gpu
                 )
-            except Exception as gpu_err:
-                if use_gpu:
-                    _tlog(f"WARNING: PP-StructureV3 failed to initialize with GPU ({gpu_err}). Falling back to CPU mode.")
+            except Exception as e:
+                if "use_gpu" in str(e) or "Unknown argument" in str(e):
+                    _tlog(f"WARNING: use_gpu is not supported as an argument by this PP-StructureV3 version ({e}). Initializing without use_gpu.")
+                    _STRUCTURE_INSTANCE = PPStructureV3(
+                        lang=OCR_PADDLE_LANG,
+                        use_doc_orientation_classify=False,
+                        use_doc_unwarping=False,
+                        use_textline_orientation=False,
+                    )
+                elif use_gpu:
+                    _tlog(f"WARNING: PP-StructureV3 failed to initialize with GPU ({e}). Falling back to CPU mode.")
                     _STRUCTURE_INSTANCE = PPStructureV3(
                         lang=OCR_PADDLE_LANG,
                         use_doc_orientation_classify=False,
