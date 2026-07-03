@@ -359,9 +359,11 @@ def get_ocr_instance():
     (repeated model loads = repeated big memory allocations); the singleton
     pattern here, combined with main.py's startup warm-up, avoids that.
     """
-    global _PADDLE_INSTANCE
+    global _PADDLE_INSTANCE, _PADDLE_AVAILABLE
     if _PADDLE_INSTANCE is not None:
         return _PADDLE_INSTANCE
+    if _PADDLE_AVAILABLE == False:
+        raise RuntimeError("PaddleOCR previously failed to initialize and is marked unavailable.")
     with _PADDLE_INIT_LOCK:
         if _PADDLE_INSTANCE is None:
             from paddleocr import PaddleOCR
@@ -409,13 +411,16 @@ def is_paddle_available() -> bool:
     global _PADDLE_AVAILABLE
     if _PADDLE_AVAILABLE is not None:
         return _PADDLE_AVAILABLE
-    try:
-        get_ocr_instance()
-        _PADDLE_AVAILABLE = True
-        _tlog("PaddleOCR confirmed available.")
-    except Exception as e:
-        logger.error(f"PaddleOCR unavailable: {e}")
-        _PADDLE_AVAILABLE = False
+    with _PADDLE_INIT_LOCK:
+        if _PADDLE_AVAILABLE is not None:
+            return _PADDLE_AVAILABLE
+        try:
+            get_ocr_instance()
+            _PADDLE_AVAILABLE = True
+            _tlog("PaddleOCR confirmed available.")
+        except Exception as e:
+            logger.error(f"PaddleOCR unavailable: {e}")
+            _PADDLE_AVAILABLE = False
     return _PADDLE_AVAILABLE
 
 
@@ -443,9 +448,11 @@ _STRUCTURE_INFER_LOCK = threading.Lock()
 def get_structure_instance():
     """Lazily creates and returns the singleton PPStructureV3 engine.
     Same singleton pattern as get_ocr_instance() — loaded once, reused."""
-    global _STRUCTURE_INSTANCE
+    global _STRUCTURE_INSTANCE, _STRUCTURE_AVAILABLE
     if _STRUCTURE_INSTANCE is not None:
         return _STRUCTURE_INSTANCE
+    if _STRUCTURE_AVAILABLE == False:
+        raise RuntimeError("PP-StructureV3 previously failed to initialize and is marked unavailable.")
     with _STRUCTURE_INIT_LOCK:
         if _STRUCTURE_INSTANCE is None:
             from paddleocr import PPStructureV3
@@ -491,13 +498,16 @@ def is_table_structure_available() -> bool:
         return False
     if _STRUCTURE_AVAILABLE is not None:
         return _STRUCTURE_AVAILABLE
-    try:
-        get_structure_instance()
-        _STRUCTURE_AVAILABLE = True
-        _tlog("PP-StructureV3 confirmed available.")
-    except Exception as e:
-        logger.warning(f"PP-StructureV3 unavailable (table-structure pass disabled): {e}")
-        _STRUCTURE_AVAILABLE = False
+    with _STRUCTURE_INIT_LOCK:
+        if _STRUCTURE_AVAILABLE is not None:
+            return _STRUCTURE_AVAILABLE
+        try:
+            get_structure_instance()
+            _STRUCTURE_AVAILABLE = True
+            _tlog("PP-StructureV3 confirmed available.")
+        except Exception as e:
+            logger.warning(f"PP-StructureV3 unavailable (table-structure pass disabled): {e}")
+            _STRUCTURE_AVAILABLE = False
     return _STRUCTURE_AVAILABLE
 
 
@@ -1729,7 +1739,8 @@ def perform_ocr_on_scanned_pdf(
     page_callback=None,
     scan_all_pages: bool = False,
     original_filename: str = None,
-    track: str = "high_court"
+    track: str = "high_court",
+    result_container: dict = None
 ) -> tuple:
     """
     Main pipeline for scanned PDF OCR — hybrid PaddleOCR + qwen2.5vl:7b.
@@ -1909,6 +1920,23 @@ def perform_ocr_on_scanned_pdf(
                 page_results[idx] = (page_lines, page_meta)
                 total_ocr_duration += page_meta.get("ocr_time", 0.0)
                 pages_done = len(page_results)
+
+                # Incremental stashing for timeout recovery
+                if result_container is not None:
+                    sorted_done = sorted(page_results.keys())
+                    accum_lines = []
+                    accum_meta = []
+                    accum_idxs = []
+                    for k in sorted_done:
+                        lines_k, meta_k = page_results[k]
+                        accum_lines.append(f"--- PAGE {k+1} ---")
+                        accum_lines.extend(lines_k)
+                        accum_meta.append(meta_k)
+                        accum_idxs.append(k)
+                    result_container["text_lines"] = accum_lines
+                    result_container["pages_meta"] = accum_meta
+                    result_container["page_idxs"] = accum_idxs
+
                 if progress_callback:
                     progress_callback(int((pages_done / total_pages) * 95))
                 if page_callback:
@@ -2359,7 +2387,8 @@ async def process_single_file(file: UploadFile = File(...)):
                         ocr_future = loop.run_in_executor(
                             None,
                             lambda: perform_ocr_on_scanned_pdf(
-                                temp_path, page_callback=_page_cb, original_filename=file.filename, track="high_court"
+                                temp_path, page_callback=_page_cb, original_filename=file.filename, track="high_court",
+                                result_container=result_container
                             )
                         )
 
@@ -2385,7 +2414,8 @@ async def process_single_file(file: UploadFile = File(...)):
 
                         text_lines, ocr_debug = await ocr_future
                     except asyncio.TimeoutError:
-                        logger.error(f"[OCR-TIMING] perform_targeted_ocr_lower_court timed out after {OCR_TOTAL_BUDGET_SECONDS}s — returning partially processed pages.")
+                        func_name = "perform_targeted_ocr_lower_court" if track == "lower_court" else "perform_ocr_on_scanned_pdf"
+                        logger.error(f"[OCR-TIMING] {func_name} timed out after {OCR_TOTAL_BUDGET_SECONDS}s — returning partially processed pages.")
                         
                         # Retrieve partial results
                         text_lines = result_container.get("text_lines", [])
