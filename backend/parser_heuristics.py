@@ -2201,7 +2201,10 @@ def real_text_recovery(petitioner_details, prayer_section, compensation_paragrap
     if name_m:
         recovered["name"] = name_m.group(1).strip()
 
-    age_m = re.search(r'\b(?:age|aged|approximately)\s*(\d{1,2})\b', petitioner_details + " " + compensation_paragraphs)
+    # Try more specific patterns first to avoid capturing relative/claimant ages
+    age_m = re.search(r'\b(?:age\s+of\s+deceased|deceased\s+aged|deceased\s+was\s+aged|age\s+of\s+injured|injured\s+aged|injured\s+was\s+aged|age\s+at\s+the\s+time\s+of\s+accident)\s*[:\-]?\s*(\d{1,2})\b', petitioner_details + " " + compensation_paragraphs, re.IGNORECASE)
+    if not age_m:
+        age_m = re.search(r'\b(?:age|aged|approximately)\s*(\d{1,2})\b', petitioner_details + " " + compensation_paragraphs, re.IGNORECASE)
     if age_m:
         recovered["age"] = int(age_m.group(1))
 
@@ -2643,14 +2646,20 @@ def parse_extracted_text(text_lines):
 
     # 4. Age only from claimant/petition section or chronological events
     age_patterns = [
-        r'(?:aged\s+about|age\s+of\s+deceased|age\s+of\s+injured|age\s+of\s+claimant|aged|approximately)\s*[:\-]?\s*(\d{1,2})\b',
+        r'\bage\s+of\s+the?\s*deceased\s*[:\-]?\s*(\d{1,2})\b',
+        r'\bage\s+of\s+the?\s*injured\s*[:\-]?\s*(\d{1,2})\b',
+        r'\bdeceased\s+was\s+aged\s*(?:about)?\s*(\d{1,2})\b',
+        r'\binjured\s+was\s+aged\s*(?:about)?\s*(\d{1,2})\b',
+        r'\bdeceased\s+aged\s*(?:about)?\s*(\d{1,2})\b',
+        r'\binjured\s+aged\s*(?:about)?\s*(\d{1,2})\b',
+        r'\bage\s+at\s+the?\s*time\s+of\s+(?:the\s+)?accident\s*[:\-]?\s*(\d{1,2})\b',
+        r'\bdate\s+of\s+accident\s+age\s*[:\-]?\s*(\d{1,2})\b',
+        r'(?:aged\s+about|age\s+of\s+claimant|aged|approximately)\s*[:\-]?\s*(\d{1,2})\b',
         r'\b([1-9]\d)\s*years\s*(?:old)?\b',
-        r'\bage\s+at\s+(?:the\s+time\s+of\s+)?accident\s*[:\-]?\s*(\d{1,2})\b',
         r'\bage\s*[:\-]\s*(\d{1,2})\s*(?:years|yrs)?\b',
         r'(?:is|was)\s+(\d{1,2})\s+years\s+(?:of\s+age|old)\b',
         r'\bage\s*[:\-]?\s*(\d{1,2})\b',
         r'\baged\s+(\d{1,2})\b',
-        r'\bdate\s+of\s+accident\s+age\s*[:\-]?\s*(\d{1,2})\b',
     ]
     age, conf_age, sec_age, page_age = contextual_extract(
         age_patterns, sections, [("claimant_section", 95), ("chronological_events_section", 80)], default_val="", type_cast=int,
@@ -3269,6 +3278,9 @@ def parse_extracted_text(text_lines):
     death_score = sum(3 for kw in death_kws if kw in scoring_text) + sum(1 for kw in death_kws if kw in full_text_lower)
     injury_score = sum(3 for kw in injury_kws if kw in scoring_text) + sum(1 for kw in injury_kws if kw in full_text_lower)
     case_type = "death" if (death_score - injury_score) >= 2 else "injury"
+    if case_type == "death":
+        disability = ""
+        conf_disability = 0.0
 
     # ==========================================
     # DEATH-CASE IDENTITY CORRECTION PASS
@@ -4479,6 +4491,10 @@ def parse_hindi_extracted_text(text_lines: list) -> dict:
     death_hits = sum(flat.count(k) for k in death_kws)
     injury_hits = sum(flat.count(k) for k in injury_kws)
     out["case_type"] = "death" if death_hits > injury_hits else "injury"
+    if out["case_type"] == "death":
+        out["disability"] = ""
+        if "disability" in conf:
+            conf["disability"] = 0.0
 
     # ---- case number (metadata, not a calculator field, kept for traceability) --
     m = re.search(
