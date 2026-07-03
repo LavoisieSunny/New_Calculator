@@ -810,6 +810,12 @@ def extract_smart_context_for_llm(raw_ocr_text: str, track: str = "high_court") 
         "award", "rs.", "rupees", "attender", "medical", "pain",
         "future prospect", "interest", "loss of", "notional", "deduction"
     ]
+    if track == "lower_court":
+        high_value_keywords.extend([
+            "व्यय", "चिकित्सा", "वेदना", "पीड़ा", "परिवहन", "खुराक", "आहार",
+            "परिचारक", "अटेंडर", "अपंगता", "विकलांगता", "आय", "वेतन", "प्रतिकर",
+            "अधिकरण", "क्षतिपूर्ति", "नुकसान", "अटेण्डर", "कष्ट", "शारीरिक", "मानसिक"
+        ])
     selected_chunks = []
     i = 0
     n = len(lines)
@@ -912,6 +918,18 @@ def ai_data_recovery(raw_ocr_text: str, track: str = "high_court") -> dict:
         "Return ONLY a clean valid JSON object. Every key maps to {\"value\": ..., \"confidence\": 0.0-1.0}.\n"
         "Use null for value and 0.0 for confidence if a field is not found.\n"
         "Do NOT write preamble, explanation, markdown fences, or comments. Return only the JSON.\n\n"
+
+        "For Hindi/Devanagari judgments (lower court MACT cases), translate and map standard claims headings as follows:\n"
+        "- 'चिकित्सा व्यय' / 'उपचार' / 'इलाज' / 'दवा' -> medical_expenses\n"
+        "- 'शारीरिक एवं मानसिक वेदना' / 'पीड़ा और कष्ट' / 'वेदना' / 'कष्ट' -> pain_and_suffering\n"
+        "- 'परिवहन व्यय' / 'आवागमन' / 'यातायात' / 'वाहन व्यय' -> transportation\n"
+        "- 'विशेष भोजन' / 'पौष्टिक आहार' / 'विशेष खुराक' -> special_diet\n"
+        "- 'परिचारक व्यय' / 'अटेंडर' / 'अटेण्डर' / 'सहायक' -> attender_charges\n"
+        "- 'भविष्य का चिकित्सा व्यय' / 'आगामी उपचार' / 'भविष्य उपचार' -> future_medical_expenses\n"
+        "- 'आय की हानि' / 'वेतन की क्षति' / 'उपचार अवधि के दौरान आय' -> loss_of_income\n"
+        "- 'स्थायी अपंगता' / 'स्थायी अपंगता प्रतिशत' / 'विकलांगता प्रतिशत' / 'निरोग्यता प्रतिशत' -> disability_percentage\n"
+        "- 'मासिक आय' / 'मासिक वेतन' -> monthly_income\n"
+        "- 'प्रतिकर राशि' / 'कुल क्षतिपूर्ति' / 'कुल प्रतिकर' -> total_compensation / award_amount\n\n"
  
         "Extract ALL of these fields:\n\n"
  

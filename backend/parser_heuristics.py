@@ -4302,6 +4302,34 @@ def parse_hindi_extracted_text(text_lines: list) -> dict:
 
     out, conf = {}, {}
 
+    def find_value_for_pattern(pattern_str, current_line, next_line=None):
+        # 1. Try to match on the current line
+        m = re.search(pattern_str + r'[ \-:|]*(?:रुपये|रूपये|रू|रु)?[ \-:|]*([\d,]+\.?\d*)', current_line, re.IGNORECASE)
+        if m and m.group(1):
+            return m.group(1)
+        # 2. If no number is found, check if current line matches the pattern and the next line has a number
+        if next_line:
+            m_pat = re.search(pattern_str, current_line, re.IGNORECASE)
+            if m_pat:
+                m_num = re.search(r'^[ \-:|]*(?:रुपये|रूपये|रू|रु)?[ \-:|]*([\d,]+\.?\d*)', next_line, re.IGNORECASE)
+                if m_num:
+                    return m_num.group(1)
+        return None
+
+    def find_disability_percentage(current_line, next_line=None):
+        pattern_str = r'(?:स्थायी|स्थाई)? *(?:अपंगता|विकलांगता|निरोग्यता) *(?:का प्रतिशत)? *(?:लगभग)?'
+        m = re.search(pattern_str + r'[ \-:|]*(\d{1,3}) *(?:%|प्रतिशत)?', current_line, re.IGNORECASE)
+        if m and m.group(1):
+            return int(m.group(1))
+        if next_line:
+            m_pat = re.search(pattern_str, current_line, re.IGNORECASE)
+            if m_pat:
+                m_num = re.search(r'^[ \-:|]*(\d{1,3}) *(?:%|प्रतिशत)?', next_line, re.IGNORECASE)
+                if m_num:
+                    return int(m_num.group(1))
+        return None
+
+
     # ---- name + father's name -------------------------------------------------
     # 1) Preferred: labeled row "नाम और पिता का नाम <value>" or "Name & Father's Name <value>"
     m = re.search(rf'(?:नाम(?: और| एवं|/)? पिता का नाम|Name\s*(?:&|and|/)?\s*Father\'s\s*Name) *(?:[:\-]+)? *({_HI_NAME_SPAN_WIDE})', flat, re.IGNORECASE)
@@ -4349,7 +4377,7 @@ def parse_hindi_extracted_text(text_lines: list) -> dict:
         conf["vehicle_number"] = 0.75
 
     # ---- policy number ---------------------------------------------------------
-    m = re.search(r'(?:पॉलिसी|पालिसी) *(?:कवर *नोट)? *नं?\.? *([A-Za-z0-9\-/]{5,20})', flat)
+    m = re.search(r'(?:पॉलिसी|पालिसी) *(?:कवर *नोट)? *(?:नंबर|नं|no|num)?\.? *([A-Za-z0-9\-/]{5,20})', flat, re.IGNORECASE)
     if m:
         out["policy_number"] = m.group(1).strip()
         conf["policy_number"] = 0.75
@@ -4379,54 +4407,71 @@ def parse_hindi_extracted_text(text_lines: list) -> dict:
         conf["interest_rate"] = 0.70
 
     # ---- Detailed Compensation Heads (Hindi) -----------------------------------
-    for line in lines_norm:
+    for i, line in enumerate(lines_norm):
+        next_line = lines_norm[i + 1] if i + 1 < len(lines_norm) else None
+
+        # 0. Monthly Income (supplemental check to catch table-separated income)
+        if "monthly_income" not in out:
+            val = find_value_for_pattern(r'(?:मासिक आय|मासिक वेतन|monthly income|monthly salary)', line, next_line)
+            if val:
+                out["monthly_income"] = _hi_clean_amount(val)
+                conf["monthly_income"] = 0.85
+
         # 1. Medical Expenses
-        m_med = re.search(r'(?:चिकित्सा|इलाज|दवा|औषधि|उपचार) *व्यय? *(?:रुपये|रूपये|रू|रु)?[:\- ]*([\d,]+\.?\d*)', line)
-        if m_med and "medical_expenses" not in out:
-            out["medical_expenses"] = _hi_clean_amount(m_med.group(1))
-            conf["medical_expenses"] = 0.80
+        if "medical_expenses" not in out:
+            val = find_value_for_pattern(r'(?:चिकित्सा|इलाज|दवा|औषधि|उपचार) *व्यय?', line, next_line)
+            if val:
+                out["medical_expenses"] = _hi_clean_amount(val)
+                conf["medical_expenses"] = 0.80
 
         # 2. Pain and Suffering
-        m_pain = re.search(r'(?:कष्ट|पीड़ा|वेदना|शारीरिक एवं मानसिक वेदना) *(?:रुपये|रूपये|रू|रु)?[:\- ]*([\d,]+\.?\d*)', line)
-        if m_pain and "pain_and_suffering" not in out:
-            out["pain_and_suffering"] = _hi_clean_amount(m_pain.group(1))
-            conf["pain_and_suffering"] = 0.80
+        if "pain_and_suffering" not in out:
+            val = find_value_for_pattern(r'(?:कष्ट|पीड़ा|वेदना|शारीरिक एवं मानसिक वेदना)', line, next_line)
+            if val:
+                out["pain_and_suffering"] = _hi_clean_amount(val)
+                conf["pain_and_suffering"] = 0.80
 
         # 3. Transportation
-        m_trans = re.search(r'(?:परिवहन|आवागमन|वाहन|यातायात) *व्यय? *(?:रुपये|रूपये|रू|रु)?[:\- ]*([\d,]+\.?\d*)', line)
-        if m_trans and "transportation" not in out:
-            out["transportation"] = _hi_clean_amount(m_trans.group(1))
-            conf["transportation"] = 0.80
+        if "transportation" not in out:
+            val = find_value_for_pattern(r'(?:परिवहन|आवागमन|वाहन|यातायात) *व्यय?', line, next_line)
+            if val:
+                out["transportation"] = _hi_clean_amount(val)
+                conf["transportation"] = 0.80
 
         # 4. Special Diet
-        m_diet = re.search(r'(?:विशेष भोजन|पौष्टिक आहार|विशेष खुराक|पौष्टिक भोजन) *व्यय? *(?:रुपये|रूपये|रू|रु)?[:\- ]*([\d,]+\.?\d*)', line)
-        if m_diet and "special_diet" not in out:
-            out["special_diet"] = _hi_clean_amount(m_diet.group(1))
-            conf["special_diet"] = 0.80
+        if "special_diet" not in out:
+            val = find_value_for_pattern(r'(?:विशेष भोजन|पौष्टिक आहार|विशेष खुराक|पौष्टिक भोजन) *व्यय?', line, next_line)
+            if val:
+                out["special_diet"] = _hi_clean_amount(val)
+                conf["special_diet"] = 0.80
 
         # 5. Attender Charges
-        m_att = re.search(r'(?:परिचारक|अटेंडर|सहायक|अटेण्डर) *व्यय? *(?:रुपये|रूपये|रू|रु)?[:\- ]*([\d,]+\.?\d*)', line)
-        if m_att and "attender_charges" not in out:
-            out["attender_charges"] = _hi_clean_amount(m_att.group(1))
-            conf["attender_charges"] = 0.80
+        if "attender_charges" not in out:
+            val = find_value_for_pattern(r'(?:परिचारक|अटेंडर|सहायक|अटेण्डर) *व्यय?', line, next_line)
+            if val:
+                out["attender_charges"] = _hi_clean_amount(val)
+                conf["attender_charges"] = 0.80
 
         # 6. Future Medical Expenses
-        m_fut = re.search(r'(?:भविष्य|आगामी) *(?:चिकित्सा|इलाज|उपचार) *व्यय? *(?:रुपये|रूपये|रू|रु)?[:\- ]*([\d,]+\.?\d*)', line)
-        if m_fut and "future_medical_expenses" not in out:
-            out["future_medical_expenses"] = _hi_clean_amount(m_fut.group(1))
-            conf["future_medical_expenses"] = 0.80
+        if "future_medical_expenses" not in out:
+            val = find_value_for_pattern(r'(?:भविष्य|आगामी) *(?:चिकित्सा|इलाज|उपचार) *व्यय?', line, next_line)
+            if val:
+                out["future_medical_expenses"] = _hi_clean_amount(val)
+                conf["future_medical_expenses"] = 0.80
 
         # 7. Loss of Income
-        m_inc = re.search(r'(?:इलाज के दौरान|उपचार अवधि|इलाज अवधि) *(?:आय|वेतन) की *(?:हानि|क्षति|नुकसान) *(?:रुपये|रूपये|रू|रु)?[:\- ]*([\d,]+\.?\d*)', line)
-        if m_inc and "loss_of_income" not in out:
-            out["loss_of_income"] = _hi_clean_amount(m_inc.group(1))
-            conf["loss_of_income"] = 0.80
+        if "loss_of_income" not in out:
+            val = find_value_for_pattern(r'(?:इलाज के दौरान|उपचार अवधि|इलाज अवधि)? *(?:आय|वेतन) *(?:की)? *(?:हानि|क्षति|नुकसान)', line, next_line)
+            if val:
+                out["loss_of_income"] = _hi_clean_amount(val)
+                conf["loss_of_income"] = 0.80
 
         # 8. Disability Percentage
-        m_dis = re.search(r'(?:स्थायी|स्थाई)? *(?:अपंगता|विकलांगता|निरोग्यता) *(?:का प्रतिशत)? *(?:लगभग)?[:\- ]*(\d{1,3}) *(?:%|प्रतिशत)?', line)
-        if m_dis and "disability" not in out:
-            out["disability"] = int(m_dis.group(1))
-            conf["disability"] = 0.80
+        if "disability" not in out:
+            val = find_disability_percentage(line, next_line)
+            if val is not None:
+                out["disability"] = val
+                conf["disability"] = 0.80
 
     # ---- case type: death vs injury ----------------------------------------------
     death_kws = ["मृत्यु", "मृतक", "स्वर्गीय", "दिवंगत"]
@@ -4445,4 +4490,28 @@ def parse_hindi_extracted_text(text_lines: list) -> dict:
 
     out["confidence_scores"] = {k: {"confidence": v} for k, v in conf.items()}
     out["ai_recovery_triggered"] = False
+
+    # ---- AI Data Recovery Fallback (Hindi lower court) -----------------------
+    critical_missing = (
+        (out.get("case_type") == "injury" and (not out.get("disability") or not out.get("monthly_income") or not out.get("medical_expenses"))) or
+        (out.get("case_type") == "death" and (not out.get("monthly_income") or not out.get("award_amount")))
+    )
+    if critical_missing:
+        try:
+            from backend.llm_client import ai_data_recovery
+            recovered = ai_data_recovery(full_text, track="lower_court")
+            if recovered and not recovered.get("ai_recovery_error"):
+                out["ai_recovery_triggered"] = True
+                for key, val in recovered.items():
+                    if val is not None and val != "":
+                        target_key = "disability" if key == "disability_percentage" else key
+                        current_val = out.get(target_key)
+                        current_conf = conf.get(target_key, 0.0)
+                        if not current_val or current_conf < 0.70:
+                            out[target_key] = val
+                            out["confidence_scores"][target_key] = {"confidence": 0.90}
+        except Exception as e:
+            logger.error(f"AI data recovery failed during Hindi parsing: {e}")
+
     return out
+
