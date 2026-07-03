@@ -4295,50 +4295,247 @@ def _hi_clean_amount(raw: str):
 
 def parse_hindi_extracted_text(text_lines: list) -> dict:
     """
-    Regex field extractor for the small set of targeted Hindi pages (Central
-    Filing Counter cover sheet + award operative/compensation pages).
-    Returns a `suggestions` dict shaped compatibly with
-    format_suggestions_for_calculator() (case_type, flat field keys,
-    confidence_scores), so it's a drop-in alternative to
-    parse_extracted_text() for the lower_court track — same downstream
-    consumers, no changes needed elsewhere.
+    Highly advanced table-aware and heading-aware regex field extractor for Hindi Lower Court MACT judgments.
+    Tolerates spelling variations and OCR errors, parses structured tables (both PP-Structure and markdown),
+    and scores candidates based on visual structure and proximity to key award headings.
     """
-    full_text = "\n".join(l for l in text_lines if not l.strip().startswith("--- PAGE"))
-    lines_norm = [re.sub(r'[ \t]+', ' ', l).strip() for l in full_text.split('\n')]
-    flat = "\n".join(lines_norm)   # horizontal whitespace normalized, newlines preserved as boundaries
-
+    logger.info("Starting advanced Hindi Lower Court MACT extraction pipeline...")
+    
     out, conf = {}, {}
+    
+    # 1. Clean and normalize lines
+    lines_norm = []
+    for l in text_lines:
+        line_clean = re.sub(r'[ \t]+', ' ', l).strip()
+        lines_norm.append(line_clean)
+        
+    total_lines = len(lines_norm)
+    full_text = "\n".join(l for l in text_lines if not l.strip().startswith("--- PAGE"))
+    flat = "\n".join(lines_norm)
+    
+    # 2. Trace award sections/headings
+    AWARD_HEADINGS_REGEX = re.compile(
+        r'(?:न्यायालय *श्रीमान *सदस्य *मोटर *दुर्घटना *दावा *अधिकरण|'
+        r'मोटर *दुर्घटना *दावा *अधिकरण|'
+        r'अधिनिर्णय|'
+        r'दावा *आवेदन|'
+        r'प्रतिकर *निर्धारण|'
+        r'क्षतिपूर्ति|'
+        r'प्रतिकर|'
+        r'award|'
+        r'compensation)',
+        re.IGNORECASE
+    )
+    
+    award_headings_found = []
+    for idx, line in enumerate(lines_norm):
+        if AWARD_HEADINGS_REGEX.search(line):
+            award_headings_found.append((idx, line))
+            logger.info(f"[HINDI PARSER] Found award heading at line {idx}: '{line}'")
+            
+    def get_award_heading_score(line_idx):
+        for h_idx, _ in reversed(award_headings_found):
+            if line_idx >= h_idx:
+                return 50
+        return 0
 
-    def find_value_for_pattern(pattern_str, current_line, next_line=None):
-        # 1. Try to match on the current line
-        m = re.search(pattern_str + r'[ \-:|]*(?:रुपये|रूपये|रू|रु)?[ \-:|]*([\d,]+\.?\d*)', current_line, re.IGNORECASE)
-        if m and m.group(1):
-            return m.group(1)
-        # 2. If no number is found, check if current line matches the pattern and the next line has a number
-        if next_line:
-            m_pat = re.search(pattern_str, current_line, re.IGNORECASE)
-            if m_pat:
-                m_num = re.search(r'^[ \-:|]*(?:रुपये|रूपये|रू|रु)?[ \-:|]*([\d,]+\.?\d*)', next_line, re.IGNORECASE)
-                if m_num:
-                    return m_num.group(1)
-        return None
+    # 4. Helper to extract numbers tolerating commas, dots, and trailing /-.
+    def _extract_number_from_string(s, field):
+        s_clean = s.strip()
+        if not s_clean:
+            return None
+            
+        if field == "disability":
+            m = re.search(r'(\d{1,3})\s*(?:%|प्रतिशत|percent)', s_clean, re.IGNORECASE)
+            if m:
+                return int(m.group(1))
+            m_nums = re.findall(r'\b\d{1,3}\b', s_clean)
+            for num_str in m_nums:
+                val = int(num_str)
+                if 1 <= val <= 100:
+                    return val
+            return None
+        else:
+            s_num = s_clean.replace(',', '')
+            s_num = re.sub(r'/(?:-)?', '', s_num)
+            s_num = re.sub(r'[^\d.]', ' ', s_num)
+            m_nums = re.findall(r'\b\d+(?:\.\d+)?\b', s_num)
+                
+            for num_str in m_nums:
+                try:
+                    val = float(num_str)
+                    if val in (2018, 2019, 2020, 2021, 2022, 2023, 2024, 2025, 2026):
+                        continue
+                    if val >= 100:
+                        return val
+                except ValueError:
+                    continue
+            return None
 
-    def find_disability_percentage(current_line, next_line=None):
-        pattern_str = r'(?:स्थायी|स्थाई)? *(?:अपंगता|विकलांगता|निरोग्यता) *(?:का प्रतिशत)? *(?:लगभग)?'
-        m = re.search(pattern_str + r'[ \-:|]*(\d{1,3}) *(?:%|प्रतिशत)?', current_line, re.IGNORECASE)
-        if m and m.group(1):
-            return int(m.group(1))
-        if next_line:
-            m_pat = re.search(pattern_str, current_line, re.IGNORECASE)
-            if m_pat:
-                m_num = re.search(r'^[ \-:|]*(\d{1,3}) *(?:%|प्रतिशत)?', next_line, re.IGNORECASE)
-                if m_num:
-                    return int(m_num.group(1))
-        return None
+    # 5. Core Candidate Search Logic
+    def find_field_candidates(field, pattern_regex):
+        candidates = []
+        current_page = 1
+        
+        for idx, line in enumerate(lines_norm):
+            if "--- PAGE" in line:
+                m_pg = re.search(r'PAGE\s+(\d+)', line, re.IGNORECASE)
+                if m_pg:
+                    current_page = int(m_pg.group(1))
+                continue
+                
+            # Exclude overlaps
+            if field == "medical_expenses":
+                if any(x in line.lower() for x in ["भविष्य", "भावी", "future"]):
+                    continue
+            if field == "monthly_income":
+                if any(x in line.lower() for x in ["हानि", "नुकसान", "loss", "damage"]):
+                    continue
+                    
+            if not re.search(pattern_regex, line, re.IGNORECASE):
+                continue
+                
+            val = None
+            is_table = "|" in line
+            matched_text = line
+            
+            if is_table:
+                cells = [c.strip() for c in line.split('|')]
+                matched_cell_idx = -1
+                for cell_idx, cell in enumerate(cells):
+                    if re.search(pattern_regex, cell, re.IGNORECASE):
+                        matched_cell_idx = cell_idx
+                        break
+                        
+                if matched_cell_idx != -1:
+                    for cell_idx in range(matched_cell_idx + 1, len(cells)):
+                        num = _extract_number_from_string(cells[cell_idx], field)
+                        if num is not None:
+                            val = num
+                            matched_text = f"Table Row Cell: '{cells[cell_idx]}' in line '{line}'"
+                            break
+                    if val is None and len(cells) > matched_cell_idx + 1:
+                        num = _extract_number_from_string(cells[-1], field)
+                        if num is not None:
+                            val = num
+                            matched_text = f"Table Row Last Cell: '{cells[-1]}' in line '{line}'"
+                            
+            if val is None:
+                num = _extract_number_from_string(line, field)
+                if num is not None:
+                    val = num
+                    matched_text = f"Same line paragraph: '{line}'"
+                    
+            if val is None:
+                for offset in (1, 2):
+                    if idx + offset < total_lines:
+                        next_line = lines_norm[idx + offset]
+                        if "--- PAGE" in next_line:
+                            break
+                        if "|" in next_line:
+                            cells = [c.strip() for c in next_line.split('|') if c.strip()]
+                            for cell_val in cells:
+                                num = _extract_number_from_string(cell_val, field)
+                                if num is not None:
+                                    val = num
+                                    matched_text = f"Next line table cell (offset {offset}): '{cell_val}' in line '{next_line}'"
+                                    break
+                        else:
+                            num = _extract_number_from_string(next_line, field)
+                            if num is not None:
+                                val = num
+                                matched_text = f"Next line paragraph (offset {offset}): '{next_line}'"
+                                break
+                        if val is not None:
+                            break
+            
+            if val is not None:
+                table_bonus = 100 if is_table else 0
+                heading_bonus = get_award_heading_score(idx)
+                ratio_bonus = (idx / total_lines) * 20 if total_lines > 0 else 0
+                total_score = table_bonus + heading_bonus + ratio_bonus
+                
+                candidates.append({
+                    "value": val,
+                    "score": total_score,
+                    "page": current_page,
+                    "is_table": is_table,
+                    "matched_text": matched_text,
+                    "line_idx": idx
+                })
+                
+        return candidates
 
+    COMPENSATION_FIELDS = {
+        "monthly_income": (
+            r'(?:मासिक *आय|प्रति *माह *आय|प्रतिमाह *आय|वेतन|मासिक *वेतन|मजदूरी|कमाई|आजीविका|आय *प्रमाण|salary|income|monthly *income|monthly *salary)',
+            "Monthly Income"
+        ),
+        "disability": (
+            r'(?:स्था[यीीइ]+ *(?:विकलांगता|अपंगता|अक्षमता|दिव्यांगता)|विक[लाांंगगंतताा]+|दिव्यांगता|अक्षमता|permanent *disability|functional *disability|disability)',
+            "Permanent Disability (%)"
+        ),
+        "medical_expenses": (
+            r'(?:चिकित्स[ाा]? *व्यय|उपचार *व्यय|इलाज *खर्च|चिकित्स[ाा]? *खर्च|मेडिकल *खर्च|दवा *खर्च|औषधि *व्यय|अस्पताल *व्यय|medical *expenses|treatment *expenses|hospital *expenses)',
+            "Medical Expenses"
+        ),
+        "future_medical_expenses": (
+            r'(?:भविष्य *चिकित्स[ाा]? *व्यय|भविष्य *उपचार *खर्च|भविष्य *इलाज *खर्च|भावी *चिकित्स[ाा]? *व्यय|भावी *उपचार *व्यय|future *medical *expenses|future *treatment *expenses)',
+            "Future Medical Expenses"
+        ),
+        "pain_and_suffering": (
+            r'(?:पीड़ा|वेदना|शारीरिक *पीड़ा|मानसिक *पीड़ा|दुःख *एवं *कष्ट|पीड़ा *एवं *वेदना|pain *and *suffering|pain *\& *suffering)',
+            "Pain & Suffering"
+        ),
+        "transportation": (
+            r'(?:परिवहन *व्यय|परिवहन *खर्च|यातायात *व्यय|यात्रा *व्यय|आने *- *जाने|आवागमन *व्यय|conveyance|transportation|transport)',
+            "Transportation"
+        ),
+        "special_diet": (
+            r'(?:विशेष *आहार|पौष्टिक *आहार|विशेष *भोजन|विशेष *खुराक|पोषण *व्यय|nutrition|special *diet)',
+            "Special Diet"
+        ),
+        "attender_charges": (
+            r'(?:परिचारक *व्यय|परिचर *व्यय|अटेंडेंट *खर्च|देखभाल *व्यय|सेवक *व्यय|सहायक *व्यय|nursing|attendant|attender)',
+            "Attender Charges"
+        ),
+        "loss_of_income": (
+            r'(?:आय *की *हानि|आय *में *हानि|आय *का *नुकसान|वेतन *हानि|मजदूरी *की *हानि|कमाई *का *नुकसान|रोजगार *हानि|उपार्जन *क्षमता|उपचार *अवधि|loss *of *income|loss *of *earnings|loss *of *wages)',
+            "Loss of Income"
+        ),
+        "award_amount": (
+            r'(?:कुल *प्रतिकर|कुल *क्षतिपूर्ति|प्रतिकर *राशि|कुल *अवार्ड|award|total *compensation)',
+            "Award Amount / Total Compensation"
+        )
+    }
+
+    extraction_audit_logs = []
+
+    for field, (pattern, label) in COMPENSATION_FIELDS.items():
+        candidates = find_field_candidates(field, pattern)
+        if candidates:
+            candidates.sort(key=lambda x: x["score"], reverse=True)
+            best = candidates[0]
+            out[field] = best["value"]
+            conf[field] = 0.85 if best["score"] >= 100 else 0.70
+            
+            log_msg = (
+                f"Field '{label}' -> matched candidate val={best['value']} "
+                f"(score={best['score']:.1f}) on Page {best['page']}. "
+                f"Source: {'Table' if best['is_table'] else 'Paragraph'} -> '{best['matched_text']}'"
+            )
+            logger.info(log_msg)
+            extraction_audit_logs.append(log_msg)
+        else:
+            log_msg = f"Field '{label}' -> NOT found in document."
+            logger.info(log_msg)
+            extraction_audit_logs.append(log_msg)
+
+    if "award_amount" in out:
+        out["total_compensation"] = out["award_amount"]
+        conf["total_compensation"] = conf["award_amount"]
 
     # ---- name + father's name -------------------------------------------------
-    # 1) Preferred: labeled row "नाम और पिता का नाम <value>" or "Name & Father's Name <value>"
     m = re.search(rf'(?:नाम(?: और| एवं|/)? पिता का नाम|Name\s*(?:&|and|/)?\s*Father\'s\s*Name) *(?:[:\-]+)? *({_HI_NAME_SPAN_WIDE})', flat, re.IGNORECASE)
     if m:
         val = m.group(1).strip()
@@ -4348,7 +4545,6 @@ def parse_hindi_extracted_text(text_lines: list) -> dict:
             out["father_name"] = _hi_trim_stopwords(m2.group(2))
             conf["injured_name"] = conf["father_name"] = 0.90
 
-    # 2) Fallback: first "<Name> पुत्र/पुत्री [श्री] <Father>" or "<Name> s/o <Father>" occurrence
     if "injured_name" not in out:
         m = re.search(rf'({_HI_NAME_SPAN}) +(?:पुत्र|पुत्री|son of|daughter of|s/o|d/o|w/o|पत्नी) +(?:श्री +|shri +|late +|स्व\. +)?({_HI_NAME_SPAN})', flat, re.IGNORECASE)
         if m:
@@ -4362,17 +4558,11 @@ def parse_hindi_extracted_text(text_lines: list) -> dict:
         out["age"] = int(m.group(1))
         conf["age"] = 0.85
 
-    # ---- monthly income -----------------------------------------------------
-    m = re.search(r'(?:मासिक आय|मासिक वेतन|monthly income|monthly salary) *(?:[:\-]+)? *(?:लगभग)? *([\d,]+\.?\d*) *(?:रु|रूपये|rs|rupees)?', flat, re.IGNORECASE)
-    if m:
-        out["monthly_income"] = _hi_clean_amount(m.group(1))
-        conf["monthly_income"] = 0.85
-
     # ---- date of accident ---------------------------------------------------
     m = re.search(r'(?:दिनांक|date of accident|accident date) *(?:[:\-]+)? *(\d{1,2}[./-]\d{1,2}[./-]\d{4})', flat, re.IGNORECASE)
     if m:
         out["date_of_accident"] = m.group(1).replace("/", ".")
-        conf["date_of_accident"] = 0.55   # best-effort: first date-like token near "दिनांक", not always the accident date
+        conf["date_of_accident"] = 0.55
 
     # ---- vehicle number -------------------------------------------------------
     m = re.search(
@@ -4398,88 +4588,6 @@ def parse_hindi_extracted_text(text_lines: list) -> dict:
         out["insurance_company"] = m.group(1).strip()
         conf["insurance_company"] = 0.70
 
-    # ---- award / total compensation amount --------------------------------------
-    m = re.search(r'प्रतिकर राशि रूपये *([\d,]+\.?\d*)', flat)
-    if not m:
-        m = re.search(r'कुल *(?:क्षतिपूर्ति|प्रतिकर) *(?:राशि)?[^\d]{0,10}([\d,]+\.?\d*)', flat)
-    if m:
-        out["award_amount"] = _hi_clean_amount(m.group(1))
-        out["total_compensation"] = out["award_amount"]
-        conf["award_amount"] = 0.90
-
-    # ---- interest rate (debug/reference field, not in calculator schema) --------
-    m = re.search(r'(\d{1,2}) *(?:%|प्रतिशत) *वार्षिक', flat)
-    if m:
-        out["interest_rate"] = float(m.group(1))
-        conf["interest_rate"] = 0.70
-
-    # ---- Detailed Compensation Heads (Hindi) -----------------------------------
-    for i, line in enumerate(lines_norm):
-        next_line = lines_norm[i + 1] if i + 1 < len(lines_norm) else None
-
-        # 0. Monthly Income (supplemental check to catch table-separated income)
-        if "monthly_income" not in out:
-            val = find_value_for_pattern(r'(?:मासिक आय|मासिक वेतन|monthly income|monthly salary)', line, next_line)
-            if val:
-                out["monthly_income"] = _hi_clean_amount(val)
-                conf["monthly_income"] = 0.85
-
-        # 1. Medical Expenses
-        if "medical_expenses" not in out:
-            val = find_value_for_pattern(r'(?:चिकित्सा|इलाज|दवा|औषधि|उपचार) *व्यय?', line, next_line)
-            if val:
-                out["medical_expenses"] = _hi_clean_amount(val)
-                conf["medical_expenses"] = 0.80
-
-        # 2. Pain and Suffering
-        if "pain_and_suffering" not in out:
-            val = find_value_for_pattern(r'(?:कष्ट|पीड़ा|वेदना|शारीरिक एवं मानसिक वेदना)', line, next_line)
-            if val:
-                out["pain_and_suffering"] = _hi_clean_amount(val)
-                conf["pain_and_suffering"] = 0.80
-
-        # 3. Transportation
-        if "transportation" not in out:
-            val = find_value_for_pattern(r'(?:परिवहन|आवागमन|वाहन|यातायात) *व्यय?', line, next_line)
-            if val:
-                out["transportation"] = _hi_clean_amount(val)
-                conf["transportation"] = 0.80
-
-        # 4. Special Diet
-        if "special_diet" not in out:
-            val = find_value_for_pattern(r'(?:विशेष भोजन|पौष्टिक आहार|विशेष खुराक|पौष्टिक भोजन) *व्यय?', line, next_line)
-            if val:
-                out["special_diet"] = _hi_clean_amount(val)
-                conf["special_diet"] = 0.80
-
-        # 5. Attender Charges
-        if "attender_charges" not in out:
-            val = find_value_for_pattern(r'(?:परिचारक|अटेंडर|सहायक|अटेण्डर) *व्यय?', line, next_line)
-            if val:
-                out["attender_charges"] = _hi_clean_amount(val)
-                conf["attender_charges"] = 0.80
-
-        # 6. Future Medical Expenses
-        if "future_medical_expenses" not in out:
-            val = find_value_for_pattern(r'(?:भविष्य|आगामी) *(?:चिकित्सा|इलाज|उपचार) *व्यय?', line, next_line)
-            if val:
-                out["future_medical_expenses"] = _hi_clean_amount(val)
-                conf["future_medical_expenses"] = 0.80
-
-        # 7. Loss of Income
-        if "loss_of_income" not in out:
-            val = find_value_for_pattern(r'(?:इलाज के दौरान|उपचार अवधि|इलाज अवधि)? *(?:आय|वेतन) *(?:की)? *(?:हानि|क्षति|नुकसान)', line, next_line)
-            if val:
-                out["loss_of_income"] = _hi_clean_amount(val)
-                conf["loss_of_income"] = 0.80
-
-        # 8. Disability Percentage
-        if "disability" not in out:
-            val = find_disability_percentage(line, next_line)
-            if val is not None:
-                out["disability"] = val
-                conf["disability"] = 0.80
-
     # ---- case type: death vs injury ----------------------------------------------
     death_kws = ["मृत्यु", "मृतक", "स्वर्गीय", "दिवंगत"]
     injury_kws = ["उपहति", "क्षतिग्रस्त", "घायल", "चोट", "अपंगता", "निर्योग्यता", "विकलांगता"]
@@ -4501,6 +4609,7 @@ def parse_hindi_extracted_text(text_lines: list) -> dict:
 
     out["confidence_scores"] = {k: {"confidence": v} for k, v in conf.items()}
     out["ai_recovery_triggered"] = False
+    out["extraction_audit_logs"] = extraction_audit_logs
 
     # ---- AI Data Recovery Fallback (Hindi lower court) -----------------------
     critical_missing = (
