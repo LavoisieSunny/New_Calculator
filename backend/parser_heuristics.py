@@ -1528,18 +1528,18 @@ def classify_enhancement_or_reduction(sections):
         resolved_conf = round(g_conf * 0.85, 2)  # grounds alone is weaker evidence than relief alone
         resolved_basis = "single_source"
 
-    # Extract detailed matching bullet points
-    if resolved_verdict in ("enhancement", "reduction"):
-        grounds_points = _extract_matching_points(grounds_text, resolved_verdict)
-        relief_points = _extract_matching_points(relief_text, resolved_verdict)
-        # Fallback to snippet if no points were parsed but a signal was detected
-        if not grounds_points and g_has_signal and g_verdict == resolved_verdict and g_snippet:
+    # Extract detailed matching bullet points for each section individually based on its own signal/verdict
+    grounds_points = []
+    if g_has_signal:
+        grounds_points = _extract_matching_points(grounds_text, g_verdict)
+        if not grounds_points and g_snippet:
             grounds_points = [g_snippet.lstrip("…").rstrip("…").strip()]
-        if not relief_points and r_has_signal and r_verdict == resolved_verdict and r_snippet:
+
+    relief_points = []
+    if r_has_signal:
+        relief_points = _extract_matching_points(relief_text, r_verdict)
+        if not relief_points and r_snippet:
             relief_points = [r_snippet.lstrip("…").rstrip("…").strip()]
-    else:
-        grounds_points = []
-        relief_points = []
 
     return {
         "verdict": resolved_verdict,

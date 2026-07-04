@@ -36,6 +36,10 @@ class TestEnhancementClassification(unittest.TestCase):
         self.assertEqual(result["verdict"], "not_determinable")
         self.assertEqual(result["basis"], "conflict")
         self.assertEqual(result["confidence"], 0.0)
+        self.assertTrue(len(result["grounds_points"]) > 0)
+        self.assertTrue(len(result["relief_points"]) > 0)
+        self.assertTrue(any("reduced" in p.lower() for p in result["grounds_points"]))
+        self.assertTrue(any("enhanced" in p.lower() for p in result["relief_points"]))
 
     def test_no_signal_not_determinable(self):
         sections = {
