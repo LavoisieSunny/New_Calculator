@@ -116,6 +116,42 @@ class TestEnhancementClassification(unittest.TestCase):
         self.assertTrue(any("liable to be enhanced" in p for p in result["grounds_points"]))
         self.assertTrue(any("Enhancement of compensation" in p for p in result["relief_points"]))
 
+    def test_e2e_enhancement_appeal_detection(self):
+        """End-to-end test verifying enhancement verdict and non-empty bullet points for layout headings."""
+        sections = {
+            "grounds_section": (
+                "(VIII) GROUNDS OF APPEAL\n"
+                "1. That the compensation awarded is too low.\n"
+                "2. The tribunal failed to apply the correct multiplier."
+            ),
+            "relief_section": (
+                "(IX) RELIEF CLAIMED IN APPEAL / PRAYER\n"
+                "It is therefore prayed that the compensation be enhanced to Rs. 10,00,000/-."
+            )
+        }
+        result = classify_enhancement_or_reduction(sections)
+        self.assertEqual(result["verdict"], "enhancement")
+        self.assertTrue(len(result["grounds_points"]) > 0)
+        self.assertTrue(len(result["relief_points"]) > 0)
+
+    def test_e2e_reduction_appeal_detection(self):
+        """End-to-end test verifying reduction verdict and non-empty bullet points for layout headings."""
+        sections = {
+            "grounds_section": (
+                "(A) GROUNDS OF OBJECTION\n"
+                "1. That the compensation awarded is too high.\n"
+                "2. The tribunal erred in computing future prospects."
+            ),
+            "relief_section": (
+                "PRAYER\n"
+                "It is prayed that the impugned award be set aside and the compensation be reduced."
+            )
+        }
+        result = classify_enhancement_or_reduction(sections)
+        self.assertEqual(result["verdict"], "reduction")
+        self.assertTrue(len(result["grounds_points"]) > 0)
+        self.assertTrue(len(result["relief_points"]) > 0)
+
 
 if __name__ == "__main__":
     unittest.main()

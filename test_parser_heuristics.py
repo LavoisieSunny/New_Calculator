@@ -432,6 +432,43 @@ class TestParserHeuristics(unittest.TestCase):
         self.assertEqual(suggestions["total_compensation"], 106600.0)
 
 
+    def test_heading_detection_styles(self):
+        """Verify heading matches with various bullet/number styles including parentheses."""
+        # Test case 1: (VIII) GROUNDS
+        self.assertTrue(fuzzy_match_heading("(VIII) GROUNDS", ["grounds"]))
+        # Test case 2: VIII. GROUNDS OF APPEAL
+        self.assertTrue(fuzzy_match_heading("VIII. GROUNDS OF APPEAL", ["grounds of appeal"]))
+        # Test case 3: (IX) RELIEF CLAIMED IN APPEAL : PRAYER
+        self.assertTrue(fuzzy_match_heading("(IX) RELIEF CLAIMED IN APPEAL : PRAYER", ["relief claimed in appeal : prayer"]))
+        # Test case 4: IX. PRAYER
+        self.assertTrue(fuzzy_match_heading("IX. PRAYER", ["prayer"]))
+        # Test case 5: (A) GROUNDS OF OBJECTION
+        self.assertTrue(fuzzy_match_heading("(A) GROUNDS OF OBJECTION", ["grounds of objection"]))
+        # Test case 6: plain GROUNDS OF APPEAL
+        self.assertTrue(fuzzy_match_heading("GROUNDS OF APPEAL", ["grounds of appeal"]))
+
+        # Now test detect_document_sections with these headings
+        headings = [
+            "(VIII) GROUNDS",
+            "VIII. GROUNDS OF APPEAL",
+            "(IX) RELIEF CLAIMED IN APPEAL : PRAYER",
+            "IX. PRAYER",
+            "(A) GROUNDS OF OBJECTION",
+            "GROUNDS OF APPEAL"
+        ]
+        
+        for heading in headings:
+            pages = [{
+                "page_number": 1,
+                "text": f"{heading}\nSome relevant content about the case.",
+                "lines": [heading, "Some relevant content about the case."]
+            }]
+            sections = detect_document_sections(pages[0]["text"], pages)
+            
+            # Verify that either grounds_section or relief_section or memo_of_appeal_section is detected
+            has_m = ("grounds_section" in sections or "relief_section" in sections or "memo_of_appeal_section" in sections)
+            self.assertTrue(has_m, f"Failed to detect section for heading: {heading}")
+
 if __name__ == "__main__":
     unittest.main()
 

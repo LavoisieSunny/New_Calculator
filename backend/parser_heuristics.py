@@ -17,7 +17,8 @@ HEADING_KEYWORDS = {
     ],
     "memo_of_appeal_section": [
         "memo of appeal", "grounds of appeal", "relief claimed", "appeal memo",
-        "miscellaneous appeal", "memorandum of appeal"
+        "miscellaneous appeal", "memorandum of appeal",
+        "relief claimed in appeal", "relief claimed in appeal : prayer", "relief claimed in appeal/prayer"
     ],
     "award_copy_section": [
         "copy of award", "compensation awarded", "total compensation", "award decree", "award is passed", "impugned award"
@@ -40,10 +41,11 @@ HEADING_KEYWORDS = {
         "treatment expenses", "award by the tribunal", "adjudged by the tribunal"
     ],
     "relief_section": [
-        "relief", "prayer", "relief claimed", "prayer clause", "it is therefore prayed"
+        "relief", "prayer", "relief claimed", "prayer clause", "it is therefore prayed",
+        "relief claimed in appeal", "relief claimed in appeal : prayer", "relief claimed in appeal/prayer"
     ],
     "grounds_section": [
-        "grounds", "grounds of appeal", "grounds of objection", "grounds of challenge", "(viii) grounds of appeal"
+        "grounds", "grounds of appeal", "grounds of objection", "grounds of challenge", "(viii) grounds of appeal", "grounds of appeal/objection"
     ]
 }
 
@@ -993,8 +995,8 @@ def parse_compensation_table(text):
 
 def fuzzy_match_heading(line, keywords):
     """Matches a line against a list of fuzzy keywords for heading detection."""
-    # Remove list indicators / bullets like '1. ', 'A. ', 'I. ', 'a) ', 'i) '
-    line_lower = re.sub(r'^(?:[ivxIVX]+|\d+|[a-zA-Z])[\.\)\-\]]\s*', '', line).strip().lower()
+    # Remove list indicators / bullets like '1. ', 'A. ', 'I. ', 'a) ', 'i) ', '(VIII) ', '(A) ', etc.
+    line_lower = re.sub(r'^\s*(?:\(|\[)?\s*(?:[ivxIVX]+|\d+|[a-zA-Z])\s*(?:\)|\]|[\.\-\)])\s*', '', line).strip().lower()
     for kw in keywords:
         kw_lower = kw.lower().strip()
         # 1. Exact match
