@@ -2,7 +2,8 @@ fastapi>=0.100.0
 uvicorn>=0.22.0
 pydantic>=2.0
 python-multipart>=0.0.6
-paddlepaddle==3.2.2
+--extra-index-url https://www.paddlepaddle.org.cn/packages/stable/cu129/
+paddlepaddle-gpu==3.2.2
 paddleocr==3.5.0
 shapely>=2.0.0
 pillow>=10.0.0

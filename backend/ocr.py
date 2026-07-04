@@ -24,7 +24,6 @@ from pypdf import PdfReader
 import pypdfium2 as pdfium
 
 from backend.parser_heuristics import parse_extracted_text, HINDI_HEADING_KEYWORDS, parse_hindi_extracted_text
-from backend.vector_db import index_document, COLLECTION_NAME
 from backend.track_detection import detect_case_track
 
 # ======================================================
@@ -73,12 +72,13 @@ DEBUG_OCR           = os.getenv("DEBUG_OCR", "false").lower() == "true"
 OCR_QUALITY_GATE_THRESHOLD = 0.05
 
 # PaddleOCR — middle layer between vision and Tesseract.
-# Fast, CPU-only, excellent at printed Hindi+English and structural layouts
+# Fast, GPU-accelerated (with CPU fallback), excellent at printed Hindi+English and structural layouts
 # (tables/columns). Used as the FIRST OCR pass on every non-blank page;
 # qwen2.5vl is only invoked when Paddle's result is low quality (handwriting,
 # stamps, badly skewed/garbled mixed-script text). This ordering is what keeps
 # the pipeline fast and keeps the heavy, serialized vision model off the hot
 # path for the common case (clean printed scans).
+OCR_DEVICE                   = os.getenv("OCR_DEVICE", "gpu:0")
 OCR_PADDLE_LANG              = os.getenv("OCR_PADDLE_LANG", "hi")  # "hi" -> PP-OCRv5 devanagari rec model (also covers Latin/English chars)
 OCR_PADDLE_CONF_THRESHOLD    = float(os.getenv("OCR_PADDLE_CONF_THRESHOLD", "0.70"))   # avg per-line rec confidence
 OCR_PADDLE_QUALITY_THRESHOLD = float(os.getenv("OCR_PADDLE_QUALITY_THRESHOLD", "0.40")) # heuristic legal-text quality score
@@ -324,8 +324,28 @@ def is_vision_model_available() -> bool:
 
 
 # ======================================================
-# PADDLEOCR — middle layer (printed Hindi+English, tables/columns, no GPU)
+# PADDLEOCR — middle layer (printed Hindi+English, tables/columns, GPU with CPU fallback)
 # ======================================================
+
+def _init_paddle_engine(engine_cls, **kwargs):
+    """Tries OCR_DEVICE first; falls back to CPU if GPU init fails
+    (e.g. driver mismatch, OOM, no GPU visible in this environment)."""
+    device = OCR_DEVICE
+    try:
+        instance = engine_cls(device=device, **kwargs)
+        _tlog(f"{engine_cls.__name__} loaded on device={device}.")
+        return instance
+    except Exception as e:
+        if device != "cpu":
+            logger.error(
+                f"{engine_cls.__name__} failed to init on device={device} "
+                f"({e}) — falling back to CPU. OCR will be slower."
+            )
+            instance = engine_cls(device="cpu", **kwargs)
+            _tlog(f"{engine_cls.__name__} loaded on device=cpu (fallback).")
+            return instance
+        raise
+
 
 _PADDLE_INSTANCE = None
 _PADDLE_AVAILABLE = None
@@ -348,11 +368,12 @@ def get_ocr_instance():
             from paddleocr import PaddleOCR
             _tlog(f"Loading PaddleOCR singleton (PP-OCRv5, lang={OCR_PADDLE_LANG})...")
             t0 = time.time()
-            _PADDLE_INSTANCE = PaddleOCR(
+            _PADDLE_INSTANCE = _init_paddle_engine(
+                PaddleOCR,
                 lang=OCR_PADDLE_LANG,
-                use_doc_orientation_classify=False,  # scans are upright; skip for speed
-                use_doc_unwarping=False,              # not photographed/curved pages
-                use_textline_orientation=False,       # skip per-line angle model for speed
+                use_doc_orientation_classify=False,
+                use_doc_unwarping=False,
+                use_textline_orientation=False,
             )
             _tlog(f"PaddleOCR singleton ready in {time.time() - t0:.1f}s.")
     return _PADDLE_INSTANCE
@@ -405,7 +426,8 @@ def get_structure_instance():
             from paddleocr import PPStructureV3
             _tlog(f"Loading PP-StructureV3 singleton (table/layout, lang={OCR_PADDLE_LANG})...")
             t0 = time.time()
-            _STRUCTURE_INSTANCE = PPStructureV3(
+            _STRUCTURE_INSTANCE = _init_paddle_engine(
+                PPStructureV3,
                 lang=OCR_PADDLE_LANG,
                 use_doc_orientation_classify=False,
                 use_doc_unwarping=False,
@@ -2139,6 +2161,7 @@ def run_background_pdf_indexing(file_id: str, temp_path: str, filename: str):
                 )
 
         BATCH_QUEUE[file_id]["status"] = "indexing"
+        from backend.vector_db import index_document
         success = index_document(filename, text_lines, suggestions)
 
         from backend.parser_heuristics import format_suggestions_for_calculator
@@ -2316,7 +2339,7 @@ async def process_single_file(file: UploadFile = File(...)):
 
             # Index document into Qdrant in background so Chat Assistant works for this file
             try:
-                from backend.ocr import index_document
+                from backend.vector_db import index_document
                 asyncio.create_task(asyncio.to_thread(index_document, file.filename, text_lines, suggestions))
             except Exception as index_err:
                 logger.error(f"Failed to index single document {file.filename}: {index_err}")

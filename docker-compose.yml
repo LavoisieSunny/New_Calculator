@@ -18,6 +18,18 @@ services:
       - ./paddle_models/paddlex:/root/.paddlex
       - ./paddle_models/paddleocr:/root/.paddleocr
     restart: unless-stopped
+    # Expose the host's NVIDIA GPU to the container using NVIDIA Container Toolkit.
+    # Note: This requires the NVIDIA Container Toolkit installed on the host machine.
+    # The container uses the host's GPU driver directly; an in-container CUDA toolkit is not required
+    # as the paddlepaddle-gpu pip wheel bundles its own CUDA/cuDNN runtime.
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+
 
   qdrant:
     image: qdrant/qdrant:latest

@@ -27,7 +27,7 @@ _HC_MARKERS = [
     "high court", "principal seat at jabalpur", "jabalpur", "misc. appeal",
     "m.a. no", "miscellaneous appeal", "173 of the motor vehicle",
     "memo of appeal", "grounds of appeal",
-]
+] 
 
 # Lower Court / MACT tribunal markers (Hindi + common English tribunal terms).
 _LC_MARKERS = [
