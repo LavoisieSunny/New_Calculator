@@ -4,6 +4,7 @@ from backend.calculator import (
     get_future_prospect,
     get_deduction,
     calculate_death_compensation,
+    calculate_injury_compensation,
     CompensationRequest
 )
 
@@ -197,6 +198,23 @@ class TestDeductionBracketFix(unittest.TestCase):
         res = calculate_death_compensation(req)
         self.assertGreater(res["loss_of_dependency"], 0)
         self.assertEqual(res["deduction_label"], "1/3")
+
+
+class TestInjuryCompensation(unittest.TestCase):
+    def test_injury_compensation_loexlife_regression(self):
+        """
+        Verify that loexlife is returned correctly and does not match loamiti when distinct values are sent.
+        """
+        req = CompensationRequest(
+            case_type="injury",
+            age=30,
+            monthly_income=20000.0,
+            loamiti=5000.0,
+            loexlife=12000.0
+        )
+        res = calculate_injury_compensation(req)
+        self.assertEqual(res["loexlife"], 12000.0)
+        self.assertEqual(res["loamiti"], 5000.0)
 
 
 if __name__ == "__main__":
