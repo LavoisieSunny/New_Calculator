@@ -1493,8 +1493,8 @@ def classify_enhancement_or_reduction(sections):
 
     Returns a dict with verdict, confidence, signals and bullet points.
     """
-    grounds_text = sections.get("grounds_section", "") or sections.get("memo_of_appeal_section", "")
-    relief_text = sections.get("relief_section", "")
+    grounds_text = sections.get("grounds_section", "") or sections.get("memo_of_appeal_section", "") or sections.get("raw_ocr", "")
+    relief_text = sections.get("relief_section", "") or sections.get("memo_of_appeal_section", "") or sections.get("raw_ocr", "")
 
     g_verdict, g_conf, g_snippet = _score_enhancement_reduction(grounds_text)
     r_verdict, r_conf, r_snippet = _score_enhancement_reduction(relief_text)
