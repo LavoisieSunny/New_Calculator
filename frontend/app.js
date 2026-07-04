@@ -3028,6 +3028,7 @@ This cannot be undone.`)) return;
         if (triggerEvalBtn) triggerEvalBtn.disabled = true;
         currentCalculationAmount = 0;
         // Removed old enhancement card and button references
+    });
 
     // ==========================================================================
     const slideover = document.getElementById("right-slideover");
