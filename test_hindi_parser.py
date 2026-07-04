@@ -105,5 +105,77 @@ class TestHindiParser(unittest.TestCase):
         self.assertEqual(res.get("monthly_income"), 10000.0)
         self.assertEqual(res.get("award_amount"), 90000.0)
 
+    def test_numbered_list_format(self):
+        # Verify that leading list numbers are stripped and not mistaken for the amount
+        text_lines = [
+            "1. चिकित्सा व्यय रू 15,000",
+            "२) विशेष खुराक व्यय 3,000",
+            "[3] परिचारक व्यय 2,000",
+            "(४) परिवहन व्यय 5,000"
+        ]
+        res = parse_hindi_extracted_text(text_lines)
+        self.assertEqual(res.get("medical_expenses"), 15000.0)
+        self.assertEqual(res.get("special_diet"), 3000.0)
+        self.assertEqual(res.get("attender_charges"), 2000.0)
+        self.assertEqual(res.get("transportation"), 5000.0)
+
+    def test_new_fields_and_phrasings(self):
+        # Phrasing set 1: Loss of future prospects
+        phrasings_prospects = [
+            "आवेदक के भविष्य में प्रगति करने एवं ओर अधिक आय प्राप्त करने से वंचित होने के लिए 10,00,000",
+            "भविष्य की प्रगति तथा उन्नति की हानि हेतु प्रतिकर राशि 5,50,000",
+            "भविष्य में आय की संभावनाओं और विकास से वंचित होने के निमित्त 2,00,000/-"
+        ]
+        for line in phrasings_prospects:
+            res = parse_hindi_extracted_text([line])
+            self.assertIn(res.get("loss_of_future_prospects"), [1000000.0, 550000.0, 200000.0])
+
+        # Phrasing set 2: Loss of amenities
+        phrasings_amenities = [
+            "आवेदक द्वारा भविष्य में आनंदपूर्ण जीवन जीने से वंचित होने के लिए 2,50,000",
+            "जीवन के सुखों तथा आनंद से वंचित रहने की क्षतिपूर्ति 1,80,000/-",
+            "सुखमय जीवन जीने के अधिकार से वंचित होने पर 3,00,000",
+            "जीवन के सुखों की हानि (loss of amenities) हेतु 1,20,000"
+        ]
+        for line in phrasings_amenities:
+            res = parse_hindi_extracted_text([line])
+            self.assertIn(res.get("loss_of_amenities"), [250000.0, 180000.0, 300000.0, 120000.0])
+
+    def test_combined_clause_deduplication(self):
+        # A combined line that matches diet, doctor fees (medical), transport, future medical
+        text_lines = [
+            "विशेष आहार एवं डॉ. की फीस परिवहन एवं भविष्य में उपचार होने वाले व्यय - 1,00,000/-"
+        ]
+        res = parse_hindi_extracted_text(text_lines)
+        
+        # Verify it went to combined unallocated and individual fields were de-duplicated (cleared/None)
+        self.assertEqual(res.get("combined_unallocated_amount"), 100000.0)
+        self.assertIsNone(res.get("special_diet"))
+        self.assertIsNone(res.get("medical_expenses"))
+        self.assertIsNone(res.get("transportation"))
+        self.assertIsNone(res.get("future_medical_expenses"))
+
+    def test_safety_net_mismatch(self):
+        # Test Case 1: Matching sum
+        text_lines_match = [
+            "चिकित्सा व्यय 50,000",
+            "शारीरिक एवं मानसिक वेदना 10,000",
+            "कुल प्रतिकर राशि 60,000"
+        ]
+        res_match = parse_hindi_extracted_text(text_lines_match)
+        self.assertFalse(res_match.get("mismatch_warning", False))
+
+        # Test Case 2: Mismatching sum
+        text_lines_mismatch = [
+            "चिकित्सा व्यय 50,000",
+            "शारीरिक एवं मानसिक वेदना 10,000",
+            "कुल प्रतिकर राशि 1,00,000"
+        ]
+        res_mismatch = parse_hindi_extracted_text(text_lines_mismatch)
+        self.assertTrue(res_mismatch.get("mismatch_warning"))
+        self.assertIn("mismatch_details", res_mismatch)
+        self.assertIn("60,000", res_mismatch.get("mismatch_details"))
+        self.assertIn("100,000", res_mismatch.get("mismatch_details"))
+
 if __name__ == "__main__":
     unittest.main()

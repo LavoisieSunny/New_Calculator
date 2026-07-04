@@ -4341,7 +4341,8 @@ def parse_hindi_extracted_text(text_lines: list) -> dict:
 
     # 4. Helper to extract numbers tolerating commas, dots, and trailing /-.
     def _extract_number_from_string(s, field):
-        s_clean = s.strip()
+        # Clean leading list items like "1.", "2)", "१.", "[1]", etc.
+        s_clean = re.sub(r'^\s*(?:\[|\()?\s*(?:\d+|[१२३४५६७८९०]+)\s*(?:\]|\)|[\.\-\)])\s*', '', s.strip())
         if not s_clean:
             return None
             
@@ -4472,50 +4473,104 @@ def parse_hindi_extracted_text(text_lines: list) -> dict:
             "Monthly Income"
         ),
         "disability": (
-            r'(?:स्था[यीीइ]+ *(?:विकलांगता|अपंगता|अक्षमता|दिव्यांगता)|विक[लाांंगगंतताा]+|दिव्यांगता|अक्षमता|permanent *disability|functional *disability|disability)',
+            r'(?:स्था[यीीइ]+.*(?:विकलांगता|अपंगता|अक्षमता|दिव्यांगता)|विक[लाांंगगंतताा]+|दिव्यांगता|अक्षमता|permanent *disability|functional *disability|disability)',
             "Permanent Disability (%)"
         ),
         "medical_expenses": (
-            r'(?:चिकित्स[ाा]? *व्यय|उपचार *व्यय|इलाज *खर्च|चिकित्स[ाा]? *खर्च|मेडिकल *खर्च|दवा *खर्च|औषधि *व्यय|अस्पताल *व्यय|medical *expenses|treatment *expenses|hospital *expenses)',
+            r'(?:(?:चिकित्स[ाा]?|उपचार|इलाज|मेडिकल|दवा|औषधि|अस्पताल|डॉ\.?|डॉक्टर).*(?:व्यय|खर्च|बर्बाद|राशि|फीस)|चिकित्स[ाा]? *व्यय|उपचार *व्यय|इलाज *खर्च|चिकित्स[ाा]? *खर्च|मेडिकल *खर्च|दवा *खर्च|औषधि *व्यय|अस्पताल *व्यय|medical *expenses|treatment *expenses|hospital *expenses)',
             "Medical Expenses"
         ),
         "future_medical_expenses": (
-            r'(?:भविष्य *चिकित्स[ाा]? *व्यय|भविष्य *उपचार *खर्च|भविष्य *इलाज *खर्च|भावी *चिकित्स[ाा]? *व्यय|भावी *उपचार *व्यय|future *medical *expenses|future *treatment *expenses)',
+            r'(?:(?:भविष्य|भावी).*(?:चिकित्स[ाा]?|उपचार|इलाज|व्यय|खर्च|उपचार होने वाले व्यय)|भविष्य *चिकित्स[ाा]? *व्यय|भविष्य *उपचार *खर्च|भविष्य *इलाज *खर्च|भावी *चिकित्स[ाा]? *व्यय|भावी *उपचार *व्यय|future *medical *expenses|future *treatment *expenses)',
             "Future Medical Expenses"
         ),
         "pain_and_suffering": (
-            r'(?:पीड़ा|वेदना|शारीरिक *पीड़ा|मानसिक *पीड़ा|दुःख *एवं *कष्ट|पीड़ा *एवं *वेदना|pain *and *suffering|pain *\& *suffering)',
+            r'(?:(?:मानसिक|शारीरिक|शारीरीक|वेदना|दुःख|कष्ट).*(?:पीड़ा|वेदना|कष्ट|दुःख)|पीड़ा|वेदना|दुःख *एवं *कष्ट|पीड़ा *एवं *वेदना|pain *and *suffering|pain *\& *suffering)',
             "Pain & Suffering"
         ),
         "transportation": (
-            r'(?:परिवहन *व्यय|परिवहन *खर्च|यातायात *व्यय|यात्रा *व्यय|आने *- *जाने|आवागमन *व्यय|conveyance|transportation|transport)',
+            r'(?:(?:परिवहन|यातायात|यात्रा|आवागमन|आने *- *जाने|कन्वेयन्स).*(?:व्यय|खर्च|होने वाला|राशि)|परिवहन *व्यय|परिवहन *खर्च|यातायात *व्यय|यात्रा *व्यय|आने *- *जाने|आवागमन *व्यय|conveyance|transportation|transport)',
             "Transportation"
         ),
         "special_diet": (
-            r'(?:विशेष *आहार|पौष्टिक *आहार|विशेष *भोजन|विशेष *खुराक|पोषण *व्यय|nutrition|special *diet)',
+            r'(?:(?:विशेष|पौष्टिक).*(?:आहार|भोजन|खुराक|व्यय|खर्च|खुराक व्यय|आहार व्यय)|विशेष *आहार|पौष्टिक *आहार|विशेष *भोजन|विशेष *खुराक|पोषण *व्यय|nutrition|special *diet)',
             "Special Diet"
         ),
         "attender_charges": (
-            r'(?:परिचारक *व्यय|परिचर *व्यय|अटेंडेंट *खर्च|देखभाल *व्यय|सेवक *व्यय|सहायक *व्यय|nursing|attendant|attender)',
+            r'(?:(?:परिचारक|परिचर|अटेंडेंट|देखभाल|सेवक|सहायक).*(?:व्यय|खर्च|होने वाला|राशि)|परिचारक *व्यय|परिचर *व्यय|अटेंडेंट *खर्च|देखभाल *व्यय|सेवक *व्यय|सहायक *व्यय|nursing|attendant|attender)',
             "Attender Charges"
         ),
         "loss_of_income": (
-            r'(?:आय *की *हानि|आय *में *हानि|आय *का *नुकसान|वेतन *हानि|मजदूरी *की *हानि|कमाई *का *नुकसान|रोजगार *हानि|उपार्जन *क्षमता|उपचार *अवधि|loss *of *income|loss *of *earnings|loss *of *wages)',
+            r'(?:(?:आय|वेतन|मजदूरी|कमाई|रोजगार|उपार्जन).*(?:हानि|नुकसान|अवधि)|आय *की *हानि|आय *में *हानि|आय *का *नुकसान|वेतन *हानि|मजदूरी *की *हानि|कमाई *का *नुकसान|रोजगार *हानि|उपार्जन *क्षमता|उपचार *अवधि|loss *of *income|loss *of *earnings|loss *of *wages)',
             "Loss of Income"
         ),
+        "loss_of_future_prospects": (
+            r'(?:भविष्य *में *(?:प्रगति|उन्नति|आय|विकास)|भविष्य *की *प्रगति|भविष्य *में *(?:आय|प्रगति|उन्नति).*वंचित|आय *प्राप्त *करने *से *वंचित|loss *of *future *prospects|loss *of *prospects|future *prospects)',
+            "Loss of Future Prospects"
+        ),
+        "loss_of_amenities": (
+            r'(?:आनंदपूर्ण *जीवन|सुखमय *जीवन|सुखी *जीवन|जीवन *के *सुखों|जीवन *के *आनंद|आनंद *से *वंचित|सुख *से *वंचित|भोग *की *हानि|आनंदपूर्ण.*वंचित|loss *of *amenities|loss *of *enjoyment|enjoyment *of *life)',
+            "Loss of Amenities"
+        ),
         "award_amount": (
-            r'(?:कुल *प्रतिकर|कुल *क्षतिपूर्ति|प्रतिकर *राशि|कुल *अवार्ड|award|total *compensation)',
+            r'(?:कुल *प्रतिकर|कुल *क्षतिपूर्ति|प्रतिकर *राशि|कुल *अवार्ड|कुल *राशि|योग|कुल *क्षतिपूर्ति *राशि|कुल *प्रतिकर *राशि|award|total *compensation)',
             "Award Amount / Total Compensation"
         )
     }
 
     extraction_audit_logs = []
 
+    # Extract all candidates for all fields first
+    field_candidates = {}
     for field, (pattern, label) in COMPENSATION_FIELDS.items():
-        candidates = find_field_candidates(field, pattern)
-        if candidates:
-            candidates.sort(key=lambda x: x["score"], reverse=True)
-            best = candidates[0]
+        field_candidates[field] = find_field_candidates(field, pattern)
+
+    # Detect combined multi-head clauses sharing the same line and amount
+    lines_to_candidates = {}
+    for field, candidates in field_candidates.items():
+        # Skip award_amount, monthly_income, and disability from combined clauses
+        if field in ("award_amount", "monthly_income", "disability"):
+            continue
+        for c in candidates:
+            lines_to_candidates.setdefault(c["line_idx"], []).append((field, c))
+
+    combined_details = []
+    combined_unallocated_amount = 0.0
+
+    for line_idx, matched in lines_to_candidates.items():
+        if len(matched) > 1:
+            # Check if they share the same extracted value
+            values = [c["value"] for field, c in matched]
+            if len(set(values)) == 1:
+                val = values[0]
+                matched_fields = [field for field, c in matched]
+                combined_unallocated_amount += val
+                combined_details.append({
+                    "line_idx": line_idx,
+                    "line_text": lines_norm[line_idx],
+                    "matched_fields": matched_fields,
+                    "amount": val
+                })
+                # Mark all these candidates as combined so they are excluded
+                for field, c in matched:
+                    c["is_combined"] = True
+
+    if combined_details:
+        out["combined_unallocated_amount"] = combined_unallocated_amount
+        out["combined_unallocated_details"] = combined_details
+        conf["combined_unallocated_amount"] = 0.85
+        log_msg = f"Combined Fields -> matched combined val={combined_unallocated_amount} across {len(combined_details)} clauses."
+        logger.info(log_msg)
+        extraction_audit_logs.append(log_msg)
+
+    # Now select the best candidate for each field from the remaining non-combined candidates
+    for field, (pattern, label) in COMPENSATION_FIELDS.items():
+        candidates = field_candidates.get(field, [])
+        valid_candidates = [c for c in candidates if not c.get("is_combined")]
+        
+        if valid_candidates:
+            valid_candidates.sort(key=lambda x: x["score"], reverse=True)
+            best = valid_candidates[0]
             out[field] = best["value"]
             conf[field] = 0.85 if best["score"] >= 100 else 0.70
             
@@ -4534,6 +4589,32 @@ def parse_hindi_extracted_text(text_lines: list) -> dict:
     if "award_amount" in out:
         out["total_compensation"] = out["award_amount"]
         conf["total_compensation"] = conf["award_amount"]
+
+    # ---- safety net verification ------------------------------------------------
+    rupee_heads = [
+        "medical_expenses",
+        "future_medical_expenses",
+        "pain_and_suffering",
+        "transportation",
+        "special_diet",
+        "attender_charges",
+        "loss_of_income",
+        "loss_of_future_prospects",
+        "loss_of_amenities"
+    ]
+    heads_sum = sum(out.get(f, 0.0) for f in rupee_heads)
+    if "combined_unallocated_amount" in out:
+        heads_sum += out["combined_unallocated_amount"]
+
+    award_total = out.get("award_amount", 0.0)
+    if award_total > 0.0:
+        difference = abs(heads_sum - award_total)
+        if difference > 10.0:
+            out["mismatch_warning"] = True
+            out["mismatch_details"] = f"Sum of extracted heads ({heads_sum:,.2f}) does not match total award ({award_total:,.2f})"
+            logger.warning(f"[HINDI PARSER] Safety Net Warning: {out['mismatch_details']}")
+        else:
+            out["mismatch_warning"] = False
 
     # ---- name + father's name -------------------------------------------------
     m = re.search(rf'(?:नाम(?: और| एवं|/)? पिता का नाम|Name\s*(?:&|and|/)?\s*Father\'s\s*Name) *(?:[:\-]+)? *({_HI_NAME_SPAN_WIDE})', flat, re.IGNORECASE)
