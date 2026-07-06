@@ -4,6 +4,13 @@ from datetime import datetime
 
 logger = logging.getLogger("ParserHeuristics")
 
+# Configurable Target Field Constants for Bundled Claims
+BUNDLED_DIET_TRANSPORT_TARGET_FIELD = "special_diet"
+BUNDLED_FUTURE_TARGET_FIELD = "future_medical_expenses"
+BUNDLED_TRANSPORT_ATTENDER_TARGET_FIELD = "attender_charges"
+BUNDLED_TRIPLE_TARGET_FIELD = "attender_charges"
+
+
 
 # Dynamic Section Keyword Definitions
 HEADING_KEYWORDS = {
@@ -4295,13 +4302,425 @@ def _hi_clean_amount(raw: str):
     return float(m.group(0)) if m else None
 
 
+
+
+# Helper to translate Devanagari digits to English digits
+def translate_deva_digits(s: str) -> str:
+    deva_to_eng = {
+        '०': '0', '१': '1', '२': '2', '३': '3', '४': '4',
+        '५': '5', '६': '6', '७': '7', '८': '8', '९': '9'
+    }
+    return "".join(deva_to_eng.get(c, c) for c in s)
+
+# Helper to check if a currency marker is adjacent to a match
+def _is_currency_adjacent(text_str: str, start: int, end: int) -> bool:
+    prefix = text_str[max(0, start - 10):start]
+    suffix = text_str[end:end + 10]
+    currency_pattern = re.compile(r'(?:रुपये|रुपए|रू|रु|₹|Rs|Rs\.|/-)', re.IGNORECASE)
+    return bool(currency_pattern.search(prefix) or currency_pattern.search(suffix))
+
+# Match helpers for structural table lines and totals
+_LBL_PAT = re.compile(r'^\s*(?:\[|\()? *(\d+|[०-९]+|[\u0900-\u097F]) *(?:\]|\)|[\.\-\):])+ +(.*)$')
+_AMT_PAT = re.compile(
+    r'\s*[:|—=\-]*\s*(?:रू|रु|₹|Rs\.?)?\s*([\d,\.\-]+(?:/-)?|निरंक|शून्य|शून्य रुपये|NIL)\s*(?:\|)?\s*$', 
+    re.IGNORECASE
+)
+
+def is_totals_line(line_text: str) -> bool:
+    norm = line_text.strip().lower()
+    if norm.startswith('(') and (
+        any(x in norm for x in ['रूपये', 'रुपये', 'रू', 'रु', 'rs', 'only', '/-']) or 
+        any(x in norm for x in ["हजार", "लाख", "करोड़", "सौ", "मात्र", "thousand", "lakh"])
+    ):
+        return True
+    totals_kws = ["कुल", "योग", "कुल योग", "कुल क्षतिपूर्ति राशि", "कुल शति", "कुल प्रतिकर", "अंकन"]
+    return any(kw in norm for kw in totals_kws)
+
+def parse_isolated_amount(amount_str: str) -> float:
+    if any(kw in amount_str.lower() for kw in ["निरंक", "शून्य", "nil"]):
+        return 0.0
+    cleaned = amount_str.replace(',', '').replace('/-', '')
+    cleaned = re.sub(r'[^\d.]', '', cleaned)
+    try:
+        return float(cleaned)
+    except ValueError:
+        return 0.0
+
+def match_bundle_d(norm: str) -> bool:
+    has_att = "देख-रेख" in norm or "देखरेख" in norm
+    has_diet = "आहार" in norm or "पोषण" in norm
+    has_trans = "आने-जाने" in norm or "अस्पताल जाने" in norm or bool(re.search(r'अस्पताल.*जाने', norm))
+    return has_att and has_diet and has_trans
+
+def match_bundle_b(norm: str) -> bool:
+    has_future = "भविष्य" in norm or "भावी" in norm or "future" in norm.lower()
+    has_income = any(x in norm for x in ["आय", "क्षति", "हानि"])
+    has_med = any(x in norm for x in ["इलाज", "उपचार", "चिकित्सा"])
+    return has_future and has_income and has_med
+
+def match_bundle_c(norm: str) -> bool:
+    has_trans = any(x in norm for x in ["अस्पताल", "आने-जाने", "आवागमन"])
+    has_att = any(x in norm for x in ["रुकने वाले व्यक्ति", "साथ रहने वाले", "देख-रेख करने वाला व्यक्ति", "देखरेख करने वाला व्यक्ति", "व्यक्ति का खर्च"])
+    return has_trans and has_att
+
+def match_bundle_a(norm: str) -> bool:
+    has_diet = any(x in norm for x in ["आहार", "पौष्टिक", "विशेष आहार", "विशेष खुराक", "पोषण", "भोजन", "खुराक"])
+    has_trans = any(x in norm for x in ["परिवहन", "आवागमन", "आने-जाने", "यात्रा", "यातायात"])
+    return has_diet and has_trans
+
+def match_standalone_future_medical(norm: str) -> bool:
+    has_future = "भविष्य" in norm or "भावी" in norm or "future" in norm.lower()
+    has_med = any(x in norm for x in ["इलाज", "उपचार", "चिकित्सा"])
+    if any(x in norm for x in ["आय", "क्षति", "हानि"]):
+        return False
+    return has_future and has_med
+
+def match_standalone_medical(norm: str) -> bool:
+    has_doc_fee = ("डॉ" in norm or "doctor" in norm.lower()) and ("फीस" in norm or "fee" in norm.lower())
+    has_med_term = any(x in norm for x in [
+        "इलाज", "चिकित्सा", "उपचार", "दवाई", "दवा", "आपरेशन", "ऑपरेशन", "अस्पताल",
+        "treatment", "medical", "medicine", "hospital", "operation"
+    ])
+    if not (has_doc_fee or has_med_term):
+        return False
+    if any(x in norm for x in ["भविष्य", "भावी", "future"]):
+        return False
+    has_diet = any(x in norm for x in ["आहार", "पौष्टिक", "विशेष आहार", "पोषण", "खुराक", "भोजन"])
+    has_trans = any(x in norm for x in ["परिवहन", "आवागमन", "आने-जाने", "यात्रा", "यातायात"])
+    return not (has_diet or has_trans)
+
+def match_standalone_diet(norm: str) -> bool:
+    has_diet = any(x in norm for x in ["विशेष आहार", "पौष्टिक आहार", "विशेष खुराक", "पौष्टिक खुराक", "आहार व्यय", "खुराक व्यय", "विशेष भोजन", "nutrition", "diet"])
+    return has_diet and not match_bundle_a(norm) and not match_bundle_d(norm)
+
+def match_standalone_transport(norm: str) -> bool:
+    has_trans = any(x in norm for x in ["परिवहन व्यय", "परिवहन खर्च", "यातायात व्यय", "यातायात खर्च", "यात्रा व्यय", "आने-जाने", "आवागमन व्यय", "conveyance", "transportation", "transport"])
+    return has_trans and not match_bundle_a(norm) and not match_bundle_c(norm) and not match_bundle_d(norm)
+
+def match_standalone_attender(norm: str) -> bool:
+    has_att = any(x in norm for x in ["परिचारक", "परिचर", "अटेंडेंट", "देखभाल", "सेवक", "सहायक", "सहायता", "attendant", "attender"])
+    has_exp = any(x in norm for x in ["व्यय", "खर्च", "charges", "expenses"])
+    return has_att and has_exp and not match_bundle_c(norm) and not match_bundle_d(norm)
+
+def match_rule_1(norm: str):
+    has_g1 = any(x in norm for x in ["स्थायी अपंगता", "स्थायी विकलांगता", "स्थायी निःशक्तता", "स्थाई अपंगता", "स्थाई विकलांगता", "स्थाई निःशक्तता"])
+    has_g2 = any(x in norm for x in ["क्षतिपूर्ति", "पूर्ति राशि", "प्रतिकर", "मुनावजा", "मुआवजा", "हर्जाना"])
+    if has_g1 and has_g2:
+        return True, "1A"
+    has_b = any(x in norm for x in ["पीड़ा", "कष्ट", "वेदना", "दर्द", "pain", "suffering"])
+    if has_b:
+        return True, "1B"
+    return False, None
+
+def match_rule_2(norm: str):
+    has_g1 = any(x in norm for x in ["प्रगति", "उन्नति", "अधिक आय", "विकास", "संभावनाओं"])
+    has_g2 = ("आय" in norm and "वंचित" in norm) or "हानि" in norm or "प्रतिकर" in norm
+    if has_g1 and has_g2:
+        return True, "2A"
+    has_b = any(x in norm for x in ["आनंदपूर्ण जीवन", "जीवन जीने", "जीवन के सुख", "आनंद", "सुख", "amenities", "enjoyment"]) and any(x in norm for x in ["वंचित", "हानि"])
+    if has_b:
+        return True, "2B"
+    has_c = any(x in norm for x in [
+        "आवेदक के कार्य की नुकसानी",
+        "आय की हानि",
+        "भविष्य में होने वाली आय की हानि",
+        "भविष्य आय की हानि",
+        "विकलांगता के कारण आय की हानि",
+        "वेतन की हानि", "वेतन हानि", "मजदूरी की हानि", "कमाई का नुकसान", "रोजगार हानि", "उपार्जन",
+        "loss of income", "loss of earnings", "loss of wages"
+    ]) or (
+        any(x in norm for x in ["आय", "वेतन", "मजदूरी", "कमाई", "रोजगार"]) and any(x in norm for x in ["हानि", "नुकसान", "अवधि", "क्षति", "नुकसानी"])
+    )
+    if has_c:
+        return True, "2C"
+    return False, None
+
+def classify_hindi_line(line_text: str):
+    norm = line_text.replace("स्थाई", "स्थायी").replace("शारीरीक", "शारीरिक").replace("सुखों", "सुख").replace("सुखमय", "सुख")
+    
+    bundle_matches = []
+    if match_bundle_d(norm):
+        bundle_matches.append(("BUNDLE_D", None))
+    if match_bundle_b(norm):
+        bundle_matches.append(("BUNDLE_B", None))
+    if match_bundle_c(norm):
+        bundle_matches.append(("BUNDLE_C", None))
+    if match_bundle_a(norm):
+        bundle_matches.append(("BUNDLE_A", None))
+        
+    legal_head_matches = []
+    r1, sub1 = match_rule_1(norm)
+    if r1:
+        legal_head_matches.append(("PAIN_AND_SUFFERING", sub1))
+    r2, sub2 = match_rule_2(norm)
+    if r2:
+        legal_head_matches.append(("LOSS_OF_INCOME", sub2))
+        
+    standalone_matches = []
+    if match_standalone_future_medical(norm):
+        standalone_matches.append(("STANDALONE_FUTURE_MEDICAL", None))
+    if match_standalone_medical(norm):
+        standalone_matches.append(("STANDALONE_MEDICAL", None))
+    if match_standalone_diet(norm):
+        standalone_matches.append(("STANDALONE_DIET", None))
+    if match_standalone_transport(norm):
+        standalone_matches.append(("STANDALONE_TRANSPORT", None))
+    if match_standalone_attender(norm):
+        standalone_matches.append(("STANDALONE_ATTENDER", None))
+        
+    if bundle_matches:
+        if len(bundle_matches) > 1:
+            return "AMBIGUOUS", [m[0] for m in bundle_matches]
+        return bundle_matches[0]
+        
+    all_matches = legal_head_matches + standalone_matches
+    if not all_matches:
+        return None
+    if len(all_matches) > 1:
+        match_types = [m[0] for m in all_matches]
+        if "STANDALONE_FUTURE_MEDICAL" in match_types and "STANDALONE_MEDICAL" in match_types:
+            return ("STANDALONE_FUTURE_MEDICAL", None)
+        return "AMBIGUOUS", match_types
+        
+    return all_matches[0]
+
+def extract_hindi_structural_block(text_lines: list) -> dict:
+    """
+    Detects a structural Hindi compensation block: a sequence of 5-9 consecutive short lines,
+    matching the shape <short label><separator><description><separator><amount>, closed by a totals line.
+    """
+    lines_norm = []
+    for l in text_lines:
+        line_clean = re.sub(r'[ \t]+', ' ', l).strip()
+        lines_norm.append(line_clean)
+        
+    total_lines = len(lines_norm)
+    blocks = []
+    i = 0
+    while i < total_lines:
+        line = lines_norm[i]
+        m_lbl = _LBL_PAT.match(line)
+        if m_lbl:
+            label = m_lbl.group(1)
+            rest = m_lbl.group(2)
+            m_amt = _AMT_PAT.search(rest)
+            if m_amt:
+                block_lines = []
+                j = i
+                while j < total_lines:
+                    current_line = lines_norm[j]
+                    m_curr_lbl = _LBL_PAT.match(current_line)
+                    if m_curr_lbl:
+                        curr_label = m_curr_lbl.group(1)
+                        curr_rest = m_curr_lbl.group(2)
+                        m_curr_amt = _AMT_PAT.search(curr_rest)
+                        if m_curr_amt:
+                            curr_desc = curr_rest[:m_curr_amt.start()].strip(' |:-—=')
+                            curr_amt_val = m_curr_amt.group(1)
+                            block_lines.append({
+                                "line_idx": j,
+                                "line_text": current_line,
+                                "label": curr_label,
+                                "desc": curr_desc,
+                                "amount_str": curr_amt_val
+                            })
+                            j += 1
+                            continue
+                    
+                    if is_totals_line(current_line):
+                        block_lines.append({
+                            "line_idx": j,
+                            "line_text": current_line,
+                            "is_totals": True
+                        })
+                        j += 1
+                        break
+                    break
+                
+                structural_count = sum(1 for bl in block_lines if not bl.get("is_totals"))
+                if 5 <= structural_count <= 9:
+                    blocks.append(block_lines)
+                    i = j
+                    continue
+        i += 1
+        
+    if not blocks:
+        return None
+        
+    chosen_block = blocks[-1]
+    
+    block_pain_and_suffering = []
+    block_loss_of_income = []
+    block_medical_expenses = []
+    block_special_diet = []
+    block_transportation = []
+    block_future_medical_expenses = []
+    block_attender_charges = []
+    
+    block_sources = {}
+    needs_manual_review = []
+    explicit_zeros = set()
+    
+    for item in chosen_block:
+        if item.get("is_totals"):
+            continue
+        desc = item["desc"]
+        amt_str = item["amount_str"]
+        line_text = item["line_text"]
+        amt_val = parse_isolated_amount(amt_str)
+        
+        is_nil = any(kw in amt_str.lower() for kw in ["निरंक", "शून्य", "nil"])
+        
+        classification = classify_hindi_line(desc)
+        if not classification:
+            continue
+            
+        if isinstance(classification, tuple) and classification[0] == "AMBIGUOUS":
+            logger.warning(f"[HINDI PARSER] Ambiguous structural line: '{line_text}' matches {classification[1]}")
+            needs_manual_review.append(line_text)
+            continue
+            
+        class_name, subtype = classification
+        
+        if class_name == "BUNDLE_D":
+            target = BUNDLED_TRIPLE_TARGET_FIELD
+            if target == "attender_charges":
+                block_attender_charges.append(amt_val)
+                block_special_diet.append(0.0)
+                block_transportation.append(0.0)
+                if is_nil:
+                    explicit_zeros.update(["attender_charges", "special_diet", "transportation"])
+            elif target == "special_diet":
+                block_special_diet.append(amt_val)
+                block_attender_charges.append(0.0)
+                block_transportation.append(0.0)
+                if is_nil:
+                    explicit_zeros.update(["attender_charges", "special_diet", "transportation"])
+            else:
+                block_transportation.append(amt_val)
+                block_attender_charges.append(0.0)
+                block_special_diet.append(0.0)
+                if is_nil:
+                    explicit_zeros.update(["attender_charges", "special_diet", "transportation"])
+            block_sources["attender_charges"] = block_sources["special_diet"] = block_sources["transportation"] = f"Bundle D: '{line_text}'"
+            
+        elif class_name == "BUNDLE_B":
+            target = BUNDLED_FUTURE_TARGET_FIELD
+            if target == "future_medical_expenses":
+                block_future_medical_expenses.append(amt_val)
+                block_loss_of_income.append(0.0)
+                if is_nil:
+                    explicit_zeros.update(["future_medical_expenses", "loss_of_income"])
+            else:
+                block_loss_of_income.append(amt_val)
+                block_future_medical_expenses.append(0.0)
+                if is_nil:
+                    explicit_zeros.update(["future_medical_expenses", "loss_of_income"])
+            block_sources["future_medical_expenses"] = block_sources["loss_of_income"] = f"Bundle B: '{line_text}'"
+            
+        elif class_name == "BUNDLE_C":
+            target = BUNDLED_TRANSPORT_ATTENDER_TARGET_FIELD
+            if target == "attender_charges":
+                block_attender_charges.append(amt_val)
+                block_transportation.append(0.0)
+                if is_nil:
+                    explicit_zeros.update(["attender_charges", "transportation"])
+            else:
+                block_transportation.append(amt_val)
+                block_attender_charges.append(0.0)
+                if is_nil:
+                    explicit_zeros.update(["attender_charges", "transportation"])
+            block_sources["attender_charges"] = block_sources["transportation"] = f"Bundle C: '{line_text}'"
+            
+        elif class_name == "BUNDLE_A":
+            target = BUNDLED_DIET_TRANSPORT_TARGET_FIELD
+            if target == "special_diet":
+                block_special_diet.append(amt_val)
+                block_transportation.append(0.0)
+                if is_nil:
+                    explicit_zeros.update(["special_diet", "transportation"])
+            else:
+                block_transportation.append(amt_val)
+                block_special_diet.append(0.0)
+                if is_nil:
+                    explicit_zeros.update(["special_diet", "transportation"])
+            block_sources["special_diet"] = block_sources["transportation"] = f"Bundle A: '{line_text}'"
+            
+        elif class_name == "PAIN_AND_SUFFERING":
+            block_pain_and_suffering.append(amt_val)
+            if is_nil:
+                explicit_zeros.add("pain_and_suffering")
+            block_sources["pain_and_suffering"] = f"Rule 1{subtype or ''}: '{line_text}'"
+            
+        elif class_name == "LOSS_OF_INCOME":
+            block_loss_of_income.append(amt_val)
+            if is_nil:
+                explicit_zeros.add("loss_of_income")
+            block_sources["loss_of_income"] = f"Rule 2{subtype or ''}: '{line_text}'"
+            
+        elif class_name == "STANDALONE_FUTURE_MEDICAL":
+            block_future_medical_expenses.append(amt_val)
+            if is_nil:
+                explicit_zeros.add("future_medical_expenses")
+            block_sources["future_medical_expenses"] = f"Standalone future medical: '{line_text}'"
+            
+        elif class_name == "STANDALONE_MEDICAL":
+            block_medical_expenses.append(amt_val)
+            if is_nil:
+                explicit_zeros.add("medical_expenses")
+            block_sources["medical_expenses"] = f"Standalone medical: '{line_text}'"
+            
+        elif class_name == "STANDALONE_DIET":
+            block_special_diet.append(amt_val)
+            if is_nil:
+                explicit_zeros.add("special_diet")
+            block_sources["special_diet"] = f"Standalone diet: '{line_text}'"
+            
+        elif class_name == "STANDALONE_TRANSPORT":
+            block_transportation.append(amt_val)
+            if is_nil:
+                explicit_zeros.add("transportation")
+            block_sources["transportation"] = f"Standalone transport: '{line_text}'"
+            
+        elif class_name == "STANDALONE_ATTENDER":
+            block_attender_charges.append(amt_val)
+            if is_nil:
+                explicit_zeros.add("attender_charges")
+            block_sources["attender_charges"] = f"Standalone attendant: '{line_text}'"
+
+    res = {}
+    for f, lst in [
+        ("pain_and_suffering", block_pain_and_suffering),
+        ("loss_of_income", block_loss_of_income),
+        ("medical_expenses", block_medical_expenses),
+        ("special_diet", block_special_diet),
+        ("transportation", block_transportation),
+        ("future_medical_expenses", block_future_medical_expenses),
+        ("attender_charges", block_attender_charges)
+    ]:
+        if f in explicit_zeros:
+            res[f] = 0.0
+        elif lst:
+            res[f] = sum(lst)
+        else:
+            res[f] = 0.0
+            
+    return {
+        "success": True,
+        "fields": res,
+        "sources": block_sources,
+        "needs_manual_review": needs_manual_review,
+        "explicit_zeros": explicit_zeros
+    }
+
+
 def parse_hindi_extracted_text(text_lines: list) -> dict:
     """
     Highly advanced table-aware and heading-aware regex field extractor for Hindi Lower Court MACT judgments.
     Tolerates spelling variations and OCR errors, parses structured tables (both PP-Structure and markdown),
     and scores candidates based on visual structure and proximity to key award headings.
     
-    Updated with corrected field mappings, merge rules, and narrative disability percentage extraction.
+    Updated with generalized block detection, B, C, D bundles, and explicit nil handling.
     """
     logger.info("Starting advanced Hindi Lower Court MACT extraction pipeline...")
     
@@ -4345,7 +4764,6 @@ def parse_hindi_extracted_text(text_lines: list) -> dict:
 
     # 4. Helper to extract numbers tolerating commas, dots, and trailing /-.
     def _extract_number_from_string(s, field):
-        # Clean leading list items like "1.", "2)", "१.", "[1]", etc.
         s_clean = re.sub(r'^\s*(?:\[|\()?\s*(?:\d+|[१२३४५६७८९०]+)\s*(?:\]|\)|[\.\-\)])\s*', '', s.strip())
         if not s_clean:
             return None
@@ -4354,21 +4772,26 @@ def parse_hindi_extracted_text(text_lines: list) -> dict:
             m = re.search(r'(\d{1,3})\s*(?:%|प्रतिशत|percent)', s_clean, re.IGNORECASE)
             if m:
                 return int(m.group(1))
-            m_nums = re.findall(r'\b\d{1,3}\b', s_clean)
+            m_nums = re.findall(r'(?<![\d,])\d{1,3}(?![\d,])', s_clean)
             for num_str in m_nums:
                 val = int(num_str)
                 if 1 <= val <= 100:
                     return val
             return None
         else:
-            s_num = s_clean.replace(',', '')
-            s_num = re.sub(r'/(?:-)?', '', s_num)
-            s_num = re.sub(r'[^\d.]', ' ', s_num)
-            m_nums = re.findall(r'\b\d+(?:\.\d+)?\b', s_num)
-                
-            for num_str in m_nums:
+            s_trans = translate_deva_digits(s_clean)
+            pattern = r'\b(\d+(?:,\d+)*(?:\.\d+)?)\b'
+            for m in re.finditer(pattern, s_trans):
+                num_str = m.group(1).replace(',', '')
                 try:
                     val = float(num_str)
+                    if 1900 <= val <= 2030:
+                        if val == 2000:
+                            pass
+                        else:
+                            start, end = m.span()
+                            if not _is_currency_adjacent(s_trans, start, end):
+                                continue
                     if val in (2018, 2019, 2020, 2021, 2022, 2023, 2024, 2025, 2026):
                         continue
                     if val >= 100:
@@ -4451,9 +4874,9 @@ def parse_hindi_extracted_text(text_lines: list) -> dict:
                                 val = num
                                 matched_text = f"Next line paragraph (offset {offset}): '{next_line}'"
                                 break
-                        if val is not None:
-                            break
-            
+                    if val is not None:
+                        break
+                        
             if val is not None:
                 table_bonus = 100 if is_table else 0
                 heading_bonus = get_award_heading_score(idx)
@@ -4532,7 +4955,6 @@ def parse_hindi_extracted_text(text_lines: list) -> dict:
     # Detect combined multi-head clauses sharing the same line and amount
     lines_to_candidates = {}
     for field, candidates in field_candidates.items():
-        # Skip award_amount, monthly_income, and disability from combined clauses
         if field in ("award_amount", "monthly_income", "disability"):
             continue
         for c in candidates:
@@ -4543,7 +4965,6 @@ def parse_hindi_extracted_text(text_lines: list) -> dict:
 
     for line_idx, matched in lines_to_candidates.items():
         if len(matched) > 1:
-            # Check if they share the same extracted value
             values = [c["value"] for field, c in matched]
             if len(set(values)) == 1:
                 val = values[0]
@@ -4555,7 +4976,6 @@ def parse_hindi_extracted_text(text_lines: list) -> dict:
                     "matched_fields": matched_fields,
                     "amount": val
                 })
-                # Mark all these candidates as combined so they are excluded
                 for field, c in matched:
                     c["is_combined"] = True
 
@@ -4590,102 +5010,33 @@ def parse_hindi_extracted_text(text_lines: list) -> dict:
             logger.info(log_msg)
             extraction_audit_logs.append(log_msg)
 
-    # ======================================================
-    # NEW MERGE & BUNDLING RULES OVERRIDES
-    # ======================================================
-    
-    # 1. Translate Devanagari digits to English digits
-    def translate_deva_digits(s: str) -> str:
-        deva_to_eng = {
-            '०': '0', '१': '1', '२': '2', '३': '3', '४': '4',
-            '५': '5', '६': '6', '७': '7', '८': '8', '९': '9'
-        }
-        return "".join(deva_to_eng.get(c, c) for c in s)
-
-    # 2. Match helpers for rules (purely wording/keywords based)
-    def match_rule_1(line_text: str):
-        # PAIN_AND_SUFFERING
-        # Subtype A: ("स्थायी अपंगता" OR "स्थायी विकलांगता" OR "स्थायी निःशक्तता") AND ("क्षतिपूर्ति" OR "पूर्ति राशि" OR "प्रतिकर")
-        # Subtype B: ("मानसिक" AND "शारीरिक" AND ("पीड़ा" OR "कष्ट" OR "वेदना" OR "दर्द"))
-        norm = line_text.replace("स्थाई", "स्थायी").replace("शारीरीक", "शारीरिक")
-        
-        has_g1 = any(x in norm for x in ["स्थायी अपंगता", "स्थायी विकलांगता", "स्थायी निःशक्तता"])
-        has_g2 = any(x in norm for x in ["क्षतिपूर्ति", "पूर्ति राशि", "प्रतिकर"])
-        if has_g1 and has_g2:
-            return True, "1A"
-            
-        has_b = "मानसिक" in norm and "शारीरिक" in norm and any(x in norm for x in ["पीड़ा", "कष्ट", "वेदना", "दर्द"])
-        if has_b:
-            return True, "1B"
-            
-        return False, None
-
-    def match_rule_2(line_text: str):
-        # LOSS_OF_INCOME
-        # Subtype A: ("प्रगति" OR "उन्नति" OR "अधिक आय" OR "विकास" OR "संभावनाओं") AND (("आय" AND "वंचित") OR "हानि" OR "प्रतिकर")
-        # Subtype B: ("आनंदपूर्ण जीवन" OR "जीवन जीने" OR "जीवन के सुख") AND ("वंचित" OR "हानि")
-        # Subtype C: Standard Loss of Income
-        norm = line_text.replace("सुखों", "सुख").replace("सुखमय", "सुख")
-        
-        has_g1 = any(x in norm for x in ["प्रगति", "उन्नति", "अधिक आय", "विकास", "संभावनाओं"])
-        has_g2 = ("आय" in norm and "वंचित" in norm) or "हानि" in norm or "प्रतिकर" in norm
-        if has_g1 and has_g2:
-            return True, "2A"
-            
-        has_b = any(x in norm for x in ["आनंदपूर्ण जीवन", "जीवन जीने", "जीवन के सुख", "आनंद", "सुख", "amenities", "enjoyment"]) and any(x in norm for x in ["वंचित", "हानि"])
-        if has_b:
-            return True, "2B"
-            
-        # Standard Loss of Income keywords check (Subtype 2C)
-        has_c = any(x in norm for x in ["आय की हानि", "आय हानि", "वेतन की हानि", "वेतन हानि", "मजदूरी की हानि", "कमाई का नुकसान", "रोजगार हानि", "उपार्जन", "loss of income", "loss of earnings", "loss of wages"]) or (any(x in norm for x in ["आय", "वेतन", "मजदूरी", "कमाई", "रोजगार"]) and any(x in norm for x in ["हानि", "नुकसान", "अवधि", "क्षति"]))
-        if has_c:
-            return True, "2C"
-            
-        return False, None
-
-    def match_rule_3(line_text: str):
-        # MEDICAL_EXPENSES
-        # ("इलाज" OR "चिकित्सा" OR "उपचार") AND ("खर्च" OR "व्यय")
-        # BUT ONLY IF that same line does NOT also contain "आहार" or "परिवहन" or "डॉ" or "भविष्य" or "भावी" or "future"
-        has_g1 = any(x in line_text for x in ["इलाज", "चिकित्सा", "उपचार"])
-        has_g2 = any(x in line_text for x in ["खर्च", "व्यय"])
-        if has_g1 and has_g2:
-            if not any(x in line_text for x in ["आहार", "परिवहन", "डॉ", "भविष्य", "भावी", "future"]):
-                return True
-        return False
-
-    def match_rule_4(line_text: str):
-        # BUNDLED DIET/TRANSPORT
-        # ("विशेष आहार" OR "पौष्टिक आहार") combined with ANY of ("डॉ" OR "डॉक्टर" OR "फीस" OR "परिवहन" OR "आने-जाने" OR "यातायात" OR "भविष्य में उपचार" OR "भावी इलाज")
-        has_g1 = any(x in line_text for x in ["विशेष आहार", "पौष्टिक आहार", "विशेष खुराक", "पौष्टिक खुराक", "आहार व्यय", "खुराक व्यय"])
-        has_g2 = any(x in line_text for x in ["डॉ", "डॉक्टर", "फीस", "परिवहन", "आने-जाने", "यातायात", "भविष्य में उपचार", "भावी इलाज"])
-        if has_g1 and has_g2:
-            return True
-        return False
-
-    def match_rule_5(line_text: str):
-        # ATTENDER_CHARGES
-        # "सहायता" AND ("व्यय" OR "खर्च")
-        return "सहायता" in line_text and any(x in line_text for x in ["व्यय", "खर्च"])
-
     # 3. Ambient search check to determine if a line matches any rule
     def get_matched_rules(line_text: str):
-        matches = []
-        r1, sub1 = match_rule_1(line_text)
-        if r1:
-            matches.append((1, sub1))
-        r2, sub2 = match_rule_2(line_text)
-        if r2:
-            matches.append((2, sub2))
-        if match_rule_3(line_text):
-            matches.append((3, None))
-        if match_rule_4(line_text):
-            matches.append((4, None))
-        if match_rule_5(line_text):
-            matches.append((5, None))
-        return matches
+        classification = classify_hindi_line(line_text)
+        if not classification:
+            return []
+        if isinstance(classification, tuple) and classification[0] == "AMBIGUOUS":
+            return [("AMBIGUOUS", classification[1])]
+        
+        class_name, subtype = classification
+        mapping = {
+            "PAIN_AND_SUFFERING": 1,
+            "LOSS_OF_INCOME": 2,
+            "STANDALONE_MEDICAL": 3,
+            "BUNDLE_A": 4,
+            "STANDALONE_ATTENDER": 5,
+            "BUNDLE_B": 6,
+            "BUNDLE_C": 7,
+            "BUNDLE_D": 8,
+            "STANDALONE_DIET": 9,
+            "STANDALONE_TRANSPORT": 10,
+            "STANDALONE_FUTURE_MEDICAL": 11
+        }
+        rule_num = mapping.get(class_name)
+        if rule_num is not None:
+            return [(rule_num, subtype)]
+        return []
 
-    # 4. Helper to extract a number from a line/cell
     def get_number_from_text(text: str) -> float:
         text_trans = translate_deva_digits(text)
         cleaned = text_trans.replace(',', '')
@@ -4695,7 +5046,12 @@ def parse_hindi_extracted_text(text_lines: list) -> dict:
         for num_str in reversed(nums):
             try:
                 val = float(num_str)
-                # Ignore years
+                if 1900 <= val <= 2030:
+                    if val != 2000:
+                        start_idx = text_trans.find(num_str)
+                        end_idx = start_idx + len(num_str)
+                        if not _is_currency_adjacent(text_trans, start_idx, end_idx):
+                            continue
                 if val in (2018, 2019, 2020, 2021, 2022, 2023, 2024, 2025, 2026):
                     continue
                 if val >= 100:
@@ -4704,12 +5060,10 @@ def parse_hindi_extracted_text(text_lines: list) -> dict:
                 continue
         return None
 
-    # 5. Extract amount for line idx with lookahead and cell support
     def extract_amount_for_line(idx: int) -> float:
         line = lines_norm[idx]
         s_clean = re.sub(r'^\s*(?:\[|\()?\s*(?:\d+|[१२३४५६८९०]+)\s*(?:\]|\)|[\.\-\)])\s*', '', line.strip())
         
-        # Table format
         if "|" in line:
             cells = [c.strip() for c in line.split('|') if c.strip()]
             for cell in reversed(cells):
@@ -4717,18 +5071,15 @@ def parse_hindi_extracted_text(text_lines: list) -> dict:
                 if num is not None:
                     return num
                     
-        # Same line
         num = get_number_from_text(s_clean)
         if num is not None:
             return num
             
-        # Lookahead
         for offset in (1, 2):
             if idx + offset < total_lines:
                 next_line = lines_norm[idx + offset]
                 if "--- PAGE" in next_line:
                     break
-                # If next line has keywords for other fields, stop lookahead
                 if get_matched_rules(next_line):
                     break
                 if "|" in next_line:
@@ -4743,158 +5094,349 @@ def parse_hindi_extracted_text(text_lines: list) -> dict:
                         return num
         return None
 
-    # 6. Narrative Disability Percentage (Rule 6)
-    # Search this pattern across the FULL document text, not just inside the numbered compensation table block.
-    # Disambiguate by checking whether "प्रतिशत" or "%" appears near the number.
+    # Narrative Disability Percentage
     narrative_disability = None
-    # Normalize spelling variations in the full text
     flat_norm = flat.replace("स्थाई", "स्थायी").replace("निर्योग्यता", "अपंगता").replace("विकलांगता", "अपंगता")
-    # Search for permanent disability keyword followed by number + प्रतिशत / %
     m_dis = re.search(r'स्थायी\s+अपंगता.{0,100}?(\d{1,3})\s*(?:प्रतिशत|%)', flat_norm, re.DOTALL)
     if m_dis:
         narrative_disability = float(m_dis.group(1))
     else:
-        # Search for number + प्रतिशत / % followed by permanent disability keyword
         m_dis2 = re.search(r'(\d{1,3})\s*(?:प्रतिशत|%).{0,100}?स्थायी\s+अपंगता', flat_norm, re.DOTALL)
         if m_dis2:
             narrative_disability = float(m_dis2.group(1))
 
-    # Apply line classification and aggregate amounts
-    pain_and_suffering_parts = {"1A": [], "1B": []}
-    loss_of_income_parts = {"2A": [], "2B": [], "2C": []}
-    medical_expenses_vals = []
-    bundled_vals = []
-    attender_charges_vals = []
-    needs_manual_review_lines = []
-
-    for idx in range(total_lines):
-        line = lines_norm[idx]
-        matches = get_matched_rules(line)
-        if len(matches) > 1:
-            # Ambiguous line!
-            logger.warning(f"[HINDI PARSER] Ambiguous line: '{line}' matched multiple rules: {matches}")
-            needs_manual_review_lines.append(line)
-            continue
-        elif len(matches) == 1:
-            rule_num, sub_type = matches[0]
-            amount = extract_amount_for_line(idx)
-            if amount is not None:
-                if rule_num == 1:
-                    pain_and_suffering_parts[sub_type].append(amount)
-                elif rule_num == 2:
-                    loss_of_income_parts[sub_type].append(amount)
-                elif rule_num == 3:
-                    medical_expenses_vals.append(amount)
-                elif rule_num == 4:
-                    bundled_vals.append(amount)
-                elif rule_num == 5:
-                    attender_charges_vals.append(amount)
-
-    # Aggregating fields
-
-    # Rule 1: Pain and Suffering
-    pain_and_suffering_sum = 0.0
-    if pain_and_suffering_parts["1A"] or pain_and_suffering_parts["1B"]:
-        pain_and_suffering_sum = sum(pain_and_suffering_parts["1A"]) + sum(pain_and_suffering_parts["1B"])
-        out["pain_and_suffering"] = pain_and_suffering_sum
-        conf["pain_and_suffering"] = 0.90
-    else:
-        out["pain_and_suffering"] = 0.0
-        conf["pain_and_suffering"] = 0.0
-
-    # Rule 2: Loss of Income
-    # NOTE FOR THE TEAM: The second bullet (loss of enjoyment of life) is technically a distinct legal head 
-    # from future income growth in most MACT frameworks — this merge is an intentional product decision 
-    # to fold both into one calculator field (loss_of_income), not a parsing shortcut.
-    # DO NOT separate them without verifying the calculator schema first.
-    loss_of_income_sum = 0.0
-    if loss_of_income_parts["2A"] or loss_of_income_parts["2B"] or loss_of_income_parts["2C"]:
-        loss_of_income_sum = sum(loss_of_income_parts["2A"]) + sum(loss_of_income_parts["2B"]) + sum(loss_of_income_parts["2C"])
-        out["loss_of_income"] = loss_of_income_sum
-        conf["loss_of_income"] = 0.90
+    # Apply structural block detection first
+    struct_res = extract_hindi_structural_block(text_lines)
+    if struct_res:
+        logger.info("[HINDI PARSER] Structural table block detected! Applying priority overrides.")
+        fields_map = struct_res["fields"]
+        sources_map = struct_res["sources"]
+        explicit_zeros = struct_res["explicit_zeros"]
         
-        # Keep individual fields set to maintain backward compatibility with tests
-        if loss_of_income_parts["2A"]:
-            out["loss_of_future_prospects"] = sum(loss_of_income_parts["2A"])
-            conf["loss_of_future_prospects"] = 0.90
-        else:
-            out["loss_of_future_prospects"] = 0.0
-            conf["loss_of_future_prospects"] = 0.0
+        # Override the 7 fields
+        for field in [
+            "pain_and_suffering", "loss_of_income", "medical_expenses",
+            "special_diet", "transportation", "future_medical_expenses", "attender_charges"
+        ]:
+            val = fields_map.get(field, 0.0)
+            if field in explicit_zeros:
+                out[field] = 0.0
+                conf[field] = 0.99
+            else:
+                out[field] = val
+                conf[field] = 0.99
+                
+            log_msg = f"[FIELD] {field} = {out[field]}, matched_by=Hindi Structural Table Override, source_line='{sources_map.get(field, '')}'"
+            logger.info(log_msg)
+            extraction_audit_logs.append(log_msg)
             
-        if loss_of_income_parts["2B"]:
-            out["loss_of_amenities"] = sum(loss_of_income_parts["2B"])
-            conf["loss_of_amenities"] = 0.90
-        else:
-            out["loss_of_amenities"] = 0.0
-            conf["loss_of_amenities"] = 0.0
-    else:
-        out["loss_of_income"] = 0.0
-        conf["loss_of_income"] = 0.0
+        if struct_res.get("needs_manual_review"):
+            out["needs_manual_review"] = struct_res["needs_manual_review"]
+            
         out["loss_of_future_prospects"] = 0.0
         out["loss_of_amenities"] = 0.0
+        out["explicit_zeros"] = explicit_zeros
 
-    # Rule 3: Medical Expenses
-    if medical_expenses_vals:
-        out["medical_expenses"] = sum(medical_expenses_vals)
-        conf["medical_expenses"] = 0.90
+        # Clear combined unallocated candidate search outputs
+        out.pop("combined_unallocated_amount", None)
+        out.pop("combined_unallocated_details", None)
     else:
-        out["medical_expenses"] = 0.0
-        conf["medical_expenses"] = 0.0
+        # Fallback to candidate search logic
+        pain_and_suffering_parts = {"1A": [], "1B": []}
+        loss_of_income_parts = {"2A": [], "2B": [], "2C": []}
+        medical_expenses_vals = []
+        bundled_vals = []
+        attender_charges_vals = []
+        
+        bundle_b_vals = []
+        bundle_c_vals = []
+        bundle_d_vals = []
+        standalone_diet_vals = []
+        standalone_transport_vals = []
+        standalone_future_medical_vals = []
+        
+        needs_manual_review_lines = []
+        explicit_zeros = set()
 
-    # Rule 4: Bundled Diet/Transport
-    BUNDLED_DIET_TRANSPORT_TARGET_FIELD = "special_diet"
-    bundled_amount = sum(bundled_vals) if bundled_vals else 0.0
-    
-    if bundled_amount > 0:
-        out["bundled_source"] = True
-        if BUNDLED_DIET_TRANSPORT_TARGET_FIELD == "special_diet":
-            out["special_diet"] = bundled_amount
+        pain_and_suffering_sources = []
+        loss_of_income_sources = []
+        medical_expenses_sources = []
+        bundled_sources = []
+        attender_charges_sources = []
+
+        for idx in range(total_lines):
+            line = lines_norm[idx]
+            is_nil = any(kw in line.lower() for kw in ["निरंक", "शून्य", "nil"])
+            
+            matches = get_matched_rules(line)
+            if len(matches) > 1:
+                logger.warning(f"[HINDI PARSER] Ambiguous line: '{line}' matched multiple rules: {matches}")
+                needs_manual_review_lines.append(line)
+                continue
+            elif len(matches) == 1:
+                match_val = matches[0]
+                if isinstance(match_val, tuple) and match_val[0] == "AMBIGUOUS":
+                    logger.warning(f"[HINDI PARSER] Ambiguous line: '{line}' matched multiple bundles: {match_val[1]}")
+                    needs_manual_review_lines.append(line)
+                    continue
+                    
+                rule_num, sub_type = match_val
+                amount = 0.0 if is_nil else extract_amount_for_line(idx)
+                
+                if amount is not None or is_nil:
+                    amt = 0.0 if is_nil else amount
+                    if rule_num == 1:
+                        pain_and_suffering_parts[sub_type].append(amt)
+                        pain_and_suffering_sources.append(f"Rule 1{sub_type}: '{line}' -> {amt}")
+                        if is_nil:
+                            explicit_zeros.add("pain_and_suffering")
+                    elif rule_num == 2:
+                        loss_of_income_parts[sub_type].append(amt)
+                        loss_of_income_sources.append(f"Rule 2{sub_type}: '{line}' -> {amt}")
+                        if is_nil:
+                            explicit_zeros.add("loss_of_income")
+                    elif rule_num == 3:
+                        medical_expenses_vals.append(amt)
+                        medical_expenses_sources.append(f"Rule 3: '{line}' -> {amt}")
+                        if is_nil:
+                            explicit_zeros.add("medical_expenses")
+                    elif rule_num == 4:
+                        bundled_vals.append(amt)
+                        bundled_sources.append(f"Rule 4 (Bundled A): '{line}' -> {amt}")
+                        if is_nil:
+                            explicit_zeros.update(["special_diet", "transportation"])
+                    elif rule_num == 5:
+                        attender_charges_vals.append(amt)
+                        attender_charges_sources.append(f"Rule 5: '{line}' -> {amt}")
+                        if is_nil:
+                            explicit_zeros.add("attender_charges")
+                    elif rule_num == 6:
+                        bundle_b_vals.append(amt)
+                        if is_nil:
+                            explicit_zeros.update(["future_medical_expenses", "loss_of_income"])
+                    elif rule_num == 7:
+                        bundle_c_vals.append(amt)
+                        if is_nil:
+                            explicit_zeros.update(["attender_charges", "transportation"])
+                    elif rule_num == 8:
+                        bundle_d_vals.append(amt)
+                        if is_nil:
+                            explicit_zeros.update(["attender_charges", "special_diet", "transportation"])
+                    elif rule_num == 9:
+                        standalone_diet_vals.append(amt)
+                        if is_nil:
+                            explicit_zeros.add("special_diet")
+                    elif rule_num == 10:
+                        standalone_transport_vals.append(amt)
+                        if is_nil:
+                            explicit_zeros.add("transportation")
+                    elif rule_num == 11:
+                        standalone_future_medical_vals.append(amt)
+                        if is_nil:
+                            explicit_zeros.add("future_medical_expenses")
+
+        # Determine bundle targets
+        has_bundle = False
+        
+        # Bundle A (Diet/Transport)
+        diet_from_bundle_a = 0.0
+        trans_from_bundle_a = 0.0
+        if bundled_vals:
+            has_bundle = True
+            bundled_amount_a = sum(bundled_vals)
+            if BUNDLED_DIET_TRANSPORT_TARGET_FIELD == "special_diet":
+                diet_from_bundle_a = bundled_amount_a
+                out["transportation"] = 0.0
+                conf["transportation"] = 0.90
+            else:
+                trans_from_bundle_a = bundled_amount_a
+                out["special_diet"] = 0.0
+                conf["special_diet"] = 0.90
+                
+        # Bundle B (Future Income + Future Medical)
+        future_med_from_bundle_b = 0.0
+        income_from_bundle_b = 0.0
+        if bundle_b_vals:
+            has_bundle = True
+            bundled_amount_b = sum(bundle_b_vals)
+            if BUNDLED_FUTURE_TARGET_FIELD == "future_medical_expenses":
+                future_med_from_bundle_b = bundled_amount_b
+                out["loss_of_income"] = 0.0
+                conf["loss_of_income"] = 0.90
+            else:
+                income_from_bundle_b = bundled_amount_b
+                out["future_medical_expenses"] = 0.0
+                conf["future_medical_expenses"] = 0.90
+                
+        # Bundle C (Transport + Attender)
+        trans_from_bundle_c = 0.0
+        attender_from_bundle_c = 0.0
+        if bundle_c_vals:
+            has_bundle = True
+            bundled_amount_c = sum(bundle_c_vals)
+            if BUNDLED_TRANSPORT_ATTENDER_TARGET_FIELD == "attender_charges":
+                attender_from_bundle_c = bundled_amount_c
+                out["transportation"] = 0.0
+                conf["transportation"] = 0.90
+            else:
+                trans_from_bundle_c = bundled_amount_c
+                out["attender_charges"] = 0.0
+                conf["attender_charges"] = 0.90
+                
+        # Bundle D (Attender + Diet + Transport)
+        attender_from_bundle_d = 0.0
+        diet_from_bundle_d = 0.0
+        trans_from_bundle_d = 0.0
+        if bundle_d_vals:
+            has_bundle = True
+            bundled_amount_d = sum(bundle_d_vals)
+            target = BUNDLED_TRIPLE_TARGET_FIELD
+            if target == "attender_charges":
+                attender_from_bundle_d = bundled_amount_d
+                out["special_diet"] = 0.0
+                conf["special_diet"] = 0.90
+                out["transportation"] = 0.0
+                conf["transportation"] = 0.90
+            elif target == "special_diet":
+                diet_from_bundle_d = bundled_amount_d
+                out["attender_charges"] = 0.0
+                conf["attender_charges"] = 0.90
+                out["transportation"] = 0.0
+                conf["transportation"] = 0.90
+            else:
+                trans_from_bundle_d = bundled_amount_d
+                out["attender_charges"] = 0.0
+                conf["attender_charges"] = 0.90
+                out["special_diet"] = 0.0
+                conf["special_diet"] = 0.90
+
+        if has_bundle:
+            out["bundled_source"] = True
+
+        # Aggregate pain and suffering (always overwrite)
+        pain_and_suffering_sum = sum(pain_and_suffering_parts["1A"]) + sum(pain_and_suffering_parts["1B"])
+        if "pain_and_suffering" in explicit_zeros:
+            out["pain_and_suffering"] = 0.0
+            conf["pain_and_suffering"] = 0.99
+        else:
+            out["pain_and_suffering"] = pain_and_suffering_sum
+            conf["pain_and_suffering"] = 0.90 if pain_and_suffering_sum > 0 else 0.0
+            if pain_and_suffering_sum > 0:
+                log_msg = f"[FIELD] pain_and_suffering = {out['pain_and_suffering']}, matched_by=parse_hindi_extracted_text (candidate fallback), source_line='{'; '.join(pain_and_suffering_sources)}'"
+                logger.info(log_msg)
+                extraction_audit_logs.append(log_msg)
+
+        # Aggregate loss of income (always overwrite)
+        loss_of_income_sum = sum(loss_of_income_parts["2A"]) + sum(loss_of_income_parts["2B"]) + sum(loss_of_income_parts["2C"]) + income_from_bundle_b
+        if "loss_of_income" in explicit_zeros:
+            out["loss_of_income"] = 0.0
+            conf["loss_of_income"] = 0.99
+            out["loss_of_future_prospects"] = 0.0
+            conf["loss_of_future_prospects"] = 0.99
+            out["loss_of_amenities"] = 0.0
+            conf["loss_of_amenities"] = 0.99
+        else:
+            out["loss_of_income"] = loss_of_income_sum
+            conf["loss_of_income"] = 0.90 if loss_of_income_sum > 0 else 0.0
+            if loss_of_income_sum > 0:
+                log_msg = f"[FIELD] loss_of_income = {out['loss_of_income']}, matched_by=parse_hindi_extracted_text (candidate fallback), source_line='{'; '.join(loss_of_income_sources)}'"
+                logger.info(log_msg)
+                extraction_audit_logs.append(log_msg)
+            
+            if loss_of_income_parts["2A"]:
+                out["loss_of_future_prospects"] = sum(loss_of_income_parts["2A"])
+                conf["loss_of_future_prospects"] = 0.90
+            else:
+                out["loss_of_future_prospects"] = 0.0
+                conf["loss_of_future_prospects"] = 0.0
+                
+            if loss_of_income_parts["2B"]:
+                out["loss_of_amenities"] = sum(loss_of_income_parts["2B"])
+                conf["loss_of_amenities"] = 0.90
+            else:
+                out["loss_of_amenities"] = 0.0
+                conf["loss_of_amenities"] = 0.0
+
+        # Aggregate medical expenses (always overwrite)
+        med_sum = sum(medical_expenses_vals)
+        if "medical_expenses" in explicit_zeros:
+            out["medical_expenses"] = 0.0
+            conf["medical_expenses"] = 0.99
+        else:
+            out["medical_expenses"] = med_sum
+            conf["medical_expenses"] = 0.90 if med_sum > 0 else 0.0
+            if med_sum > 0:
+                log_msg = f"[FIELD] medical_expenses = {out['medical_expenses']}, matched_by=parse_hindi_extracted_text (candidate fallback), source_line='{'; '.join(medical_expenses_sources)}'"
+                logger.info(log_msg)
+                extraction_audit_logs.append(log_msg)
+
+        # Special Diet
+        diet_sum = sum(standalone_diet_vals) + diet_from_bundle_a + diet_from_bundle_d
+        if "special_diet" in explicit_zeros:
+            out["special_diet"] = 0.0
+            conf["special_diet"] = 0.99
+        elif diet_sum > 0:
+            out["special_diet"] = diet_sum
             conf["special_diet"] = 0.90
+        else:
+            if "special_diet" not in out:
+                out["special_diet"] = 0.0
+                conf["special_diet"] = 0.0
+
+        # Transportation
+        trans_sum = sum(standalone_transport_vals) + trans_from_bundle_a + trans_from_bundle_c + trans_from_bundle_d
+        if "transportation" in explicit_zeros:
             out["transportation"] = 0.0
+            conf["transportation"] = 0.99
+        elif trans_sum > 0:
+            out["transportation"] = trans_sum
             conf["transportation"] = 0.90
         else:
-            out["transportation"] = bundled_amount
-            conf["transportation"] = 0.90
-            out["special_diet"] = 0.0
-            conf["special_diet"] = 0.90
-    else:
-        # Keep any standard special_diet or transportation candidates if no bundling occurred
-        if "special_diet" not in out:
-            out["special_diet"] = 0.0
-            conf["special_diet"] = 0.0
-        if "transportation" not in out:
-            out["transportation"] = 0.0
-            conf["transportation"] = 0.0
+            if "transportation" not in out:
+                out["transportation"] = 0.0
+                conf["transportation"] = 0.0
 
-    # Rule 5: Attender Charges
-    if attender_charges_vals:
-        out["attender_charges"] = sum(attender_charges_vals)
-        conf["attender_charges"] = 0.90
-    else:
-        if "attender_charges" not in out:
+        # Attender charges
+        att_sum = sum(attender_charges_vals) + attender_from_bundle_c + attender_from_bundle_d
+        if "attender_charges" in explicit_zeros:
             out["attender_charges"] = 0.0
-            conf["attender_charges"] = 0.0
+            conf["attender_charges"] = 0.99
+        elif att_sum > 0:
+            out["attender_charges"] = att_sum
+            conf["attender_charges"] = 0.90
+        else:
+            if "attender_charges" not in out:
+                out["attender_charges"] = 0.0
+                conf["attender_charges"] = 0.0
 
-    # Rule 6: Narrative Disability Percentage
+        # Future medical expenses
+        future_med_sum = sum(standalone_future_medical_vals) + future_med_from_bundle_b
+        if "future_medical_expenses" in explicit_zeros:
+            out["future_medical_expenses"] = 0.0
+            conf["future_medical_expenses"] = 0.99
+        elif future_med_sum > 0:
+            out["future_medical_expenses"] = future_med_sum
+            conf["future_medical_expenses"] = 0.90
+        else:
+            if "future_medical_expenses" not in out:
+                out["future_medical_expenses"] = 0.0
+                conf["future_medical_expenses"] = 0.0
+
+        if needs_manual_review_lines:
+            out["needs_manual_review"] = needs_manual_review_lines
+            
+        out["explicit_zeros"] = explicit_zeros
+
+    # Narrative Disability Percentage (Always overrides, regardless of structural or fallback path)
     if narrative_disability is not None:
         out["disability"] = narrative_disability
         conf["disability"] = 0.95
         out["permanent_disability_percentage"] = narrative_disability
     else:
-        # Keep the standard disability candidate if found and case type is injury
         if "disability" not in out:
             out["disability"] = ""
             conf["disability"] = 0.0
-
-    # Save manual review list if there were any ambiguous matches
-    if needs_manual_review_lines:
-        out["needs_manual_review"] = needs_manual_review_lines
-
-    if "award_amount" in out:
-        out["total_compensation"] = out["award_amount"]
-        conf["total_compensation"] = conf["award_amount"]
-
-    # ---- safety net verification ------------------------------------------------
+# ---- safety net verification ------------------------------------------------
     rupee_heads = [
         "medical_expenses",
         "future_medical_expenses",

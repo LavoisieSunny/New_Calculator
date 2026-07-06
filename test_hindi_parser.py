@@ -200,5 +200,35 @@ class TestHindiParser(unittest.TestCase):
         self.assertIn("60,000", res_mismatch.get("mismatch_details"))
         self.assertIn("100,000", res_mismatch.get("mismatch_details"))
 
+    def test_regression_fixtures(self):
+        import os
+        import json
+        
+        fixtures_dir = os.path.join(os.path.dirname(__file__), "tests", "fixtures", "lower_court")
+        self.assertTrue(os.path.exists(fixtures_dir), f"Fixtures directory not found: {fixtures_dir}")
+        
+        files = [f for f in os.listdir(fixtures_dir) if f.endswith(".txt")]
+        self.assertEqual(len(files), 8, f"Expected 8 fixture files, found {len(files)}")
+        
+        for f in files:
+            name = os.path.splitext(f)[0]
+            txt_path = os.path.join(fixtures_dir, f)
+            json_path = os.path.join(fixtures_dir, f"{name}.json")
+            
+            with open(txt_path, "r", encoding="utf-8") as file:
+                lines = [line.strip() for line in file.readlines() if line.strip()]
+                
+            with open(json_path, "r", encoding="utf-8") as file:
+                expected = json.load(file)
+                
+            res = parse_hindi_extracted_text(lines)
+            
+            for field, expected_val in expected.items():
+                actual_val = res.get(field, 0.0)
+                self.assertEqual(
+                    actual_val, expected_val,
+                    f"Fixture {name}: Field '{field}' expected {expected_val}, got {actual_val}"
+                )
+
 if __name__ == "__main__":
     unittest.main()

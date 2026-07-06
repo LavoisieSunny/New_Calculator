@@ -795,7 +795,7 @@ def guard_and_downscale_image(pil_img):
     if est > 80 * 1024 * 1024:
         ratio = min(1800.0 / w, (80.0 * 1024 * 1024 / est) ** 0.5)
         nw, nh = int(w * ratio), int(h * ratio)
-        logger.info(f"Downscaling {w}x{h} → {nw}x{nh} (memory guard)")
+        logger.info(f"Downscaling {w}x{h} -> {nw}x{nh} (memory guard)")
         return pil_img.resize((nw, nh), Image.Resampling.LANCZOS)
     return pil_img
 
@@ -1158,7 +1158,7 @@ def ocr_page_with_vision(
     elif classification == "low-content":
         paddle_lines, paddle_conf, paddle_q = [], 0.0, 0.0
         if paddle_available:
-            logger.info(f"Page {page_num}: low-content → PaddleOCR")
+            logger.info(f"Page {page_num}: low-content -> PaddleOCR")
             paddle_lines, paddle_conf, _ = call_paddle_ocr(rendered_img_path, page_num=page_num)
             paddle_q = score_ocr_page_quality(paddle_lines)
 
@@ -1191,14 +1191,14 @@ def ocr_page_with_vision(
     else:
         paddle_is_tabular = False
         if paddle_available:
-            logger.info(f"Page {page_num}: {classification} → PaddleOCR")
+            logger.info(f"Page {page_num}: {classification} -> PaddleOCR")
             paddle_lines, paddle_conf, paddle_is_tabular = call_paddle_ocr(rendered_img_path, page_num=page_num)
             paddle_q = score_ocr_page_quality(paddle_lines)
             paddle_good = _paddle_result_is_trustworthy(paddle_lines, paddle_conf, paddle_q)
             if paddle_good:
                 lines, engine_used, confidence = paddle_lines, "PaddleOCR", paddle_conf
             elif vision_available and OCR_ENABLE_VISION_ESCALATION and not _vision_is_paused():
-                logger.info(f"Page {page_num}: PaddleOCR quality low (conf={paddle_conf:.2f}, q={paddle_q:.2f}) → escalating to qwen2.5vl:7b")
+                logger.info(f"Page {page_num}: PaddleOCR quality low (conf={paddle_conf:.2f}, q={paddle_q:.2f}) -> escalating to qwen2.5vl:7b")
                 img_b64 = image_to_base64(_get_processed(), quality=85)
                 raw_text = call_vision_model(img_b64, page_num=page_num)
                 del img_b64
@@ -1218,7 +1218,7 @@ def ocr_page_with_vision(
                 # Paddle's result is the best we have (vision unavailable/disabled)
                 lines, engine_used, confidence = paddle_lines, "PaddleOCR", paddle_conf
         elif vision_available:
-            logger.info(f"Page {page_num}: PaddleOCR unavailable → qwen2.5vl:7b")
+            logger.info(f"Page {page_num}: PaddleOCR unavailable -> qwen2.5vl:7b")
             img_b64 = image_to_base64(_get_processed(), quality=85)
             raw_text = call_vision_model(img_b64, page_num=page_num)
             del img_b64
@@ -1266,7 +1266,7 @@ def ocr_page_with_vision(
     # ── 6. Poor quality retry at higher DPI ─────────────────────────
     is_poor = (len(lines) == 0 or q_score < 0.15 or confidence < 0.30)
     if is_poor and classification != "blank" and OCR_RETRY_DPI > OCR_RENDER_DPI and pdf_path:
-        logger.info(f"Page {page_num}: poor quality (q={q_score:.2f}) → retrying at {OCR_RETRY_DPI} DPI")
+        logger.info(f"Page {page_num}: poor quality (q={q_score:.2f}) -> retrying at {OCR_RETRY_DPI} DPI")
         _processed_cache.clear()
         del pil_img
         gc.collect()
@@ -1444,6 +1444,8 @@ def find_relevant_pages_by_heading(
                 try:
                     pil_img.save(tmp_path, format="PNG")
                     lines, conf, _ = call_paddle_ocr(tmp_path, page_num=idx + 1)
+                    if not lines:
+                        lines = run_tesseract_fallback(pil_img)
                 finally:
                     del pil_img
                     if os.path.exists(tmp_path):
@@ -1460,7 +1462,7 @@ def find_relevant_pages_by_heading(
                         matched_pages.append(idx)
                         _tlog(f"[HEADING-SCAN] '{key}' matched on page {idx+1} (of {total_pages})")
 
-                if stop_after_all_found and target_keys <= found.keys():
+                if stop_after_all_found and target_keys <= {k for k, val in found.items() if val}:
                     break
 
             _tlog(f"[HEADING-SCAN] scanned {scanned}/{total_pages} pages, "
@@ -1698,7 +1700,7 @@ def perform_ocr_on_scanned_pdf(
                     "ocr_time": 0.0, "total_page_time": 0.0
                 })
         if digital_idxs:
-            _tlog(f"[RENDER] {len(digital_idxs)} pages → PyMuPDF (digital text, no render needed)")
+            _tlog(f"[RENDER] {len(digital_idxs)} pages -> PyMuPDF (digital text, no render needed)")
 
         def render_one_page(idx):
             try:
