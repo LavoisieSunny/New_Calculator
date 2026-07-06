@@ -4300,6 +4300,8 @@ def parse_hindi_extracted_text(text_lines: list) -> dict:
     Highly advanced table-aware and heading-aware regex field extractor for Hindi Lower Court MACT judgments.
     Tolerates spelling variations and OCR errors, parses structured tables (both PP-Structure and markdown),
     and scores candidates based on visual structure and proximity to key award headings.
+    
+    Updated with corrected field mappings, merge rules, and narrative disability percentage extraction.
     """
     logger.info("Starting advanced Hindi Lower Court MACT extraction pipeline...")
     
@@ -4587,6 +4589,306 @@ def parse_hindi_extracted_text(text_lines: list) -> dict:
             log_msg = f"Field '{label}' -> NOT found in document."
             logger.info(log_msg)
             extraction_audit_logs.append(log_msg)
+
+    # ======================================================
+    # NEW MERGE & BUNDLING RULES OVERRIDES
+    # ======================================================
+    
+    # 1. Translate Devanagari digits to English digits
+    def translate_deva_digits(s: str) -> str:
+        deva_to_eng = {
+            '०': '0', '१': '1', '२': '2', '३': '3', '४': '4',
+            '५': '5', '६': '6', '७': '7', '८': '8', '९': '9'
+        }
+        return "".join(deva_to_eng.get(c, c) for c in s)
+
+    # 2. Match helpers for rules (purely wording/keywords based)
+    def match_rule_1(line_text: str):
+        # PAIN_AND_SUFFERING
+        # Subtype A: ("स्थायी अपंगता" OR "स्थायी विकलांगता" OR "स्थायी निःशक्तता") AND ("क्षतिपूर्ति" OR "पूर्ति राशि" OR "प्रतिकर")
+        # Subtype B: ("मानसिक" AND "शारीरिक" AND ("पीड़ा" OR "कष्ट" OR "वेदना" OR "दर्द"))
+        norm = line_text.replace("स्थाई", "स्थायी").replace("शारीरीक", "शारीरिक")
+        
+        has_g1 = any(x in norm for x in ["स्थायी अपंगता", "स्थायी विकलांगता", "स्थायी निःशक्तता"])
+        has_g2 = any(x in norm for x in ["क्षतिपूर्ति", "पूर्ति राशि", "प्रतिकर"])
+        if has_g1 and has_g2:
+            return True, "1A"
+            
+        has_b = "मानसिक" in norm and "शारीरिक" in norm and any(x in norm for x in ["पीड़ा", "कष्ट", "वेदना", "दर्द"])
+        if has_b:
+            return True, "1B"
+            
+        return False, None
+
+    def match_rule_2(line_text: str):
+        # LOSS_OF_INCOME
+        # Subtype A: ("प्रगति" OR "उन्नति" OR "अधिक आय" OR "विकास" OR "संभावनाओं") AND (("आय" AND "वंचित") OR "हानि" OR "प्रतिकर")
+        # Subtype B: ("आनंदपूर्ण जीवन" OR "जीवन जीने" OR "जीवन के सुख") AND ("वंचित" OR "हानि")
+        # Subtype C: Standard Loss of Income
+        norm = line_text.replace("सुखों", "सुख").replace("सुखमय", "सुख")
+        
+        has_g1 = any(x in norm for x in ["प्रगति", "उन्नति", "अधिक आय", "विकास", "संभावनाओं"])
+        has_g2 = ("आय" in norm and "वंचित" in norm) or "हानि" in norm or "प्रतिकर" in norm
+        if has_g1 and has_g2:
+            return True, "2A"
+            
+        has_b = any(x in norm for x in ["आनंदपूर्ण जीवन", "जीवन जीने", "जीवन के सुख", "आनंद", "सुख", "amenities", "enjoyment"]) and any(x in norm for x in ["वंचित", "हानि"])
+        if has_b:
+            return True, "2B"
+            
+        # Standard Loss of Income keywords check (Subtype 2C)
+        has_c = any(x in norm for x in ["आय की हानि", "आय हानि", "वेतन की हानि", "वेतन हानि", "मजदूरी की हानि", "कमाई का नुकसान", "रोजगार हानि", "उपार्जन", "loss of income", "loss of earnings", "loss of wages"]) or (any(x in norm for x in ["आय", "वेतन", "मजदूरी", "कमाई", "रोजगार"]) and any(x in norm for x in ["हानि", "नुकसान", "अवधि", "क्षति"]))
+        if has_c:
+            return True, "2C"
+            
+        return False, None
+
+    def match_rule_3(line_text: str):
+        # MEDICAL_EXPENSES
+        # ("इलाज" OR "चिकित्सा" OR "उपचार") AND ("खर्च" OR "व्यय")
+        # BUT ONLY IF that same line does NOT also contain "आहार" or "परिवहन" or "डॉ" or "भविष्य" or "भावी" or "future"
+        has_g1 = any(x in line_text for x in ["इलाज", "चिकित्सा", "उपचार"])
+        has_g2 = any(x in line_text for x in ["खर्च", "व्यय"])
+        if has_g1 and has_g2:
+            if not any(x in line_text for x in ["आहार", "परिवहन", "डॉ", "भविष्य", "भावी", "future"]):
+                return True
+        return False
+
+    def match_rule_4(line_text: str):
+        # BUNDLED DIET/TRANSPORT
+        # ("विशेष आहार" OR "पौष्टिक आहार") combined with ANY of ("डॉ" OR "डॉक्टर" OR "फीस" OR "परिवहन" OR "आने-जाने" OR "यातायात" OR "भविष्य में उपचार" OR "भावी इलाज")
+        has_g1 = any(x in line_text for x in ["विशेष आहार", "पौष्टिक आहार", "विशेष खुराक", "पौष्टिक खुराक", "आहार व्यय", "खुराक व्यय"])
+        has_g2 = any(x in line_text for x in ["डॉ", "डॉक्टर", "फीस", "परिवहन", "आने-जाने", "यातायात", "भविष्य में उपचार", "भावी इलाज"])
+        if has_g1 and has_g2:
+            return True
+        return False
+
+    def match_rule_5(line_text: str):
+        # ATTENDER_CHARGES
+        # "सहायता" AND ("व्यय" OR "खर्च")
+        return "सहायता" in line_text and any(x in line_text for x in ["व्यय", "खर्च"])
+
+    # 3. Ambient search check to determine if a line matches any rule
+    def get_matched_rules(line_text: str):
+        matches = []
+        r1, sub1 = match_rule_1(line_text)
+        if r1:
+            matches.append((1, sub1))
+        r2, sub2 = match_rule_2(line_text)
+        if r2:
+            matches.append((2, sub2))
+        if match_rule_3(line_text):
+            matches.append((3, None))
+        if match_rule_4(line_text):
+            matches.append((4, None))
+        if match_rule_5(line_text):
+            matches.append((5, None))
+        return matches
+
+    # 4. Helper to extract a number from a line/cell
+    def get_number_from_text(text: str) -> float:
+        text_trans = translate_deva_digits(text)
+        cleaned = text_trans.replace(',', '')
+        cleaned = re.sub(r'/(?:-)?', '', cleaned)
+        cleaned = re.sub(r'[^\d.]', ' ', cleaned)
+        nums = re.findall(r'\b\d+(?:\.\d+)?\b', cleaned)
+        for num_str in reversed(nums):
+            try:
+                val = float(num_str)
+                # Ignore years
+                if val in (2018, 2019, 2020, 2021, 2022, 2023, 2024, 2025, 2026):
+                    continue
+                if val >= 100:
+                    return val
+            except ValueError:
+                continue
+        return None
+
+    # 5. Extract amount for line idx with lookahead and cell support
+    def extract_amount_for_line(idx: int) -> float:
+        line = lines_norm[idx]
+        s_clean = re.sub(r'^\s*(?:\[|\()?\s*(?:\d+|[१२३४५६८९०]+)\s*(?:\]|\)|[\.\-\)])\s*', '', line.strip())
+        
+        # Table format
+        if "|" in line:
+            cells = [c.strip() for c in line.split('|') if c.strip()]
+            for cell in reversed(cells):
+                num = get_number_from_text(cell)
+                if num is not None:
+                    return num
+                    
+        # Same line
+        num = get_number_from_text(s_clean)
+        if num is not None:
+            return num
+            
+        # Lookahead
+        for offset in (1, 2):
+            if idx + offset < total_lines:
+                next_line = lines_norm[idx + offset]
+                if "--- PAGE" in next_line:
+                    break
+                # If next line has keywords for other fields, stop lookahead
+                if get_matched_rules(next_line):
+                    break
+                if "|" in next_line:
+                    cells = [c.strip() for c in next_line.split('|') if c.strip()]
+                    for cell in reversed(cells):
+                        num = get_number_from_text(cell)
+                        if num is not None:
+                            return num
+                else:
+                    num = get_number_from_text(next_line)
+                    if num is not None:
+                        return num
+        return None
+
+    # 6. Narrative Disability Percentage (Rule 6)
+    # Search this pattern across the FULL document text, not just inside the numbered compensation table block.
+    # Disambiguate by checking whether "प्रतिशत" or "%" appears near the number.
+    narrative_disability = None
+    # Normalize spelling variations in the full text
+    flat_norm = flat.replace("स्थाई", "स्थायी").replace("निर्योग्यता", "अपंगता").replace("विकलांगता", "अपंगता")
+    # Search for permanent disability keyword followed by number + प्रतिशत / %
+    m_dis = re.search(r'स्थायी\s+अपंगता.{0,100}?(\d{1,3})\s*(?:प्रतिशत|%)', flat_norm, re.DOTALL)
+    if m_dis:
+        narrative_disability = float(m_dis.group(1))
+    else:
+        # Search for number + प्रतिशत / % followed by permanent disability keyword
+        m_dis2 = re.search(r'(\d{1,3})\s*(?:प्रतिशत|%).{0,100}?स्थायी\s+अपंगता', flat_norm, re.DOTALL)
+        if m_dis2:
+            narrative_disability = float(m_dis2.group(1))
+
+    # Apply line classification and aggregate amounts
+    pain_and_suffering_parts = {"1A": [], "1B": []}
+    loss_of_income_parts = {"2A": [], "2B": [], "2C": []}
+    medical_expenses_vals = []
+    bundled_vals = []
+    attender_charges_vals = []
+    needs_manual_review_lines = []
+
+    for idx in range(total_lines):
+        line = lines_norm[idx]
+        matches = get_matched_rules(line)
+        if len(matches) > 1:
+            # Ambiguous line!
+            logger.warning(f"[HINDI PARSER] Ambiguous line: '{line}' matched multiple rules: {matches}")
+            needs_manual_review_lines.append(line)
+            continue
+        elif len(matches) == 1:
+            rule_num, sub_type = matches[0]
+            amount = extract_amount_for_line(idx)
+            if amount is not None:
+                if rule_num == 1:
+                    pain_and_suffering_parts[sub_type].append(amount)
+                elif rule_num == 2:
+                    loss_of_income_parts[sub_type].append(amount)
+                elif rule_num == 3:
+                    medical_expenses_vals.append(amount)
+                elif rule_num == 4:
+                    bundled_vals.append(amount)
+                elif rule_num == 5:
+                    attender_charges_vals.append(amount)
+
+    # Aggregating fields
+
+    # Rule 1: Pain and Suffering
+    pain_and_suffering_sum = 0.0
+    if pain_and_suffering_parts["1A"] or pain_and_suffering_parts["1B"]:
+        pain_and_suffering_sum = sum(pain_and_suffering_parts["1A"]) + sum(pain_and_suffering_parts["1B"])
+        out["pain_and_suffering"] = pain_and_suffering_sum
+        conf["pain_and_suffering"] = 0.90
+    else:
+        out["pain_and_suffering"] = 0.0
+        conf["pain_and_suffering"] = 0.0
+
+    # Rule 2: Loss of Income
+    # NOTE FOR THE TEAM: The second bullet (loss of enjoyment of life) is technically a distinct legal head 
+    # from future income growth in most MACT frameworks — this merge is an intentional product decision 
+    # to fold both into one calculator field (loss_of_income), not a parsing shortcut.
+    # DO NOT separate them without verifying the calculator schema first.
+    loss_of_income_sum = 0.0
+    if loss_of_income_parts["2A"] or loss_of_income_parts["2B"] or loss_of_income_parts["2C"]:
+        loss_of_income_sum = sum(loss_of_income_parts["2A"]) + sum(loss_of_income_parts["2B"]) + sum(loss_of_income_parts["2C"])
+        out["loss_of_income"] = loss_of_income_sum
+        conf["loss_of_income"] = 0.90
+        
+        # Keep individual fields set to maintain backward compatibility with tests
+        if loss_of_income_parts["2A"]:
+            out["loss_of_future_prospects"] = sum(loss_of_income_parts["2A"])
+            conf["loss_of_future_prospects"] = 0.90
+        else:
+            out["loss_of_future_prospects"] = 0.0
+            conf["loss_of_future_prospects"] = 0.0
+            
+        if loss_of_income_parts["2B"]:
+            out["loss_of_amenities"] = sum(loss_of_income_parts["2B"])
+            conf["loss_of_amenities"] = 0.90
+        else:
+            out["loss_of_amenities"] = 0.0
+            conf["loss_of_amenities"] = 0.0
+    else:
+        out["loss_of_income"] = 0.0
+        conf["loss_of_income"] = 0.0
+        out["loss_of_future_prospects"] = 0.0
+        out["loss_of_amenities"] = 0.0
+
+    # Rule 3: Medical Expenses
+    if medical_expenses_vals:
+        out["medical_expenses"] = sum(medical_expenses_vals)
+        conf["medical_expenses"] = 0.90
+    else:
+        out["medical_expenses"] = 0.0
+        conf["medical_expenses"] = 0.0
+
+    # Rule 4: Bundled Diet/Transport
+    BUNDLED_DIET_TRANSPORT_TARGET_FIELD = "special_diet"
+    bundled_amount = sum(bundled_vals) if bundled_vals else 0.0
+    
+    if bundled_amount > 0:
+        out["bundled_source"] = True
+        if BUNDLED_DIET_TRANSPORT_TARGET_FIELD == "special_diet":
+            out["special_diet"] = bundled_amount
+            conf["special_diet"] = 0.90
+            out["transportation"] = 0.0
+            conf["transportation"] = 0.90
+        else:
+            out["transportation"] = bundled_amount
+            conf["transportation"] = 0.90
+            out["special_diet"] = 0.0
+            conf["special_diet"] = 0.90
+    else:
+        # Keep any standard special_diet or transportation candidates if no bundling occurred
+        if "special_diet" not in out:
+            out["special_diet"] = 0.0
+            conf["special_diet"] = 0.0
+        if "transportation" not in out:
+            out["transportation"] = 0.0
+            conf["transportation"] = 0.0
+
+    # Rule 5: Attender Charges
+    if attender_charges_vals:
+        out["attender_charges"] = sum(attender_charges_vals)
+        conf["attender_charges"] = 0.90
+    else:
+        if "attender_charges" not in out:
+            out["attender_charges"] = 0.0
+            conf["attender_charges"] = 0.0
+
+    # Rule 6: Narrative Disability Percentage
+    if narrative_disability is not None:
+        out["disability"] = narrative_disability
+        conf["disability"] = 0.95
+        out["permanent_disability_percentage"] = narrative_disability
+    else:
+        # Keep the standard disability candidate if found and case type is injury
+        if "disability" not in out:
+            out["disability"] = ""
+            conf["disability"] = 0.0
+
+    # Save manual review list if there were any ambiguous matches
+    if needs_manual_review_lines:
+        out["needs_manual_review"] = needs_manual_review_lines
 
     if "award_amount" in out:
         out["total_compensation"] = out["award_amount"]

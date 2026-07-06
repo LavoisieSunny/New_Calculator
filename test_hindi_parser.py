@@ -148,12 +148,35 @@ class TestHindiParser(unittest.TestCase):
         ]
         res = parse_hindi_extracted_text(text_lines)
         
-        # Verify it went to combined unallocated and individual fields were de-duplicated (cleared/None)
-        self.assertEqual(res.get("combined_unallocated_amount"), 100000.0)
-        self.assertIsNone(res.get("special_diet"))
-        self.assertIsNone(res.get("medical_expenses"))
-        self.assertIsNone(res.get("transportation"))
-        self.assertIsNone(res.get("future_medical_expenses"))
+        # Verify Rule 4 bundling logic (target special_diet gets the full amount, transport gets 0, bundled_source=True)
+        self.assertEqual(res.get("special_diet"), 100000.0)
+        self.assertEqual(res.get("transportation"), 0.0)
+        self.assertTrue(res.get("bundled_source"))
+
+    def test_merge_rules_pain_and_loss(self):
+        text_lines = [
+            "1. स्थायी अपंगता हेतु क्षतिपूर्ति 1,50,000",
+            "2. शारीरिक एवं मानसिक वेदना 10,000",
+            "3. आवेदक के भविष्य में प्रगति करने एवं ओर अधिक आय प्राप्त करने से वंचित होने के लिए 2,00,000",
+            "4. आवेदक द्वारा भविष्य में आनंदपूर्ण जीवन जीने से वंचित होने के लिए 2,50,000",
+            "5. सहायता व्यय 5,000",
+            "6. स्थायी निर्योग्यता 39 प्रतिशत पायी गई थी"
+        ]
+        res = parse_hindi_extracted_text(text_lines)
+        self.assertEqual(res.get("pain_and_suffering"), 160000.0) # 150000 + 10000
+        self.assertEqual(res.get("loss_of_income"), 450000.0) # 200000 + 250000
+        self.assertEqual(res.get("attender_charges"), 5000.0)
+        self.assertEqual(res.get("disability"), 39.0)
+
+    def test_ambiguous_line_manual_review(self):
+        text_lines = [
+            "चिकित्सा एवं सहायता व्यय 50,000"
+        ]
+        res = parse_hindi_extracted_text(text_lines)
+        self.assertEqual(res.get("medical_expenses"), 0.0)
+        self.assertEqual(res.get("attender_charges"), 0.0)
+        self.assertIn("needs_manual_review", res)
+        self.assertIn("चिकित्सा एवं सहायता व्यय 50,000", res["needs_manual_review"])
 
     def test_safety_net_mismatch(self):
         # Test Case 1: Matching sum
