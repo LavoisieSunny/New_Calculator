@@ -1073,21 +1073,13 @@ document.addEventListener("DOMContentLoaded", () => {
                             // TEMPORARY: Log OCR suggestions structure
                             console.log("OCR suggestions structure:", JSON.stringify(data.suggestions, null, 2));
 
-                            // Apply OCR suggestions automatically
-                            applyAllOcrSuggestions(data.suggestions, null, null, null, true);
+                            // Cache suggestions and track globally for on-demand autofill
+                            window.lastUploadedOcrData = data;
+                            window.detectedTrack = data.track || "high_court";
 
                             // Store raw text for AI data recovery
                             currentOcrRawText = data.raw_text || [];
                             window.lastRawText = currentOcrRawText.join("\n");
-                            window.detectedTrack = data.track || "high_court";
-
-                            // Automatically run AI (LLM) extraction right after OCR completes —
-                            // no manual button needed. Heuristic suggestions are already applied
-                            // above; this refines/fills in anything the heuristics missed and
-                            // re-applies the merged result directly onto the form.
-                            if (currentOcrRawText.length > 0) {
-                                runAiRecovery(currentOcrRawText, window.detectedTrack);
-                            }
                             if (downloadWordBtn) {
                                 if (currentOcrRawText.length > 0) {
                                     downloadWordBtn.style.display = "inline-flex";
@@ -1126,7 +1118,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
                             updateEnhancementCheck(data);
 
-                            showToast("Case PDF analyzed! Form auto-filled focusing on Previous Judgment, Petition, and Prayer details. Please manually review fields.", "success");
+                            showToast("Case PDF analyzed! Click the 'Auto-fill Workstation Form' button below the enhancement section to populate the fields.", "success");
                         } else {
                             stopOcrTimerFailure();
                             showToast("Failed to extract data from the PDF: " + (data.message || "Unknown OCR error."), "error");
@@ -1329,7 +1321,16 @@ document.addEventListener("DOMContentLoaded", () => {
                 const id = btn.getAttribute("data-id");
                 const matchedFile = fileQueue.find(f => f.file_id === id);
                 if (matchedFile) {
-                    performFullAutofill(matchedFile);
+                    window.lastUploadedOcrData = matchedFile;
+                    window.detectedTrack = matchedFile.track || "high_court";
+                    currentOcrRawText = matchedFile.raw_text || [];
+                    window.lastRawText = currentOcrRawText.join("\n");
+
+                    loadPdfPreview(matchedFile.filename);
+                    updateEnhancementCheck(matchedFile);
+
+                    switchTab("calculator");
+                    showToast("Queue file loaded! Click the 'Auto-fill Workstation Form' button below the enhancement section to populate the fields.", "success");
                 }
             });
         });
@@ -2689,86 +2690,110 @@ This cannot be undone.`)) return;
         const container = document.getElementById("case-type-suggestion");
         if (!container) return;
 
-        if (!classification) {
-            container.innerHTML = "";
-            container.classList.add("hidden-section");
-            return;
-        }
-
         container.classList.remove("hidden-section");
 
-        const VERDICT_LABELS = {
-            enhancement: { text: "Appeal for Enhancement", color: "var(--color-success)" },
-            reduction: { text: "Appeal for Reduction", color: "var(--color-warning)" },
-            not_determinable: { text: "Not Determinable", color: "var(--text-secondary)" }
-        };
+        const track = data?.track || data?.ocr_debug?.track?.track || window.detectedTrack || "high_court";
 
-        const verdict = classification.verdict || "not_determinable";
-        const label = VERDICT_LABELS[verdict] || VERDICT_LABELS.not_determinable;
-        const confidencePct = Math.round((classification.confidence || 0) * 100);
+        let innerHTML = "";
 
-        let basisNote = "";
-        if (classification.basis === "conflict") {
-            basisNote = `Grounds of Appeal and Prayer clauses point in different directions.`;
-        } else if (classification.basis === "no_signal") {
-            basisNote = `No clear appeal direction language found.`;
-        } else if (classification.basis === "single_source") {
-            basisNote = `Determined from grounds or prayer clauses.`;
-        } else if (classification.basis === "agreement") {
-            basisNote = `Grounds of Appeal and Prayer clauses are in agreement.`;
+        if (track === "lower_court") {
+            innerHTML = `
+                <div style="display: flex; flex-direction: column; gap: 12px; align-items: center; justify-content: center; text-align: center;">
+                    <span style="font-size: 0.85rem; font-weight: 700; color: var(--text-primary); text-transform: uppercase; border-bottom: 1px solid rgba(255,255,255,0.06); padding-bottom: 8px; width: 100%;">Enhancement Verdict</span>
+                    <div style="font-size: 0.9rem; font-weight: 700; color: var(--color-warning); margin: 8px 0; display: flex; align-items: center; gap: 8px;">
+                        <i class="fa-solid fa-circle-exclamation"></i> Not applicable as file is of lower court
+                    </div>
+                </div>
+            `;
+        } else {
+            const VERDICT_LABELS = {
+                enhancement: { text: "Appeal for Enhancement", color: "var(--color-success)" },
+                reduction: { text: "Appeal for Reduction", color: "var(--color-warning)" },
+                not_determinable: { text: "Not Determinable", color: "var(--text-secondary)" }
+            };
+
+            const verdict = (classification && classification.verdict) || "not_determinable";
+            const label = VERDICT_LABELS[verdict] || VERDICT_LABELS.not_determinable;
+            const confidencePct = classification ? Math.round((classification.confidence || 0) * 100) : 0;
+
+            let basisNote = "";
+            if (classification) {
+                if (classification.basis === "conflict") {
+                    basisNote = `Grounds of Appeal and Prayer clauses point in different directions.`;
+                } else if (classification.basis === "no_signal") {
+                    basisNote = `No clear appeal direction language found.`;
+                } else if (classification.basis === "single_source") {
+                    basisNote = `Determined from grounds or prayer clauses.`;
+                } else if (classification.basis === "agreement") {
+                    basisNote = `Grounds of Appeal and Prayer clauses are in agreement.`;
+                }
+            } else {
+                basisNote = "No case classification details parsed.";
+            }
+
+            const groundsPoints = (classification && classification.grounds_points) || [];
+            let groundsListHTML = `<span style="opacity: 0.6; font-size: 0.8rem;">No matching grounds statement found.</span>`;
+            if (groundsPoints.length > 0) {
+                groundsListHTML = `<ul style="margin: 4px 0 0 0; padding-left: 16px; display: flex; flex-direction: column; gap: 4px;">
+                    ${groundsPoints.map(p => `<li style="font-size: 0.82rem; line-height: 1.3; color: var(--text-secondary);">${p}</li>`).join('')}
+                </ul>`;
+            }
+
+            const reliefPoints = (classification && classification.relief_points) || [];
+            let reliefListHTML = `<span style="opacity: 0.6; font-size: 0.8rem;">No matching prayer/relief clause found.</span>`;
+            if (reliefPoints.length > 0) {
+                reliefListHTML = `<ul style="margin: 4px 0 0 0; padding-left: 16px; display: flex; flex-direction: column; gap: 4px;">
+                    ${reliefPoints.map(p => `<li style="font-size: 0.82rem; line-height: 1.3; color: var(--text-secondary);">${p}</li>`).join('')}
+                </ul>`;
+            }
+
+            innerHTML = `
+                <div style="display: flex; flex-direction: column; gap: 12px;">
+                    <div style="display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid rgba(255,255,255,0.06); padding-bottom: 8px;">
+                        <span style="font-size: 0.85rem; font-weight: 700; color: var(--text-primary); text-transform: uppercase;">Enhancement Verdict</span>
+                        <div style="display: flex; align-items: center; gap: 8px;">
+                            <span class="badge" style="background: ${label.color}; color: #fff; font-weight: 700; padding: 4px 10px; border-radius: var(--radius-sm); font-size: 0.8rem;">
+                                ${label.text}
+                            </span>
+                            ${verdict !== "not_determinable" ? `<span style="font-size: 0.8rem; color: var(--text-muted); font-weight: 600;">(${confidencePct}%)</span>` : ""}
+                        </div>
+                    </div>
+                    
+                    <div style="font-size: 0.78rem; color: var(--text-muted); line-height: 1.4; margin-top: -4px;">
+                        ${basisNote}
+                    </div>
+
+                    <div style="display: flex; flex-direction: column; gap: 6px;">
+                        <div style="font-size: 0.82rem; font-weight: 600; color: var(--text-primary); display: flex; align-items: center; gap: 6px;">
+                            <i class="fa-solid fa-list-check" style="color: var(--color-primary); font-size: 0.75rem;"></i> Grounds of Appeal
+                        </div>
+                        <div style="padding-left: 4px;">
+                            ${groundsListHTML}
+                        </div>
+                    </div>
+
+                    <div style="display: flex; flex-direction: column; gap: 6px; margin-top: 4px;">
+                        <div style="font-size: 0.82rem; font-weight: 600; color: var(--text-primary); display: flex; align-items: center; gap: 6px;">
+                            <i class="fa-solid fa-scroll" style="color: var(--color-success); font-size: 0.75rem;"></i> Relief Claimed / Prayer
+                        </div>
+                        <div style="padding-left: 4px;">
+                            ${reliefListHTML}
+                        </div>
+                    </div>
+                </div>
+            `;
         }
 
-        const groundsPoints = classification.grounds_points || [];
-        let groundsListHTML = `<span style="opacity: 0.6; font-size: 0.8rem;">No matching grounds statement found.</span>`;
-        if (groundsPoints.length > 0) {
-            groundsListHTML = `<ul style="margin: 4px 0 0 0; padding-left: 16px; display: flex; flex-direction: column; gap: 4px;">
-                ${groundsPoints.map(p => `<li style="font-size: 0.82rem; line-height: 1.3; color: var(--text-secondary);">${p}</li>`).join('')}
-            </ul>`;
-        }
-
-        const reliefPoints = classification.relief_points || [];
-        let reliefListHTML = `<span style="opacity: 0.6; font-size: 0.8rem;">No matching prayer/relief clause found.</span>`;
-        if (reliefPoints.length > 0) {
-            reliefListHTML = `<ul style="margin: 4px 0 0 0; padding-left: 16px; display: flex; flex-direction: column; gap: 4px;">
-                ${reliefPoints.map(p => `<li style="font-size: 0.82rem; line-height: 1.3; color: var(--text-secondary);">${p}</li>`).join('')}
-            </ul>`;
-        }
-
-        container.innerHTML = `
-            <div style="display: flex; flex-direction: column; gap: 12px;">
-                <div style="display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid rgba(255,255,255,0.06); padding-bottom: 8px;">
-                    <span style="font-size: 0.85rem; font-weight: 700; color: var(--text-primary); text-transform: uppercase;">Enhancement Verdict</span>
-                    <div style="display: flex; align-items: center; gap: 8px;">
-                        <span class="badge" style="background: ${label.color}; color: #fff; font-weight: 700; padding: 4px 10px; border-radius: var(--radius-sm); font-size: 0.8rem;">
-                            ${label.text}
-                        </span>
-                        ${verdict !== "not_determinable" ? `<span style="font-size: 0.8rem; color: var(--text-muted); font-weight: 600;">(${confidencePct}%)</span>` : ""}
-                    </div>
-                </div>
-                
-                <div style="font-size: 0.78rem; color: var(--text-muted); line-height: 1.4; margin-top: -4px;">
-                    ${basisNote}
-                </div>
-
-                <div style="display: flex; flex-direction: column; gap: 6px;">
-                    <div style="font-size: 0.82rem; font-weight: 600; color: var(--text-primary); display: flex; align-items: center; gap: 6px;">
-                        <i class="fa-solid fa-list-check" style="color: var(--color-primary); font-size: 0.75rem;"></i> Grounds of Appeal
-                    </div>
-                    <div style="padding-left: 4px;">
-                        ${groundsListHTML}
-                    </div>
-                </div>
-
-                <div style="display: flex; flex-direction: column; gap: 6px; margin-top: 4px;">
-                    <div style="font-size: 0.82rem; font-weight: 600; color: var(--text-primary); display: flex; align-items: center; gap: 6px;">
-                        <i class="fa-solid fa-scroll" style="color: var(--color-success); font-size: 0.75rem;"></i> Relief Claimed / Prayer
-                    </div>
-                    <div style="padding-left: 4px;">
-                        ${reliefListHTML}
-                    </div>
-                </div>
+        // Always append Auto-fill button at the bottom
+        innerHTML += `
+            <div style="margin-top: 14px; border-top: 1px solid rgba(255,255,255,0.06); padding-top: 12px; display: flex; justify-content: center;">
+                <button type="button" id="btn-trigger-autofill" class="btn btn-success" style="width: 100%; font-weight: 700; display: flex; align-items: center; justify-content: center; gap: 8px; font-size: 0.82rem; padding: 10px 14px; border-radius: var(--radius-sm); border: none; cursor: pointer; transition: all var(--transition-fast) ease;">
+                    <i class="fa-solid fa-magic"></i> Auto-fill Workstation Form
+                </button>
             </div>
         `;
+
+        container.innerHTML = innerHTML;
 
         if (typeof triggerTabNotification === "function") {
             triggerTabNotification("enhancement-check");
@@ -3736,6 +3761,42 @@ This cannot be undone.`)) return;
 
     if (printBtn) {
         printBtn.addEventListener("click", () => { window.print(); });
+    }
+
+    // Delegated click handler on case-type-suggestion container for the Auto-fill button
+    const caseTypeSuggestion = document.getElementById("case-type-suggestion");
+    if (caseTypeSuggestion) {
+        caseTypeSuggestion.addEventListener("click", (e) => {
+            const btn = e.target.closest("#btn-trigger-autofill");
+            if (btn) {
+                e.preventDefault();
+                e.stopPropagation();
+
+                const data = window.lastUploadedOcrData;
+                if (!data || !data.suggestions) {
+                    showToast("No pre-parsed suggestion data available. Please upload a file first.", "warning");
+                    return;
+                }
+
+                // Show loading spinner on button
+                const origHTML = btn.innerHTML;
+                btn.disabled = true;
+                btn.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i> Auto-filling...`;
+
+                setTimeout(() => {
+                    // Trigger actual autofill
+                    applyAllOcrSuggestions(data.suggestions, null, null, null, false);
+
+                    if (currentOcrRawText.length > 0) {
+                        runAiRecovery(currentOcrRawText, window.detectedTrack);
+                    }
+
+                    btn.disabled = false;
+                    btn.innerHTML = origHTML;
+                    showToast("Workstation form successfully auto-filled focusing on Previous Judgment, Petition, and Prayer details.", "success");
+                }, 300);
+            }
+        });
     }
 });
 

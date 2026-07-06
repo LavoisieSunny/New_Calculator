@@ -2106,10 +2106,15 @@ def run_background_pdf_indexing(file_id: str, temp_path: str, filename: str):
         BATCH_QUEUE[file_id]["status"] = "scanning"
         BATCH_QUEUE[file_id]["progress"] = 20
 
+        # Detect court level track
+        track_info = detect_case_track(temp_path)
+        track = track_info.get("track", "high_court")
+
         text_lines = extract_digital_pdf_text(temp_path)
         fallback_source = "DigitalPDF"
         ocr_debug = _build_ocr_debug("DigitalPDF", 0, 1.0, [], [], [], "", 0.0,
                                       total_ocr_time=time.time() - start_time)
+        ocr_debug["track"] = track_info
 
         if is_extracted_text_sparse(text_lines):
             logger.info(f"Sparse digital text for {filename}. Running hybrid OCR (PaddleOCR + vision).")
@@ -2117,9 +2122,11 @@ def run_background_pdf_indexing(file_id: str, temp_path: str, filename: str):
                 BATCH_QUEUE[file_id]["progress"] = p
             text_lines, ocr_debug = perform_ocr_on_scanned_pdf(
                 temp_path, progress_callback=report_progress,
-                scan_all_pages=True, original_filename=filename
+                scan_all_pages=True, original_filename=filename,
+                track=track
             )
             fallback_source = OCR_HYBRID_LABEL
+            ocr_debug["track"] = track_info
 
         if is_extracted_text_sparse(text_lines):
             alt_lines = extract_alternate_pdf_text(temp_path)
@@ -2132,7 +2139,10 @@ def run_background_pdf_indexing(file_id: str, temp_path: str, filename: str):
 
         BATCH_QUEUE[file_id]["progress"] = 90
 
-        suggestions = parse_extracted_text(text_lines)
+        if track == "lower_court":
+            suggestions = parse_hindi_extracted_text(text_lines)
+        else:
+            suggestions = parse_extracted_text(text_lines)
         suggestions = apply_ocr_quality_gate(suggestions, ocr_debug)
 
         if suggestions.get("ai_recovery_triggered", False):
@@ -2175,7 +2185,8 @@ def run_background_pdf_indexing(file_id: str, temp_path: str, filename: str):
         if success:
             BATCH_QUEUE[file_id].update({
                 "status": "indexed", "progress": 100,
-                "suggestions": formatted, "raw_text": text_lines, "ocr_debug": ocr_debug
+                "suggestions": formatted, "raw_text": text_lines, "ocr_debug": ocr_debug,
+                "track": track
             })
         else:
             BATCH_QUEUE[file_id].update({"status": "failed", "error": "Indexing insertion failed."})
@@ -2406,7 +2417,8 @@ async def get_batch_status():
             "file_id": item.get("file_id"), "filename": item.get("filename"),
             "status": item.get("status"), "progress": item.get("progress"),
             "error": item.get("error"), "suggestions": item.get("suggestions"),
-            "raw_text": item.get("raw_text", [])
+            "raw_text": item.get("raw_text", []),
+            "track": item.get("track")
         }
         ocr_debug = item.get("ocr_debug")
         if ocr_debug:

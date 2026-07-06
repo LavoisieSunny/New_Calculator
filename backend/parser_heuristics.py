@@ -25,7 +25,8 @@ HEADING_KEYWORDS = {
     "memo_of_appeal_section": [
         "memo of appeal", "grounds of appeal", "relief claimed", "appeal memo",
         "miscellaneous appeal", "memorandum of appeal",
-        "relief claimed in appeal", "relief claimed in appeal : prayer", "relief claimed in appeal/prayer"
+        "relief claimed in appeal", "relief claimed in appeal : prayer", "relief claimed in appeal/prayer",
+        "memoofappeal", "groundsofappeal", "reliefclaimed", "appealmemo", "miscellaneousappeal"
     ],
     "award_copy_section": [
         "copy of award", "compensation awarded", "total compensation", "award decree", "award is passed", "impugned award"
@@ -49,10 +50,12 @@ HEADING_KEYWORDS = {
     ],
     "relief_section": [
         "relief", "prayer", "relief claimed", "prayer clause", "it is therefore prayed",
-        "relief claimed in appeal", "relief claimed in appeal : prayer", "relief claimed in appeal/prayer"
+        "relief claimed in appeal", "relief claimed in appeal : prayer", "relief claimed in appeal/prayer",
+        "reliefclaimedinappeal", "reliefclaimed", "prayerclause"
     ],
     "grounds_section": [
-        "grounds", "grounds of appeal", "grounds of objection", "grounds of challenge", "(viii) grounds of appeal", "grounds of appeal/objection"
+        "grounds", "grounds of appeal", "grounds of objection", "grounds of challenge", "(viii) grounds of appeal", "grounds of appeal/objection",
+        "groundsofappeal", "groundsofobjection", "groundsofchallenge"
     ]
 }
 
@@ -1502,8 +1505,13 @@ def classify_enhancement_or_reduction(sections):
 
     Returns a dict with verdict, confidence, signals and bullet points.
     """
-    grounds_text = sections.get("grounds_section", "") or sections.get("memo_of_appeal_section", "") or sections.get("raw_ocr", "")
-    relief_text = sections.get("relief_section", "") or sections.get("memo_of_appeal_section", "") or sections.get("raw_ocr", "")
+    memo_text = sections.get("memo_of_appeal_section", "")
+    grounds_text = (sections.get("grounds_section", "") or "") + "\n" + (memo_text or "")
+    relief_text = (sections.get("relief_section", "") or "") + "\n" + (memo_text or "")
+    if not grounds_text.strip():
+        grounds_text = sections.get("raw_ocr", "")
+    if not relief_text.strip():
+        relief_text = sections.get("raw_ocr", "")
 
     g_verdict, g_conf, g_snippet = _score_enhancement_reduction(grounds_text)
     r_verdict, r_conf, r_snippet = _score_enhancement_reduction(relief_text)
@@ -1538,17 +1546,29 @@ def classify_enhancement_or_reduction(sections):
         resolved_basis = "single_source"
 
     # Extract detailed matching bullet points for each section individually based on its own signal/verdict
+    raw_ocr = sections.get("raw_ocr", "")
+    
     grounds_points = []
     if g_has_signal:
         grounds_points = _extract_matching_points(grounds_text, g_verdict)
         if not grounds_points and g_snippet:
             grounds_points = [g_snippet.lstrip("…").rstrip("…").strip()]
+    if not grounds_points and grounds_text and grounds_text != raw_ocr:
+        all_pts = _extract_all_points(grounds_text)
+        all_pts = [p for p in all_pts if len(p) > 15]
+        if all_pts:
+            grounds_points = all_pts[:5]
 
     relief_points = []
     if r_has_signal:
         relief_points = _extract_matching_points(relief_text, r_verdict)
         if not relief_points and r_snippet:
             relief_points = [r_snippet.lstrip("…").rstrip("…").strip()]
+    if not relief_points and relief_text and relief_text != raw_ocr:
+        all_pts = _extract_all_points(relief_text)
+        all_pts = [p for p in all_pts if len(p) > 15]
+        if all_pts:
+            relief_points = all_pts[:5]
 
     return {
         "verdict": resolved_verdict,
@@ -1760,17 +1780,9 @@ def detect_document_sections(full_text, pages):
         if k + 1 < len(detected_headers):
             next_match = detected_headers[k+1]
             next_start_idx = next_match["line_idx"]
-            next_page = next_match["page"]
             
-            if next_page > start_page:
-                end_page = next_page - 1
-                end_idx = start_idx
-                for idx in range(start_idx, next_start_idx):
-                    if doc_lines[idx]["page"] <= end_page:
-                        end_idx = idx
-            else:
-                end_page = start_page
-                end_idx = next_start_idx - 1
+            end_idx = next_start_idx - 1
+            end_page = doc_lines[end_idx]["page"]
         else:
             end_page = pages[-1]["page_number"] if pages else start_page
             end_idx = total_lines - 1
