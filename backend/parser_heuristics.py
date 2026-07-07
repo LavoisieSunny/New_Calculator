@@ -1622,8 +1622,8 @@ def classify_enhancement_or_reduction(sections):
         "basis": resolved_basis,
         "grounds_signal": grounds_signal,
         "relief_signal": relief_signal,
-        "grounds_points": grounds_points,
-        "relief_points": relief_points,
+        "grounds_points": grounds_points[:5],
+        "relief_points": relief_points[:3],
     }
 
 
