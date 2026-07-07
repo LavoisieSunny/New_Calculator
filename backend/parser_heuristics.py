@@ -23,11 +23,10 @@ HEADING_KEYWORDS = {
         "sequence of events", "part b chronology"
     ],
     "memo_of_appeal_section": [
-        "अपील का ज्ञापन", "अपील ज्ञापन", "अपील के आधार", "अपील पत्र", "विविध अपील",
-        "memo of appeal", "grounds of appeal", "relief claimed", "appeal memo",
+        "अपील का ज्ञापन", "अपील ज्ञापन", "अपील पत्र", "विविध अपील",
+        "memo of appeal", "appeal memo",
         "miscellaneous appeal", "memorandum of appeal",
-        "relief claimed in appeal", "relief claimed in appeal : prayer", "relief claimed in appeal/prayer",
-        "memoofappeal", "groundsofappeal", "reliefclaimed", "appealmemo", "miscellaneousappeal"
+        "memoofappeal", "appealmemo", "miscellaneousappeal"
     ],
     "award_copy_section": [
         "copy of award", "compensation awarded", "total compensation", "award decree", "award is passed", "impugned award"
@@ -1315,7 +1314,7 @@ def _is_real_boundary_text(text, period_idx):
         if token.isdigit() and len(token) <= 2:
             return False  # numbered clause marker, e.g. "1." / "2."
     after_slice = text[period_idx + 1:period_idx + 4]
-    if after_slice == "" or re.match(r'\s*[A-Z(]', after_slice):
+    if after_slice == "" or re.match(r'\s*[A-Z([0-9]', after_slice):
         return True
     return False
 
@@ -1323,6 +1322,11 @@ def _is_real_boundary_text(text, period_idx):
 def _split_into_sentences_or_points(text):
     if not text:
         return []
+    
+    # Preprocess inline list items (e.g. "PRAYER 1." or "Rs. 2,00,000/-. 2.") to split them onto new lines
+    text = re.sub(r'\s+(?=[0-9]{1,2}\.\s+)', '\n', text)
+    text = re.sub(r'\s+(?=[A-Za-z]\.\s+)', '\n', text)
+    text = re.sub(r'\s+(?=\([A-Za-z0-9]{1,2}\)\s+)', '\n', text)
     
     # First split by lines and construct list items intelligently
     lines = text.split('\n')
@@ -1540,12 +1544,24 @@ def classify_enhancement_or_reduction(sections):
     Returns a dict with verdict, confidence, signals and bullet points.
     """
     memo_text = sections.get("memo_of_appeal_section", "")
-    grounds_text = (sections.get("grounds_section", "") or "") + "\n" + (memo_text or "")
-    relief_text = (sections.get("relief_section", "") or "") + "\n" + (memo_text or "")
+    
+    grounds_text = sections.get("grounds_section", "") or ""
+    if not grounds_text.strip():
+        grounds_text = memo_text or ""
+        
+    relief_text = sections.get("relief_section", "") or ""
+    if not relief_text.strip():
+        relief_text = memo_text or ""
+
     if not grounds_text.strip():
         grounds_text = sections.get("raw_ocr", "")
     if not relief_text.strip():
         relief_text = sections.get("raw_ocr", "")
+
+    # Add debug logging of raw texts
+    logger.info(f"[DEBUG ENHANCEMENT SECTIONS] grounds_text len: {len(grounds_text)}, relief_text len: {len(relief_text)}")
+    logger.info(f"[DEBUG ENHANCEMENT SECTIONS] grounds_text raw (first 300 chars): {repr(grounds_text[:300])}")
+    logger.info(f"[DEBUG ENHANCEMENT SECTIONS] relief_text raw (first 300 chars): {repr(relief_text[:300])}")
 
     g_verdict, g_conf, g_snippet = _score_enhancement_reduction(grounds_text)
     r_verdict, r_conf, r_snippet = _score_enhancement_reduction(relief_text)
@@ -1583,26 +1599,22 @@ def classify_enhancement_or_reduction(sections):
     raw_ocr = sections.get("raw_ocr", "")
     
     grounds_points = []
-    if g_has_signal:
+    if grounds_text and grounds_text != raw_ocr:
+        all_pts = _extract_all_points(grounds_text)
+        grounds_points = [p for p in all_pts if len(p) > 15 and not any(kw in p.lower() for kw in ["grounds of appeal", "grounds of objection", "grounds of challenge"])]
+    elif g_has_signal:
         grounds_points = _extract_matching_points(grounds_text, g_verdict)
         if not grounds_points and g_snippet:
             grounds_points = [g_snippet.lstrip("…").rstrip("…").strip()]
-    if not grounds_points and grounds_text and grounds_text != raw_ocr:
-        all_pts = _extract_all_points(grounds_text)
-        all_pts = [p for p in all_pts if len(p) > 15]
-        if all_pts:
-            grounds_points = all_pts[:5]
 
     relief_points = []
-    if r_has_signal:
+    if relief_text and relief_text != raw_ocr:
+        all_pts = _extract_all_points(relief_text)
+        relief_points = [p for p in all_pts if len(p) > 15 and not any(kw in p.lower() for kw in ["relief claimed", "prayer clause", "prayer in appeal"])]
+    elif r_has_signal:
         relief_points = _extract_matching_points(relief_text, r_verdict)
         if not relief_points and r_snippet:
             relief_points = [r_snippet.lstrip("…").rstrip("…").strip()]
-    if not relief_points and relief_text and relief_text != raw_ocr:
-        all_pts = _extract_all_points(relief_text)
-        all_pts = [p for p in all_pts if len(p) > 15]
-        if all_pts:
-            relief_points = all_pts[:5]
 
     return {
         "verdict": resolved_verdict,
@@ -1870,7 +1882,7 @@ def detect_document_sections(full_text, pages):
             end_idx = total_lines - 1
             
         content_lines = [
-            doc_lines[idx]["text"] for idx in range(start_idx, end_idx + 1)
+            doc_lines[idx]["text"] for idx in range(start_idx + 1, end_idx + 1)
             if is_hindi_doc or not _is_predominantly_devanagari(doc_lines[idx]["text"])
         ]
         content = "\n".join(content_lines)
@@ -4413,8 +4425,8 @@ HINDI_HEADING_KEYWORDS = {
         "prayer", "relief claimed", "relief",
     ],
     "memo_of_appeal_section": [
-        "अपील का ज्ञापन", "अपील ज्ञापन", "अपील के आधार", "अपील पत्र", "विविध अपील",
-        "memo of appeal", "grounds of appeal", "relief claimed", "appeal memo",
+        "अपील का ज्ञापन", "अपील ज्ञापन", "अपील पत्र", "विविध अपील",
+        "memo of appeal", "appeal memo",
         "miscellaneous appeal", "memorandum of appeal",
     ],
     "grounds_section": [
