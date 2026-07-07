@@ -2139,10 +2139,15 @@ def run_background_pdf_indexing(file_id: str, temp_path: str, filename: str):
 
         BATCH_QUEUE[file_id]["progress"] = 90
 
+        # Call classify_case_type_by_ocr_text immediately after OCR completes, BEFORE field-extraction/autofill step runs.
+        full_text = "\n".join(text_lines)
+        from backend.llm_client import classify_case_type_by_ocr_text
+        detected_case_type = classify_case_type_by_ocr_text(full_text)
+
         if track == "lower_court":
-            suggestions = parse_hindi_extracted_text(text_lines)
+            suggestions = parse_hindi_extracted_text(text_lines, detected_case_type)
         else:
-            suggestions = parse_extracted_text(text_lines)
+            suggestions = parse_extracted_text(text_lines, detected_case_type)
         suggestions = apply_ocr_quality_gate(suggestions, ocr_debug)
 
         if suggestions.get("ai_recovery_triggered", False):
@@ -2313,11 +2318,16 @@ async def process_single_file(file: UploadFile = File(...)):
             # track is only set on the ".pdf" branch above (image uploads have
             # no lower-court/Hindi routing); default to the existing English
             # parser for anything that skipped track detection.
+            # Call classify_case_type_by_ocr_text immediately after OCR completes, BEFORE field-extraction/autofill step runs.
+            full_text = "\n".join(text_lines)
+            from backend.llm_client import classify_case_type_by_ocr_text
+            detected_case_type = classify_case_type_by_ocr_text(full_text)
+
             active_track = locals().get("track", "high_court")
             if active_track == "lower_court":
-                suggestions = await asyncio.to_thread(parse_hindi_extracted_text, text_lines)
+                suggestions = await asyncio.to_thread(parse_hindi_extracted_text, text_lines, detected_case_type)
             else:
-                suggestions = await asyncio.to_thread(parse_extracted_text, text_lines)
+                suggestions = await asyncio.to_thread(parse_extracted_text, text_lines, detected_case_type)
             suggestions = apply_ocr_quality_gate(suggestions, ocr_debug)
 
             if suggestions.get("ai_recovery_triggered", False):
@@ -2361,7 +2371,7 @@ async def process_single_file(file: UploadFile = File(...)):
                 os.unlink(temp_path)
                 temp_path = None
 
-            yield f"data: {json.dumps({'status': 'done', 'progress': 100, 'success': True, 'filename': file.filename, 'ocr_status': 'loaded', 'fallback_source': fallback_source, 'suggestions': formatted_suggestions, 'track': active_track, 'raw_text': text_lines, 'ocr_debug': ocr_debug})}\n\n"
+            yield f"data: {json.dumps({'status': 'done', 'progress': 100, 'success': True, 'filename': file.filename, 'ocr_status': 'loaded', 'fallback_source': fallback_source, 'suggestions': formatted_suggestions, 'case_type': detected_case_type, 'track': active_track, 'raw_text': text_lines, 'ocr_debug': ocr_debug})}\n\n"
 
         except Exception as e:
             logger.error(f"Streaming OCR error: {e}")

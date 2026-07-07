@@ -1116,9 +1116,15 @@ document.addEventListener("DOMContentLoaded", () => {
 
 
 
-                            updateEnhancementCheck(data);
-
-                            showToast("Case PDF analyzed! Click the 'Auto-fill Workstation Form' button below the enhancement section to populate the fields.", "success");
+                            const detectedCaseType = data.case_type;
+                            if (detectedCaseType && (detectedCaseType === "injury" || detectedCaseType === "death")) {
+                                caseTypeSelect.value = detectedCaseType;
+                                caseTypeSelect.dispatchEvent(new Event("change"));
+                                updateEnhancementCheck(data);
+                                showToast(`Case PDF analyzed! Auto-detected ${detectedCaseType === "death" ? "Death" : "Injury"} Case. Click the 'Auto-fill Workstation Form' button below the enhancement section to populate the fields.`, "success");
+                            } else {
+                                showCaseTypeConfirmationPrompt(data, file, false);
+                            }
                         } else {
                             stopOcrTimerFailure();
                             showToast("Failed to extract data from the PDF: " + (data.message || "Unknown OCR error."), "error");
@@ -1416,16 +1422,124 @@ This cannot be undone.`)) return;
             }
         }
 
-        applyAllOcrSuggestions(matchedFile.suggestions, null, null, null, true);
-
-        window.lastRawText = (matchedFile.raw_text || []).join("\n");
-
-
-        switchTab("calculator");
-
-        if (currentOcrRawText.length > 0) {
-            runAiRecovery(currentOcrRawText);
+        const caseType = matchedFile.suggestions ? matchedFile.suggestions.case_type : null;
+        if (caseType && (caseType === "injury" || caseType === "death")) {
+            caseTypeSelect.value = caseType;
+            caseTypeSelect.dispatchEvent(new Event("change"));
+            applyAllOcrSuggestions(matchedFile.suggestions, null, null, null, true);
+            window.lastRawText = (matchedFile.raw_text || []).join("\n");
+            switchTab("calculator");
+            if (currentOcrRawText.length > 0) {
+                runAiRecovery(currentOcrRawText);
+            }
+        } else {
+            showCaseTypeConfirmationPrompt(matchedFile, fileObj, true);
         }
+    }
+
+    // Modal prompt for ambiguous case types
+    function showCaseTypeConfirmationPrompt(data, fileObj = null, isBatch = false) {
+        // Create modal overlay
+        const overlay = document.createElement("div");
+        overlay.id = "case-type-confirmation-overlay";
+        overlay.style.cssText = `
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100vw;
+            height: 100vh;
+            background: rgba(15, 23, 42, 0.7);
+            backdrop-filter: blur(8px);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 99999;
+        `;
+
+        const card = document.createElement("div");
+        card.style.cssText = `
+            background: var(--bg-panel, #1e293b);
+            border: 1px solid var(--border-glass, rgba(255,255,255,0.08));
+            border-radius: var(--radius-md, 12px);
+            padding: 30px;
+            width: 90%;
+            max-width: 480px;
+            box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.5), 0 10px 10px -5px rgba(0, 0, 0, 0.4);
+            text-align: center;
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+        `;
+
+        card.innerHTML = `
+            <div>
+                <i class="fa-solid fa-circle-question" style="font-size: 3.5rem; color: var(--color-warning, #f59e0b); margin-bottom: 15px; display: inline-block;"></i>
+                <h3 style="font-size: 1.25rem; font-weight: 700; color: var(--text-primary, #fff); margin-bottom: 8px;">Case Type Ambiguous</h3>
+                <p style="font-size: 0.88rem; color: var(--text-secondary, #94a3b8); line-height: 1.5; margin: 0 0 15px 0;">
+                    The OCR system could not confidently determine if this is an Injury or Death case. Please select the correct case type to continue:
+                </p>
+            </div>
+            <div style="display: flex; gap: 12px; justify-content: center; margin-top: 10px;">
+                <button id="confirm-injury-btn" class="btn" style="flex: 1; padding: 12px; font-weight: 700; display: flex; flex-direction: column; align-items: center; gap: 8px; background: rgba(59, 130, 246, 0.15); border: 1px solid rgba(59, 130, 246, 0.3); color: #60a5fa; cursor: pointer; border-radius: 8px; transition: all 0.2s ease;">
+                    <i class="fa-solid fa-user-injured" style="font-size: 1.5rem;"></i>
+                    Injury Case
+                </button>
+                <button id="confirm-death-btn" class="btn" style="flex: 1; padding: 12px; font-weight: 700; display: flex; flex-direction: column; align-items: center; gap: 8px; background: rgba(244, 63, 94, 0.15); border: 1px solid rgba(244, 63, 94, 0.3); color: #fb7185; cursor: pointer; border-radius: 8px; transition: all 0.2s ease;">
+                    <i class="fa-solid fa-skull" style="font-size: 1.5rem;"></i>
+                    Death Case
+                </button>
+            </div>
+        `;
+
+        overlay.appendChild(card);
+        document.body.appendChild(overlay);
+
+        const injBtn = card.querySelector("#confirm-injury-btn");
+        const dthBtn = card.querySelector("#confirm-death-btn");
+
+        injBtn.addEventListener("mouseenter", () => {
+            injBtn.style.background = "rgba(59, 130, 246, 0.25)";
+            injBtn.style.borderColor = "#60a5fa";
+        });
+        injBtn.addEventListener("mouseleave", () => {
+            injBtn.style.background = "rgba(59, 130, 246, 0.15)";
+            injBtn.style.borderColor = "rgba(59, 130, 246, 0.3)";
+        });
+
+        dthBtn.addEventListener("mouseenter", () => {
+            dthBtn.style.background = "rgba(244, 63, 94, 0.25)";
+            dthBtn.style.borderColor = "#fb7185";
+        });
+        dthBtn.addEventListener("mouseleave", () => {
+            dthBtn.style.background = "rgba(244, 63, 94, 0.15)";
+            dthBtn.style.borderColor = "rgba(244, 63, 94, 0.3)";
+        });
+
+        function handleSelect(type) {
+            overlay.remove();
+            caseTypeSelect.value = type;
+            caseTypeSelect.dispatchEvent(new Event("change"));
+
+            if (isBatch) {
+                if (data.suggestions) {
+                    data.suggestions.case_type = type;
+                    applyAllOcrSuggestions(data.suggestions, null, null, null, true);
+                }
+                switchTab("calculator");
+                if (currentOcrRawText.length > 0) {
+                    runAiRecovery(currentOcrRawText);
+                }
+            } else {
+                if (data.suggestions) {
+                    data.suggestions.case_type = type;
+                    updateEnhancementCheck(data);
+                }
+                showToast(`Form updated for ${type === "injury" ? "Injury" : "Death"} Case!`, "success");
+            }
+        }
+
+        injBtn.addEventListener("click", () => handleSelect("injury"));
+        dthBtn.addEventListener("click", () => handleSelect("death"));
     }
 
     // Open Autofill Selection Modal to choose between OCR and AI Deep Extraction
@@ -3005,9 +3119,8 @@ This cannot be undone.`)) return;
             evaluatorCard.classList.add("hidden-section");
         }
 
-        singleUploadSection.classList.remove("show");
-        singleUploadSection.classList.remove("show-flex");
-        singleUploadSection.classList.add("hidden-section");
+        singleUploadSection.classList.remove("hidden-section");
+        singleUploadSection.classList.add("show-flex");
         singlePreviewCard.classList.add("hidden-section");
         singlePreviewCard.classList.remove("show");
         singlePreviewContainer.innerHTML = `

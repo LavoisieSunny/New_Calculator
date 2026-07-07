@@ -760,8 +760,14 @@ def generate_response(prompt: str, system_instruction: str = None) -> str:
  
 def classify_case_type_by_ocr_text(ocr_text: str) -> str:
     text_lower = ocr_text.lower()
-    injury_keywords = ["injury", "disability", "permanent disability", "partial disability", "bodily injury", "enhancement", "claimant injury"]
-    death_keywords = ["death", "deceased", "fatal", "died", "legal heirs", "widow", "death claim"]
+    injury_keywords = [
+        "injury", "disability", "permanent disability", "partial disability", "bodily injury", "enhancement", "claimant injury",
+        "स्थायी अपंगता", "स्थायी विकलांगता", "स्थायी निःशक्तता", "अंगहानि", "स्थायी निर्योग्यता", "चोट", "उपहति", "विकलांगता", "प्रतिशत निःशक्तता"
+    ]
+    death_keywords = [
+        "death", "deceased", "fatal", "died", "legal heirs", "widow", "death claim",
+        "मृत्यु", "मृतक", "स्वर्गीय", "विधवा", "वैध वारिस", "मृत", "देहांत", "दिवंगत", "आश्रित"
+    ]
     injury_count = sum(text_lower.count(kw) for kw in injury_keywords)
     death_count = sum(text_lower.count(kw) for kw in death_keywords)
     logger.info(f"OCR case type keyword count: Injury = {injury_count}, Death = {death_count}")
@@ -770,8 +776,14 @@ def classify_case_type_by_ocr_text(ocr_text: str) -> str:
     elif death_count > injury_count and death_count >= 1:
         return "death"
     elif injury_count == death_count and injury_count >= 1:
-        injury_weight = sum(text_lower.count(kw) * 2 for kw in ["permanent disability", "partial disability", "bodily injury", "claimant injury"])
-        death_weight = sum(text_lower.count(kw) * 2 for kw in ["deceased", "legal heirs", "death claim", "widow"])
+        injury_weight = sum(text_lower.count(kw) * 2 for kw in [
+            "permanent disability", "partial disability", "bodily injury", "claimant injury",
+            "स्थायी अपंगता", "स्थायी विकलांगता", "स्थायी निःशक्तता", "अंगहानि", "स्थायी निर्योग्यता", "प्रतिशत निःशक्तता"
+        ])
+        death_weight = sum(text_lower.count(kw) * 2 for kw in [
+            "deceased", "legal heirs", "death claim", "widow",
+            "मृतक", "वैध वारिस", "मृत्यु", "विधवा", "स्वर्गीय", "दिवंगत", "देहांत"
+        ])
         if injury_weight > death_weight:
             return "injury"
         elif death_weight > injury_weight:

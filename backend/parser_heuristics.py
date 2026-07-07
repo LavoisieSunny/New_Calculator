@@ -1588,7 +1588,7 @@ def format_suggestions_for_calculator(suggestions):
     Keeps raw values regardless of confidence to support partial extraction recovery,
     but tracks fields with under 70% confidence inside low_confidence_fields.
     """
-    case_type = suggestions.get("case_type", "death")
+    case_type = suggestions.get("case_type")
     confidence_scores = suggestions.get("confidence_scores", {})
     low_conf_fields = []
 
@@ -1682,7 +1682,7 @@ def format_suggestions_for_calculator(suggestions):
             "funeral_expenses": clean_numeric_to_float_or_int(get_field_val("funeral_expenses", "funeral_expenses"), "funeral_expenses"),
             "loss_estate": clean_numeric_to_float_or_int(get_field_val("loss_estate", "loss_estate"), "loss_estate"),
         }
-    else: # injury case
+    elif case_type == "injury":
         fields = {
             "injured_name": get_field_val("injured_name", "injured_name"),
             "father_name": get_field_val("father_name", "father_name"),
@@ -1705,6 +1705,53 @@ def format_suggestions_for_calculator(suggestions):
             "insurance_company": get_field_val("insurance_company", "insurance_company"),
             "place_of_accident": get_field_val("place_of_accident", "place_of_accident"),
         }
+    else:
+        # Ambiguous case: combine death and injury fields
+        fields_death = {
+            "deceased_name": get_field_val("deceased_name", "deceased_name"),
+            "claimant_relationship_to_deceased": claimant_rel_val,
+            "claimant_relationship_type": get_field_val("claimant_relationship_type", "claimant_relationship_type"),
+            "father_name": get_field_val("father_name", "father_name"),
+            "date_of_accident": get_field_val("date_of_accident", "date_of_accident"),
+            "date_of_birth": get_field_val("date_of_birth", "date_of_birth"),
+            "age": clean_numeric_to_float_or_int(get_field_val("age", "age"), "age"),
+            "marital_status": get_field_val("marital_status", "marital_status", "married"),
+            "monthly_income": clean_numeric_to_float_or_int(get_field_val("monthly_income", "monthly_income"), "monthly_income"),
+            "future_prospect": clean_numeric_to_float_or_int(get_field_val("future_prospect", "future_prospect"), "future_prospect"),
+            "place_of_accident": get_field_val("place_of_accident", "place_of_accident"),
+            "fir_number": get_field_val("fir_number", "fir_number"),
+            "policy_number": get_field_val("policy_number", "policy_number"),
+            "vehicle_number": get_field_val("vehicle_number", "vehicle_number"),
+            "insurance_company": get_field_val("insurance_company", "insurance_company"),
+            "dependents": clean_numeric_to_float_or_int(get_field_val("dependents", "dependents"), "dependents"),
+            "consortium": clean_numeric_to_float_or_int(get_field_val("consortium", "consortium"), "consortium"),
+            "funeral_expenses": clean_numeric_to_float_or_int(get_field_val("funeral_expenses", "funeral_expenses"), "funeral_expenses"),
+            "loss_estate": clean_numeric_to_float_or_int(get_field_val("loss_estate", "loss_estate"), "loss_estate"),
+        }
+        fields_injury = {
+            "injured_name": get_field_val("injured_name", "injured_name"),
+            "father_name": get_field_val("father_name", "father_name"),
+            "date_of_accident": get_field_val("date_of_accident", "date_of_accident"),
+            "date_of_birth": get_field_val("date_of_birth", "date_of_birth"),
+            "age": clean_numeric_to_float_or_int(get_field_val("age", "age"), "age"),
+            "monthly_income": clean_numeric_to_float_or_int(get_field_val("monthly_income", "monthly_income"), "monthly_income"),
+            "disability": clean_numeric_to_float_or_int(get_field_val("disability", "disability"), "disability"),
+            "dependents": clean_numeric_to_float_or_int(get_field_val("dependents", "dependents"), "dependents"),
+            "medical_expenses": clean_numeric_to_float_or_int(get_field_val("medical_expenses", "medical_expenses"), "medical_expenses"),
+            "pain_and_suffering": clean_numeric_to_float_or_int(get_field_val("pain_and_suffering", "pain_and_suffering"), "pain_and_suffering"),
+            "transportation": clean_numeric_to_float_or_int(get_field_val("transportation", "transportation"), "transportation"),
+            "special_diet": clean_numeric_to_float_or_int(get_field_val("special_diet", "special_diet"), "special_diet"),
+            "attender_charges": clean_numeric_to_float_or_int(get_field_val("attender_charges", "attender_charges"), "attender_charges"),
+            "future_medical_expenses": clean_numeric_to_float_or_int(get_field_val("future_medical_expenses", "future_medical_expenses"), "future_medical_expenses"),
+            "loss_of_income": clean_numeric_to_float_or_int(get_field_val("loss_of_income", "loss_of_income"), "loss_of_income"),
+            "fir_number": get_field_val("fir_number", "fir_number"),
+            "policy_number": get_field_val("policy_number", "policy_number"),
+            "vehicle_number": get_field_val("vehicle_number", "vehicle_number"),
+            "insurance_company": get_field_val("insurance_company", "insurance_company"),
+            "place_of_accident": get_field_val("place_of_accident", "place_of_accident"),
+        }
+        fields.update(fields_death)
+        fields.update(fields_injury)
 
     # Extract total compensation
     tc_score = confidence_scores.get("total_compensation", {})
@@ -2331,7 +2378,7 @@ def deduce_notional_income(award_amount, age, marital_status, dependents, future
     return 5000.0
 
 
-def parse_extracted_text(text_lines):
+def parse_extracted_text(text_lines, case_type=None):
     """
     Highly advanced Section-Aware Legal Semantic Parser / Legal Document Intelligence Engine.
     Uses fuzzy heading matching, dynamic section boundary detection, fallback layout-hint clustering,
@@ -3286,14 +3333,10 @@ def parse_extracted_text(text_lines):
         # and surfaced to the UI as-is.
         enhancement_reduction_request = "enhancement"
 
-    death_kws = ["death", "deceased", "fatal", "died on", "died after", "funeral expenses", "loss of dependency", "legal heirs", "widow"]
-    injury_kws = ["permanent disability", "partial disability", "loss of earning capacity", "disability percentage"]
-    scoring_text = petition_block.lower()
-    for boilerplate in ["name and description of the injured person", "in non-fatal accident cases", "non-fatal accident"]:
-        scoring_text = scoring_text.replace(boilerplate, "")
-    death_score = sum(3 for kw in death_kws if kw in scoring_text) + sum(1 for kw in death_kws if kw in full_text_lower)
-    injury_score = sum(3 for kw in injury_kws if kw in scoring_text) + sum(1 for kw in injury_kws if kw in full_text_lower)
-    case_type = "death" if (death_score - injury_score) >= 2 else "injury"
+    if case_type is None:
+        from backend.llm_client import classify_case_type_by_ocr_text
+        case_type = classify_case_type_by_ocr_text(full_text)
+
     if case_type == "death":
         disability = ""
         conf_disability = 0.0
@@ -3882,6 +3925,42 @@ def parse_extracted_text(text_lines):
         "इलाज के दौरान आय", "उपचार के दौरान आय की हानि",
         "भविष्य की आय हानि", "भावी उपार्जन की क्षति"
     ])
+
+    if case_type == "injury":
+        deceased_name = ""
+        dependents = ""
+        future_prospect = ""
+        multiplier = ""
+        consortium = 0.0
+        funeral_expenses = 0.0
+        loss_estate_val = 0.0
+        extracted_conlum = None
+        extracted_conspo = None
+        extracted_conpar = None
+        extracted_conchil = None
+        extracted_conwif = None
+        extracted_conmo = None
+        extracted_confath = None
+        extracted_conhus = None
+        extracted_conbro = None
+        extracted_consis = None
+        claimant_relationship_to_deceased = ""
+    elif case_type == "death":
+        disability = ""
+        extracted_medical = None
+        extracted_future_medical = None
+        extracted_pain = None
+        extracted_transport = None
+        extracted_diet = None
+        extracted_attender = None
+        extracted_loss_income = None
+        extracted_coliti = None
+        extracted_misex = None
+        extracted_loamiti = None
+        extracted_lopmarri = None
+        extracted_loexlife = None
+        extracted_loveaff = None
+        extracted_lossofenjoy = None
 
     suggestions = {
         "case_type": case_type,
@@ -4726,7 +4805,7 @@ def extract_hindi_structural_block(text_lines: list) -> dict:
     }
 
 
-def parse_hindi_extracted_text(text_lines: list) -> dict:
+def parse_hindi_extracted_text(text_lines: list, case_type: str = None) -> dict:
     """
     Highly advanced table-aware and heading-aware regex field extractor for Hindi Lower Court MACT judgments.
     Tolerates spelling variations and OCR errors, parses structured tables (both PP-Structure and markdown),
@@ -5528,15 +5607,28 @@ def parse_hindi_extracted_text(text_lines: list) -> dict:
         conf["insurance_company"] = 0.70
 
     # ---- case type: death vs injury ----------------------------------------------
-    death_kws = ["मृत्यु", "मृतक", "स्वर्गीय", "दिवंगत"]
-    injury_kws = ["उपहति", "क्षतिग्रस्त", "घायल", "चोट", "अपंगता", "निर्योग्यता", "विकलांगता"]
-    death_hits = sum(flat.count(k) for k in death_kws)
-    injury_hits = sum(flat.count(k) for k in injury_kws)
-    out["case_type"] = "death" if death_hits > injury_hits else "injury"
+    if case_type is not None:
+        out["case_type"] = case_type
+    else:
+        from backend.llm_client import classify_case_type_by_ocr_text
+        detected = classify_case_type_by_ocr_text(flat)
+        if detected is not None:
+            out["case_type"] = detected
+        else:
+            death_kws = ["मृत्यु", "मृतक", "स्वर्गीय", "दिवंगत"]
+            injury_kws = ["उपहति", "क्षतिग्रस्त", "घायल", "चोट", "अपंगता", "निर्योग्यता", "विकलांगता"]
+            death_hits = sum(flat.count(k) for k in death_kws)
+            injury_hits = sum(flat.count(k) for k in injury_kws)
+            out["case_type"] = "death" if death_hits > injury_hits else "injury"
+
     if out["case_type"] == "death":
         out["disability"] = ""
         if "disability" in conf:
             conf["disability"] = 0.0
+        for f in ["pain_and_suffering", "loss_of_income", "medical_expenses", "special_diet", "transportation", "future_medical_expenses", "attender_charges", "loss_of_future_prospects", "loss_of_amenities"]:
+            out[f] = 0.0
+            if f in conf:
+                conf[f] = 0.0
 
     # ---- case number (metadata, not a calculator field, kept for traceability) --
     m = re.search(
