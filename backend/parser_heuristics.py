@@ -23,6 +23,7 @@ HEADING_KEYWORDS = {
         "sequence of events", "part b chronology"
     ],
     "memo_of_appeal_section": [
+        "अपील का ज्ञापन", "अपील ज्ञापन", "अपील के आधार", "अपील पत्र", "विविध अपील",
         "memo of appeal", "grounds of appeal", "relief claimed", "appeal memo",
         "miscellaneous appeal", "memorandum of appeal",
         "relief claimed in appeal", "relief claimed in appeal : prayer", "relief claimed in appeal/prayer",
@@ -49,11 +50,14 @@ HEADING_KEYWORDS = {
         "treatment expenses", "award by the tribunal", "adjudged by the tribunal"
     ],
     "relief_section": [
+        "प्रार्थना", "याचना", "अनुतोष", "राहत की प्रार्थना", "अतः प्रार्थना है",
+        "अतः सादर प्रार्थना है", "प्रार्थना पत्र",
         "relief", "prayer", "relief claimed", "prayer clause", "it is therefore prayed",
         "relief claimed in appeal", "relief claimed in appeal : prayer", "relief claimed in appeal/prayer",
         "reliefclaimedinappeal", "reliefclaimed", "prayerclause"
     ],
     "grounds_section": [
+        "अपील के आधार", "आधार", "चुनौती के आधार", "आपत्ति के आधार",
         "grounds", "grounds of appeal", "grounds of objection", "grounds of challenge", "(viii) grounds of appeal", "grounds of appeal/objection",
         "groundsofappeal", "groundsofobjection", "groundsofchallenge"
     ]
@@ -1214,6 +1218,28 @@ _PAST_TENSE_GUARDS = [
     "already enhanced", "already reduced", "had enhanced", "had reduced",
 ]
 
+_ENHANCEMENT_PHRASES_HI = [
+    "वृद्धि की जाये", "मुआवजा राशि में वृद्धि", "प्रतिकर राशि में वृद्धि",
+    "क्षतिपूर्ति राशि बढ़ाई जाये", "राशि बढ़ाई जाये", "अपर्याप्त क्षतिपूर्ति",
+    "अपर्याप्त मुआवजा", "अपर्याप्त प्रतिकर", "अत्यल्प क्षतिपूर्ति",
+    "न्यायोचित एवं समुचित क्षतिपूर्ति", "उचित क्षतिपूर्ति दिलाई जाये",
+    "अवार्ड बढ़ाया जाये", "राशि अपर्याप्त एवं कम है"
+]
+
+_REDUCTION_PHRASES_HI = [
+    "कम की जाये", "राशि कम की जाये", "अवार्ड कम किया जाये",
+    "अवार्ड अपास्त किया जाये", "निर्णय अपास्त किया जाये",
+    "दायित्व से मुक्त किया जाये", "उन्मोचित किया जाये",
+    "अत्यधिक क्षतिपूर्ति", "अत्यधिक मुआवजा", "राशि अधिक है",
+    "अवार्ड में संशोधन किया जाये", "पत्रावली वापस भेजी जाये"
+]
+
+_PAST_TENSE_GUARDS_HI = [
+    "अधिकरण ने वृद्धि की", "अधिकरण द्वारा वृद्धि की गई",
+    "अधिकरण ने कमी की", "पहले से ही बढ़ाया", "पहले से ही घटाया",
+    "न्यायालय ने वृद्धि की"
+]
+
 
 def _score_enhancement_reduction(text):
     """
@@ -1228,21 +1254,25 @@ def _score_enhancement_reduction(text):
 
     lowered = text.lower()
 
+    combined_enhancement = _ENHANCEMENT_PHRASES + _ENHANCEMENT_PHRASES_HI
+    combined_reduction = _REDUCTION_PHRASES + _REDUCTION_PHRASES_HI
+    combined_guards = _PAST_TENSE_GUARDS + _PAST_TENSE_GUARDS_HI
+
     def _matches(phrases):
         hits = []
         for phrase in phrases:
             idx = lowered.find(phrase)
             if idx == -1:
                 continue
-            window_start = max(0, idx - 40)
+            window_start = max(0, idx - 45)
             window = lowered[window_start:idx]
-            if any(guard in window for guard in _PAST_TENSE_GUARDS):
+            if any(guard in window for guard in combined_guards):
                 continue  # discount: this is describing a past/completed act
             hits.append(phrase)
         return hits
 
-    enhancement_hits = _matches(_ENHANCEMENT_PHRASES)
-    reduction_hits = _matches(_REDUCTION_PHRASES)
+    enhancement_hits = _matches(combined_enhancement)
+    reduction_hits = _matches(combined_reduction)
 
     if enhancement_hits and not reduction_hits:
         confidence = min(0.95, 0.6 + 0.1 * len(enhancement_hits))
@@ -1316,7 +1346,7 @@ def _split_into_sentences_or_points(text):
                          re.match(r'^\([0-9A-Za-z]{1,2}\)', line) or \
                          line.startswith(('•', '-', '*'))
             
-            ends_with_boundary = current_point.endswith(('.', ';', '!', '?'))
+            ends_with_boundary = current_point.endswith(('.', ';', '!', '?', '।'))
             
             if has_marker or ends_with_boundary:
                 is_new_bullet = True
@@ -1342,7 +1372,7 @@ def _split_into_sentences_or_points(text):
     final_clauses = []
     for pt in points:
         boundary_positions = [0]
-        for m in re.finditer(r'[.;]\s+', pt):
+        for m in re.finditer(r'(?:[.;]\s+|।\s*)', pt):
             pos = m.start()
             if pt[pos] == '.' and not _is_real_boundary_text(pt, pos):
                 continue
@@ -1369,7 +1399,11 @@ def _extract_matching_points(text, verdict_type):
     clauses = _split_into_sentences_or_points(text)
     matched_points = []
     
-    phrases = _ENHANCEMENT_PHRASES if verdict_type == "enhancement" else _REDUCTION_PHRASES
+    combined_enhancement = _ENHANCEMENT_PHRASES + _ENHANCEMENT_PHRASES_HI
+    combined_reduction = _REDUCTION_PHRASES + _REDUCTION_PHRASES_HI
+    combined_guards = _PAST_TENSE_GUARDS + _PAST_TENSE_GUARDS_HI
+    
+    phrases = combined_enhancement if verdict_type == "enhancement" else combined_reduction
     
     for clause in clauses:
         clause_lower = clause.lower()
@@ -1378,9 +1412,9 @@ def _extract_matching_points(text, verdict_type):
             idx = clause_lower.find(phrase)
             if idx != -1:
                 # check past tense guard
-                window_start = max(0, idx - 40)
+                window_start = max(0, idx - 45)
                 window = clause_lower[window_start:idx]
-                if any(guard in window for guard in _PAST_TENSE_GUARDS):
+                if any(guard in window for guard in combined_guards):
                     continue
                 has_hit = True
                 break
@@ -1443,7 +1477,7 @@ def _extract_snippet(text, matched_phrase, max_chars=320, min_chars=40):
     match_end = idx + len(matched_phrase)
 
     boundary_positions = []
-    for m in re.finditer(r'[.;]\s+|\n', text):
+    for m in re.finditer(r'(?:[.;]\s+|\n|।\s*)', text):
         pos = m.start()
         if text[pos] == '.' and not _is_real_boundary_text(text, pos):
             continue
@@ -1785,6 +1819,7 @@ def detect_document_sections(full_text, pages):
     Dynamically identifies sections of the document using semantic heading matching
     and layout fallbacks.
     """
+    is_hindi_doc = _is_predominantly_devanagari(full_text, threshold=0.15)
     doc_lines = []
     for p in pages:
         p_num = p["page_number"]
@@ -1836,7 +1871,7 @@ def detect_document_sections(full_text, pages):
             
         content_lines = [
             doc_lines[idx]["text"] for idx in range(start_idx, end_idx + 1)
-            if not _is_predominantly_devanagari(doc_lines[idx]["text"])
+            if is_hindi_doc or not _is_predominantly_devanagari(doc_lines[idx]["text"])
         ]
         content = "\n".join(content_lines)
         
@@ -1869,7 +1904,7 @@ def detect_document_sections(full_text, pages):
                 content = "\n".join(
                     line for p in fallback_pages
                     for line in p["text"].splitlines()
-                    if not _is_predominantly_devanagari(line)
+                    if is_hindi_doc or not _is_predominantly_devanagari(line)
                 )
                 sections[sec_name] = {
                     "section_name": sec_name,
@@ -2390,7 +2425,11 @@ def parse_extracted_text(text_lines, case_type=None):
     """
     print("[PARSE DEBUG] First 60 lines of raw text:")
     for i, line in enumerate(text_lines[:60]):
-        print(f"  Line {i+1:>2}: {line.strip()}")
+        try:
+            print(f"  Line {i+1:>2}: {line.strip()}")
+        except UnicodeEncodeError:
+            safe_line = line.strip().encode('ascii', errors='replace').decode('ascii')
+            print(f"  Line {i+1:>2}: {safe_line}")
 
     full_text = "\n".join(text_lines)
     if case_type is None:
@@ -2435,12 +2474,14 @@ def parse_extracted_text(text_lines, case_type=None):
     full_text = "\n".join(merged_lines)
     full_text_lower = full_text.lower()
 
+    is_hindi_doc = _is_predominantly_devanagari(full_text, threshold=0.15)
+
     # English-only version used for autofill field extraction (grounds, prayer, petition).
     # Strips any line where ≥50 % of alphabetic characters are Devanagari so Hindi award
     # tables don't interfere with regex-based English parsers.
     merged_lines_english = [
         line for line in merged_lines
-        if not _is_predominantly_devanagari(line)
+        if is_hindi_doc or not _is_predominantly_devanagari(line)
     ]
     
     sections_metadata = detect_document_sections(full_text, pages)
@@ -3309,12 +3350,9 @@ def parse_extracted_text(text_lines, case_type=None):
         elif age < 60: expected_prospects = 10.0
         else: expected_prospects = 0.0
 
-    # Strip Hindi/Devanagari lines from award_block before running the English-only
-    # compensation table parser — prevents Hindi award paragraph values (शारीरिक पीड़ा,
-    # आवागमन, सहायक etc.) from being mistakenly mapped to English compensation heads.
     award_block_english = "\n".join(
         line for line in award_block.splitlines()
-        if not _is_predominantly_devanagari(line)
+        if is_hindi_doc or not _is_predominantly_devanagari(line)
     )
     compensation_table = parse_compensation_table(award_block_english)
     
@@ -4373,6 +4411,20 @@ HINDI_HEADING_KEYWORDS = {
     "prayer_hi": [
         "प्रार्थना", "निवेदन किया गया",
         "prayer", "relief claimed", "relief",
+    ],
+    "memo_of_appeal_section": [
+        "अपील का ज्ञापन", "अपील ज्ञापन", "अपील के आधार", "अपील पत्र", "विविध अपील",
+        "memo of appeal", "grounds of appeal", "relief claimed", "appeal memo",
+        "miscellaneous appeal", "memorandum of appeal",
+    ],
+    "grounds_section": [
+        "अपील के आधार", "आधार", "चुनौती के आधार", "आपत्ति के आधार",
+        "grounds", "grounds of appeal", "grounds of objection", "grounds of challenge",
+    ],
+    "relief_section": [
+        "प्रार्थना", "याचना", "अनुतोष", "राहत की प्रार्थना", "अतः प्रार्थना है",
+        "अतः सादर प्रार्थना है", "प्रार्थना पत्र",
+        "relief", "prayer", "relief claimed", "prayer clause",
     ],
     # Recognized but intentionally excluded from "pages we still need" —
     # registry/admin pages with no autofill-relevant content. Not searched

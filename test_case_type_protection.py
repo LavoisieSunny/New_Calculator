@@ -122,5 +122,55 @@ class TestCaseTypeProtection(unittest.TestCase):
         self.assertEqual(suggestions.get("disability"), 40.0)
         self.assertEqual(suggestions.get("medical_expenses"), 15000.0)
 
+    def test_hindi_appeal_memo_enhancement_verdict(self):
+        from backend.parser_heuristics import parse_extracted_text
+        
+        # Simulated Hindi Appeal Memo with Grounds and Relief / Prayer sections
+        hindi_appeal_text = (
+            "--- PAGE 1 ---\n"
+            "माननीय उच्च न्यायालय मध्यप्रदेश, जबलपुर\n"
+            "विविध अपील क्रमांक 9876/2025\n"
+            "राजेश कुमार विरुद्ध अनिल सिंह\n"
+            "--- PAGE 2 ---\n"
+            "अपील के आधार\n"
+            "1. यह कि विद्वान दावा अधिकरण द्वारा पारित निर्णय दोषपूर्ण है।\n"
+            "2. दावा अधिकरण ने मुआवजा राशि निर्धारण करने में भूल की है। मुआवजा राशि में वृद्धि की जाये।\n"
+            "3. अवार्ड बढ़ाया जाये क्योंकि यह अत्यधिक कम और अत्यल्प क्षतिपूर्ति है।\n"
+            "--- PAGE 3 ---\n"
+            "प्रार्थना\n"
+            "अतः सादर प्रार्थना है कि अपील स्वीकार की जावे। मुआवजा राशि में वृद्धि की जाये।\n"
+            "न्यायोचित एवं समुचित क्षतिपूर्ति दिलाई जाये।"
+        )
+        
+        lines = hindi_appeal_text.split("\n")
+        suggestions = parse_extracted_text(lines)
+        
+        # Assertions
+        case_classification = suggestions.get("case_classification", {})
+        
+        self.assertEqual(case_classification.get("verdict"), "enhancement")
+        self.assertGreaterEqual(case_classification.get("confidence", 0.0), 0.70)
+        
+        # Verify grounds and relief snippets are extracted and not empty
+        grounds_sig = case_classification.get("grounds_signal", {})
+        relief_sig = case_classification.get("relief_signal", {})
+        
+        self.assertEqual(grounds_sig.get("verdict"), "enhancement")
+        self.assertEqual(relief_sig.get("verdict"), "enhancement")
+        self.assertTrue(bool(grounds_sig.get("snippet")))
+        self.assertTrue(bool(relief_sig.get("snippet")))
+        
+        # Verify purna viram sentence boundary segmenting
+        from backend.parser_heuristics import _extract_matching_points
+        grounds_section_text = (
+            "दावा अधिकरण ने मुआवजा राशि निर्धारण करने में भूल की है। मुआवजा राशि में वृद्धि की जाये।\n"
+            "अवार्ड बढ़ाया जाये क्योंकि यह अत्यधिक कम और अत्यल्प क्षतिपूर्ति है।"
+        )
+        pts = _extract_matching_points(grounds_section_text, "enhancement")
+        self.assertEqual(len(pts), 2)
+        self.assertTrue(any("वृद्धि की जाये" in pt for pt in pts))
+        self.assertTrue(any("अत्यल्प क्षतिपूर्ति" in pt for pt in pts))
+        self.assertTrue(all("भूल की है" not in pt for pt in pts))
+
 if __name__ == "__main__":
     unittest.main()
