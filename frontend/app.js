@@ -916,6 +916,8 @@ document.addEventListener("DOMContentLoaded", () => {
     });
 
     async function handleSinglePdfUpload(file) {
+        window.lastEnhancementVerdict = null;
+        window.currentRenderedVerdict = null;
         const isPdf = file.type === "application/pdf" || file.name.toLowerCase().endsWith(".pdf");
         if (!isPdf) {
             alert("Please upload a valid legal PDF case document.");
@@ -2814,6 +2816,17 @@ This cannot be undone.`)) return;
                 classification = data.fields.case_classification;
             }
         }
+
+        // Cache the last valid case classification
+        if (classification && classification.verdict && classification.verdict !== "not_determinable") {
+            window.lastEnhancementVerdict = classification;
+        }
+
+        // Preserve previous valid classification if the new one is empty or not determinable
+        if ((!classification || classification.verdict === "not_determinable") && window.lastEnhancementVerdict) {
+            classification = window.lastEnhancementVerdict;
+        }
+
         const container = document.getElementById("case-type-suggestion");
         if (!container) return;
 
@@ -2840,6 +2853,14 @@ This cannot be undone.`)) return;
             };
 
             const verdict = (classification && classification.verdict) || "not_determinable";
+            const oldVerdict = window.currentRenderedVerdict || "none/empty";
+            if (oldVerdict !== verdict) {
+                window.currentRenderedVerdict = verdict;
+                const err = new Error();
+                const stackLine = err.stack ? err.stack.split("\n")[2] : "unknown caller";
+                console.log(`[ENHANCEMENT VERDICT CHANGE] Old: "${oldVerdict}" -> New: "${verdict}". Triggered by: ${stackLine.trim()}`);
+            }
+
             const label = VERDICT_LABELS[verdict] || VERDICT_LABELS.not_determinable;
             const confidencePct = classification ? Math.round((classification.confidence || 0) * 100) : 0;
 
