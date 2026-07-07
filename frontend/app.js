@@ -1840,9 +1840,6 @@ This cannot be undone.`)) return;
         };
 
         // Death Specific (Part 6) - mirrors PHP REQUEST fields: loc, loa, fe, conlum, conspo etc.
-        // consortium (loc) = single lump amount. Breakdown fields added separately per PHP logic.
-        // OCR guard: consortium only accepted if <=100000 (rejects tribunal totals like 2,20,000).
-        // funeral_expenses and loss_estate only accepted if <=50000.
         const deathMapping = {
             "consortium": "consortium",
             "funeral_expenses": "funeral-expenses",
@@ -1861,13 +1858,29 @@ This cannot be undone.`)) return;
             "conbro": "conbro",
             "consis": "consis",
             "conlum": "conlum"
-        };        // Helper to populate a single DOM element based on key, inputId, and active status
+        };
+
+        // Prune the cached field values of the opposite case type to avoid stale states
+        if (activeCaseType === "injury") {
+            Object.keys(deathMapping).forEach(key => {
+                delete lastExtractedFields[key];
+            });
+        } else if (activeCaseType === "death") {
+            Object.keys(injuryMapping).forEach(key => {
+                delete lastExtractedFields[key];
+            });
+        }
+
+        // Helper to populate a single DOM element based on key, inputId, and active status
         function populateField(cacheKey, inputId, isAllowed) {
             const el = document.getElementById(inputId);
             if (!el) return;
 
             if (!isAllowed) {
-                // If not allowed for this mode, do NOT populate.
+                // Reset/clear value if not allowed to avoid carrying over stale data
+                el.value = "";
+                el.dispatchEvent(new Event("input"));
+                el.dispatchEvent(new Event("change"));
                 return;
             }
 

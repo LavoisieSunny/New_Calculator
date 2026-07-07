@@ -919,14 +919,18 @@ def extract_smart_context_for_llm(raw_ocr_text: str, track: str = "high_court") 
         f"{end_context}"
     )
  
-def ai_data_recovery(raw_ocr_text: str, track: str = "high_court") -> dict:
+def ai_data_recovery(raw_ocr_text: str, track: str = "high_court", case_type: str = None) -> dict:
     """
     Invokes the LLM to parse raw OCR text and extract ALL legal claims fields
     for both injury and death cases.
     """
+    extra_prompt = ""
+    if case_type:
+        extra_prompt = f"\n\nCRITICAL: The case type has been confirmed as '{case_type}'. Extract ONLY fields relevant to '{case_type}' and completely skip/ignore fields for the opposite type."
+
     system_instruction = (
         "You are an expert legal data extraction engine specializing in Indian Motor Accident Claims Tribunal (MACT) judgments.\n"
-        "Analyze the provided raw OCR text and extract ALL compensation parameters for both injury and death cases.\n"
+        f"Analyze the provided raw OCR text and extract ALL compensation parameters for both injury and death cases.{extra_prompt}\n"
         "Return ONLY a clean valid JSON object. Every key maps to {\"value\": ..., \"confidence\": 0.0-1.0}.\n"
         "Use null for value and 0.0 for confidence if a field is not found.\n"
         "Do NOT write preamble, explanation, markdown fences, or comments. Return only the JSON.\n\n"
@@ -1060,7 +1064,7 @@ def ai_data_recovery(raw_ocr_text: str, track: str = "high_court") -> dict:
                 data[_date_key] = normalize_date_to_ddmmyyyy(data[_date_key])
  
         # ── Case type deterministic override ──────────────────────────────
-        ocr_evidence_case = classify_case_type_by_ocr_text(raw_ocr_text)
+        ocr_evidence_case = case_type or classify_case_type_by_ocr_text(raw_ocr_text)
         if ocr_evidence_case:
             case_type_val = ocr_evidence_case
             case_type_conf = 1.0
@@ -1151,6 +1155,34 @@ def ai_data_recovery(raw_ocr_text: str, track: str = "high_court") -> dict:
         except Exception as override_err:
             logger.error(f"Failed to run Hindi narrative income override: {str(override_err)}")
  
+        # Actively filter out opposite case type fields to enforce strict gating
+        if case_type_val == "injury":
+            death_fields = [
+                "deceased_name", "claimant_relationship_to_deceased", "claimant_relationship_type",
+                "marital_status", "future_prospect", "dependents", "consortium", "funeral_expenses",
+                "loss_estate", "conlum", "conspo", "conpar", "conchil", "conwif", "conmo", "confath",
+                "conhus", "conbro", "consis", "loss_of_consortium", "loss_of_dependency", "loss_of_love_affection",
+                "future_prospects", "dependency", "funeral", "estate", "love_affection"
+            ]
+            for f in death_fields:
+                if f in data:
+                    data[f] = None
+                if f in confidence_scores:
+                    confidence_scores[f] = {"confidence": 0.0}
+        elif case_type_val == "death":
+            injury_fields = [
+                "disability", "disability_percentage", "medical_expenses", "pain_and_suffering",
+                "transportation", "special_diet", "attender_charges", "future_medical_expenses",
+                "loss_of_income", "coliti", "misex", "loamiti", "lopmarri", "loexlife", "loveaff",
+                "lossofenjoy", "loss_of_amenities", "amenities", "medical_expense", "pain_suffering",
+                "attendant_charges", "loss_income", "loss_of_earnings"
+            ]
+            for f in injury_fields:
+                if f in data:
+                    data[f] = None
+                if f in confidence_scores:
+                    confidence_scores[f] = {"confidence": 0.0}
+
         logger.info(f"AI Data Recovery successful with structured confidences: {list(data.keys())}")
         return data
  

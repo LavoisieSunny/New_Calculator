@@ -2499,41 +2499,56 @@ class SuggestCaseTypeRequest(BaseModel):
 async def suggest_case_type(request: SuggestCaseTypeRequest):
     raw_text = request.raw_text[:8000]
     selected = request.selected_case_type
-    CASE_TYPES = [
-        "Death", "Permanent Total Disability", "Permanent Partial Disability",
-        "Temporary Total Disability", "Medical Only", "Vocational Rehabilitation"
-    ]
-    system_prompt = (
-        "You are a legal document analyst for workers' compensation claims.\n"
-        "Given extracted text from a claim document, return ONLY a JSON array (no markdown, no explanation, no backticks) of case type probabilities.\n"
-        "Format: [{\"case_type\": \"Death\", \"confidence\": 0.82}, ...]\n"
-        "All confidences must sum to 1.0. Include all possible case types even if confidence is near 0."
-    )
-    user_prompt = (
-        f"Document text:\n{raw_text}\n\nThe user selected: \"{selected}\"\n"
-        f"Analyze the document and return confidence scores for each case type:\n{', '.join(CASE_TYPES)}"
-    )
     try:
-        from backend.llm_client import generate_response
-        response_text = await asyncio.to_thread(generate_response, user_prompt, system_prompt)
-        json_match = re.search(r"\[\s*\{.*\}\s*\]", response_text, re.DOTALL)
-        suggestions = json.loads(json_match.group(0) if json_match else response_text)
-        existing_types = {s.get("case_type") for s in suggestions if isinstance(s, dict)}
-        for ct in CASE_TYPES:
-            if ct not in existing_types:
-                suggestions.append({"case_type": ct, "confidence": 0.0})
-        suggestions.sort(key=lambda x: x.get("confidence", 0.0), reverse=True)
-        return {"suggestions": suggestions, "selected": selected}
+        from backend.llm_client import classify_case_type_by_ocr_text
+        detected = classify_case_type_by_ocr_text(raw_text)
+        
+        if detected == "death":
+            suggestions = [
+                {"case_type": "Death", "confidence": 1.0},
+                {"case_type": "Permanent Total Disability", "confidence": 0.0},
+                {"case_type": "Permanent Partial Disability", "confidence": 0.0},
+                {"case_type": "Temporary Total Disability", "confidence": 0.0},
+                {"case_type": "Medical Only", "confidence": 0.0},
+                {"case_type": "Vocational Rehabilitation", "confidence": 0.0}
+            ]
+            final_selected = "death"
+        elif detected == "injury":
+            suggestions = [
+                {"case_type": "Permanent Partial Disability", "confidence": 1.0},
+                {"case_type": "Death", "confidence": 0.0},
+                {"case_type": "Permanent Total Disability", "confidence": 0.0},
+                {"case_type": "Temporary Total Disability", "confidence": 0.0},
+                {"case_type": "Medical Only", "confidence": 0.0},
+                {"case_type": "Vocational Rehabilitation", "confidence": 0.0}
+            ]
+            final_selected = "injury"
+        else:
+            suggestions = [
+                {"case_type": "Death", "confidence": 0.5},
+                {"case_type": "Permanent Partial Disability", "confidence": 0.5},
+                {"case_type": "Permanent Total Disability", "confidence": 0.0},
+                {"case_type": "Temporary Total Disability", "confidence": 0.0},
+                {"case_type": "Medical Only", "confidence": 0.0},
+                {"case_type": "Vocational Rehabilitation", "confidence": 0.0}
+            ]
+            final_selected = selected or ""
+            
+        return {"suggestions": suggestions, "selected": final_selected}
     except Exception as e:
         logger.error(f"Case type suggestion error: {e}")
-        fallback = [{"case_type": ct, "confidence": 1.0 / len(CASE_TYPES)} for ct in CASE_TYPES]
-        for fs in fallback:
-            if fs["case_type"].lower() == selected.lower():
-                fs["confidence"] = 0.5
-            else:
-                fs["confidence"] = 0.5 / (len(CASE_TYPES) - 1)
-        fallback.sort(key=lambda x: x["confidence"], reverse=True)
-        return {"suggestions": fallback, "selected": selected, "error": str(e)}
+        return {
+            "suggestions": [
+                {"case_type": "Death", "confidence": 0.5},
+                {"case_type": "Permanent Partial Disability", "confidence": 0.5},
+                {"case_type": "Permanent Total Disability", "confidence": 0.0},
+                {"case_type": "Temporary Total Disability", "confidence": 0.0},
+                {"case_type": "Medical Only", "confidence": 0.0},
+                {"case_type": "Vocational Rehabilitation", "confidence": 0.0}
+            ],
+            "selected": selected or "",
+            "error": str(e)
+        }
 
 
 class DownloadDocxRequest(BaseModel):

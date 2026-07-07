@@ -92,5 +92,35 @@ class TestCaseTypeProtection(unittest.TestCase):
         self.assertEqual(classify_case_type_by_ocr_text(bhopal_injury_text), "injury")
         self.assertEqual(classify_case_type_by_ocr_text(rewa_death_text), "death")
 
+    def test_mixed_signal_injury_case_gating(self):
+        from backend.parser_heuristics import parse_extracted_text
+        
+        # Scenario: A survivor's disability claim, but text mentions co-passenger's death in passing
+        mixed_signal_text = (
+            "--- PAGE 1 ---\n"
+            "CLAIM PETITION BEFORE THE TRIBUNAL\n"
+            "This is a claim by the injured survivor Amit Kumar who suffered 40% permanent disability.\n"
+            "The claimant paid Rs. 15,000 for medical expenses.\n"
+            "Incidental note: Co-passenger Rajesh died in the same fatal collision and his legal heirs filed a separate death claim."
+        )
+        
+        lines = mixed_signal_text.split("\n")
+        
+        # When case_type="injury" is explicitly passed, the parser should clear all death-specific fields
+        # (even though 'died', 'fatal', and 'death' keywords exist in the raw text).
+        suggestions = parse_extracted_text(lines, case_type="injury")
+        
+        # Death fields must be completely empty/unset
+        self.assertEqual(suggestions.get("case_type"), "injury")
+        self.assertEqual(suggestions.get("deceased_name"), "")
+        self.assertEqual(suggestions.get("dependents"), "")
+        self.assertEqual(suggestions.get("consortium"), 0.0)
+        self.assertEqual(suggestions.get("funeral_expenses"), 0.0)
+        self.assertEqual(suggestions.get("loss_estate"), 0.0)
+        
+        # Injury fields must be successfully parsed/preserved
+        self.assertEqual(suggestions.get("disability"), 40.0)
+        self.assertEqual(suggestions.get("medical_expenses"), 15000.0)
+
 if __name__ == "__main__":
     unittest.main()

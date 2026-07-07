@@ -1988,7 +1988,7 @@ def extract_last_currency_value(line_lower):
     return 0.0
 
 
-def extract_compensation_table_fields(section_content):
+def extract_compensation_table_fields(section_content, case_type=None):
     """
     Extracts structured compensation fields strictly from the isolated compensation table area.
     Optimized for Table-First Extraction and strict role/pleading avoidance.
@@ -2056,6 +2056,9 @@ def extract_compensation_table_fields(section_content):
                 if not any(kw in line_lower for kw in ["claim", "petition", "sought", "prayed", "valuation", "demand"]):
                     fields["total_compensation"] = val
                 
+    if case_type == "injury":
+        for f in ["future_prospect", "deduction", "annual_loss_dependency", "multiplier", "funeral_expenses", "consortium"]:
+            fields[f] = None
     return fields
 
 
@@ -2388,6 +2391,11 @@ def parse_extracted_text(text_lines, case_type=None):
     print("[PARSE DEBUG] First 60 lines of raw text:")
     for i, line in enumerate(text_lines[:60]):
         print(f"  Line {i+1:>2}: {line.strip()}")
+
+    full_text = "\n".join(text_lines)
+    if case_type is None:
+        from backend.llm_client import classify_case_type_by_ocr_text
+        case_type = classify_case_type_by_ocr_text(full_text)
 
     # 1. Segment text_lines into pages
     pages = []
@@ -2887,7 +2895,7 @@ def parse_extracted_text(text_lines, case_type=None):
     # QUANTITATIVE AND COMPENSATION TABLE EXTRACTION
     # ======================================================
 
-    comp_fields = extract_compensation_table_fields(sections.get("compensation_section", "") or sections.get("award_copy_section", ""))
+    comp_fields = extract_compensation_table_fields(sections.get("compensation_section", "") or sections.get("award_copy_section", ""), case_type)
     
     # 9.1 Monthly Income
     monthly_income = comp_fields["monthly_income"]
@@ -5650,7 +5658,7 @@ def parse_hindi_extracted_text(text_lines: list, case_type: str = None) -> dict:
     if critical_missing:
         try:
             from backend.llm_client import ai_data_recovery
-            recovered = ai_data_recovery(full_text, track="lower_court")
+            recovered = ai_data_recovery(full_text, track="lower_court", case_type=out.get("case_type"))
             if recovered and not recovered.get("ai_recovery_error"):
                 out["ai_recovery_triggered"] = True
                 for key, val in recovered.items():
