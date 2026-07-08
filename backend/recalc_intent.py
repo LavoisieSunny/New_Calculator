@@ -40,7 +40,7 @@ INJURY_FIELD_MAP = {
     "travel expenses": "transportation", "travel": "transportation",
     "special diet": "special_diet", "dietary expenses": "special_diet",
     "diet": "special_diet", "food": "special_diet",
-    "attender charges": "attender_charges", "attendant": "attender_charges",
+    "attendant charges": "attender_charges", "attender charges": "attender_charges", "attendant": "attender_charges",
     "attender": "attender_charges", "nurse": "attender_charges", "caretaker": "attender_charges",
     "past income loss": "loss_of_income", "income loss": "loss_of_income",
     "loss of income": "loss_of_income",
@@ -95,8 +95,8 @@ def parse_recalc_intent(text: str, case_type: str) -> Optional[Tuple[str, float,
         idx = lower.find(phrase)
         if idx == -1:
             continue
-        tail = lower[idx + len(phrase): idx + len(phrase) + 20]
-        m = re.match(r"\s*" + _ASSIGN_CUE, tail)
+        tail = lower[idx + len(phrase): idx + len(phrase) + 30]
+        m = re.match(r"(?:\s+\w+){0,2}?\s*" + _ASSIGN_CUE, tail)
         if m:
             try:
                 value = float(m.group(1).replace(",", ""))

@@ -34,6 +34,16 @@ class TestRecalcIntent(unittest.TestCase):
         self.assertEqual(res3[0], "age")
         self.assertEqual(res3[1], 35.0)
 
+        # Refinement & tolerance test cases
+        res4 = parse_recalc_intent("attendant charges is 10000", "injury")
+        self.assertIsNotNone(res4)
+        self.assertEqual(res4, ("attender_charges", 10000.0, "attendant charges"))
+
+        # Regex tolerance test (contains extra word "are" or similar between synonym and cue)
+        res5 = parse_recalc_intent("attendant charges are 12000", "injury")
+        self.assertIsNotNone(res5)
+        self.assertEqual(res5, ("attender_charges", 12000.0, "attendant charges"))
+
     def test_run_recalculation_injury(self):
         parsed_fields = {
             "case_type": "injury",
