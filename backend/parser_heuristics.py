@@ -658,6 +658,17 @@ def determine_name_role(name, text):
         
         # 1. Proximity scan inside an 80-character window
         for m in re.finditer(name_esc, text, re.IGNORECASE):
+            def is_cause_title_line(idx):
+                l_start = text.rfind('\n', 0, idx) + 1
+                l_end = text.find('\n', idx)
+                if l_end == -1:
+                    l_end = len(text)
+                line_str = text[l_start:l_end].lower()
+                return any(vs in line_str for vs in [" versus ", " vs ", "-vs-", " v. ", " v/s ", " vs. "])
+
+            if is_cause_title_line(m.start()):
+                continue
+
             start = max(0, m.start() - 80)
             end = min(len(text), m.end() + 80)
             window = text[start:end].lower()
@@ -670,6 +681,16 @@ def determine_name_role(name, text):
             for role, keywords in indicators:
                 for kw in keywords:
                     for kw_m in re.finditer(re.escape(kw), window):
+                        if is_cause_title_line(start + kw_m.start()):
+                            continue
+                        # Guard: check if the matched keyword is separated by a versus pattern from the name
+                        # inside the window. If so, it might belong to the opposing party in a cause title.
+                        w_idx_start = min(m.start() - start, kw_m.start())
+                        w_idx_end = max(m.end() - start, kw_m.end())
+                        window_part = window[w_idx_start:w_idx_end]
+                        if any(vs in window_part for vs in ["versus", "vs", "-vs-", " v. ", " v/s "]):
+                            continue
+
                         name_offset = m.start() - start
                         kw_offset = kw_m.start()
                         dist = abs(kw_offset - name_offset)
@@ -683,6 +704,8 @@ def determine_name_role(name, text):
             for line in text.split("\n"):
                 line_lower = line.lower()
                 if name_query.lower() in line_lower:
+                    if any(vs in line_lower for vs in ["versus", "-vs-", " v/s ", " vs ", " v. "]):
+                        continue
                     has_non_claimant = any(kw in line_lower for kw in ["non-claimant", "non claimant", "owner", "driver", "insurance", "insur."])
                     has_claimant = any(kw in line_lower for kw in ["claimant", "petitioner", "victim", "injured"])
                     if has_non_claimant and not has_claimant:
@@ -2535,6 +2558,7 @@ def parse_extracted_text(text_lines, case_type=None):
     # Helper for contextual extraction parameters
     parser_debug = {}
     claimant_relationship_to_deceased = ""
+    conf_claimant_relationship = 0.0
 
     # Cause Title Claimant Extraction (e.g. "Insurance vs Claimant" or "Claimant vs Driver")
     cause_title_claimant = None
@@ -2752,7 +2776,90 @@ def parse_extracted_text(text_lines, case_type=None):
     if split_res:
         c_split, rel_type, f_split = split_res
         if rel_type:
-            claimant_relationship_to_deceased = rel_type
+            # Bug/Feature: Verify f_split against deceased_name
+            is_match = False
+            if deceased_name:
+                def clean_name(n):
+                    n = n.lower()
+                    n = re.sub(r'\b(?:late|shri|smt|mr|mrs|sh\.?|deceased)\b', '', n)
+                    n = re.sub(r'[^a-z0-9\s]', '', n)
+                    return [t.strip() for t in n.split() if t.strip()]
+                t1 = clean_name(f_split)
+                t2 = clean_name(deceased_name)
+                if t1 and t2:
+                    overlap = set(t1).intersection(set(t2))
+                    if len(overlap) >= min(len(t1), len(t2), 2):
+                        is_match = True
+            
+            if is_match:
+                claimant_relationship_to_deceased = rel_type
+                conf_claimant_relationship = 0.95
+            else:
+                # Try to infer the real relationship from surviving-dependents language elsewhere in the document.
+                inferred_rel = None
+                search_text = (sections.get("claimant_section", "") + " " + sections.get("chronological_events_section", "") + " " + full_text).lower()
+                
+                claimant_fn = ""
+                if c_split:
+                    tokens = [t for t in c_split.split() if len(t) > 2]
+                    if tokens:
+                        claimant_fn = tokens[0].lower()
+                
+                if claimant_fn:
+                    pos = 0
+                    while True:
+                        idx = search_text.find(claimant_fn, pos)
+                        if idx == -1:
+                            break
+                        w_start = max(0, idx - 75)
+                        w_end = min(len(search_text), idx + len(claimant_fn) + 75)
+                        window = search_text[w_start:w_end]
+                        
+                        if re.search(r'\b(?:mother\s+of\s+deceased|mother\s+of\s+the\s+deceased|mother)\b', window):
+                            inferred_rel = "Mother of"
+                            break
+                        elif re.search(r'\b(?:father\s+of\s+deceased|father\s+of\s+the\s+deceased|father)\b', window):
+                            inferred_rel = "Father of"
+                            break
+                        elif re.search(r'\b(?:wife\s+of\s+deceased|wife\s+of\s+the\s+deceased|wife|widow)\b', window):
+                            inferred_rel = "Wife of"
+                            break
+                        elif re.search(r'\b(?:husband\s+of\s+deceased|husband\s+of\s+the\s+deceased|husband)\b', window):
+                            inferred_rel = "Husband of"
+                            break
+                        elif re.search(r'\b(?:son\s+of\s+deceased|son\s+of\s+the\s+deceased)\b', window):
+                            inferred_rel = "Son of"
+                            break
+                        elif re.search(r'\b(?:daughter\s+of\s+deceased|daughter\s+of\s+the\s+deceased)\b', window):
+                            inferred_rel = "Daughter of"
+                            break
+                        elif re.search(r'\b(?:brother\s+of\s+deceased|brother\s+of\s+the\s+deceased|brother)\b', window):
+                            inferred_rel = "Brother of"
+                            break
+                        elif re.search(r'\b(?:sister\s+of\s+deceased|sister\s+of\s+the\s+deceased|sister)\b', window):
+                            inferred_rel = "Sister of"
+                            break
+                        
+                        pos = idx + len(claimant_fn)
+                
+                if not inferred_rel:
+                    if re.search(r'\b(?:claimant\s+is\s+the\s+mother|petitioner\s+is\s+the\s+mother|mother\s+of\s+the\s+deceased|mother\s+of\s+deceased)\b', search_text):
+                        inferred_rel = "Mother of"
+                    elif re.search(r'\b(?:claimant\s+is\s+the\s+father|petitioner\s+is\s+the\s+father|father\s+of\s+the\s+deceased|father\s+of\s+deceased)\b', search_text):
+                        inferred_rel = "Father of"
+                    elif re.search(r'\b(?:wife\s+of\s+the\s+deceased|wife\s+of\s+deceased|widow\s+of\s+the\s+deceased|widow\s+of\s+deceased)\b', search_text):
+                        inferred_rel = "Wife of"
+                    elif re.search(r'\b(?:son\s+of\s+the\s+deceased|son\s+of\s+deceased)\b', search_text):
+                        inferred_rel = "Son of"
+                    elif re.search(r'\b(?:daughter\s+of\s+the\s+deceased|daughter\s+of\s+deceased)\b', search_text):
+                        inferred_rel = "Daughter of"
+
+                if inferred_rel:
+                    claimant_relationship_to_deceased = inferred_rel
+                    conf_claimant_relationship = 0.85
+                else:
+                    claimant_relationship_to_deceased = "Claimant (relationship to deceased unconfirmed)"
+                    conf_claimant_relationship = 0.40
         if c_split:
             claimant_name = c_split.title()
             conf_claimant_name = max(conf_claimant_name, 0.95)
@@ -4434,7 +4541,7 @@ def parse_extracted_text(text_lines, case_type=None):
             },
             "claimant_relationship_type": {
                 "value": claimant_relationship_to_deceased,
-                "confidence": 0.95 if claimant_relationship_to_deceased else 0.0,
+                "confidence": conf_claimant_relationship,
                 "source": "claimant_section" if claimant_relationship_to_deceased else "raw_ocr",
                 "source_section": "claimant_section" if claimant_relationship_to_deceased else "raw_ocr",
                 "source_page": 1,

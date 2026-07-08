@@ -491,6 +491,17 @@ class TestParserHeuristics(unittest.TestCase):
         self.assertEqual(suggestions.get("age"), 22)
         self.assertEqual(suggestions.get("date_of_birth"), "")
 
+    def test_regression_ma_10076_mother_relationship(self):
+        """Verify that MA_10076_2025.pdf (claimant Parvati Singh W/o Vishnudev, deceased Anjani) extracts Mother of deceased, NOT Wife of."""
+        fixture_path = os.path.join(os.path.dirname(__file__), "ma_10076_ocr_lines.txt")
+        self.assertTrue(os.path.exists(fixture_path), f"Fixture not found: {fixture_path}")
+        with open(fixture_path, "r", encoding="utf-8") as f:
+            lines = f.readlines()
+            
+        suggestions = parse_extracted_text(lines, case_type="death")
+        self.assertEqual(suggestions.get("claimant_relationship_to_deceased"), "Mother of")
+        self.assertNotEqual(suggestions.get("claimant_relationship_to_deceased"), "Wife of")
+
 if __name__ == "__main__":
     unittest.main()
 
