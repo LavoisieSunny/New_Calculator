@@ -177,7 +177,7 @@ async def prepare_pdf_chat_prompt(request: PDFChatRequest):
             question_str, request.parsed_fields, request.calculator_result
         )
         if recalc_response is not None:
-            return None, [], recalc_response
+            return None, None, [], recalc_response
             
     case_filter = None if request.case_type == "all" else request.case_type
     
@@ -234,29 +234,26 @@ async def prepare_pdf_chat_prompt(request: PDFChatRequest):
         if request.is_justify:
             ocr_full = request.ocr_text or ""
             ocr_len = len(ocr_full)
-            if ocr_len <= 20000:
+            if ocr_len <= 12000:
                 ocr_for_llm = ocr_full
             else:
-                # First 6000 chars = memo of appeal, grounds section, claimant details
-                # Last 12000 chars = tribunal reasoning, judgment, award table
-                # Award table on page 20 of 24 is at ~29,000 chars in a 35,000 char doc
                 ocr_for_llm = (
-                    ocr_full[:6000]
+                    ocr_full[:4000]
                     + "\n\n[... middle pages omitted ...]\n\n"
-                    + ocr_full[-12000:]
+                    + ocr_full[-8000:]
                 )
             workstation_blocks.append(
                 f"[Current PDF Workstation OCR Text]:\n{ocr_for_llm}"
             )
         else:
             ocr_full = request.ocr_text or ""
-            if len(ocr_full) <= 16000:
+            if len(ocr_full) <= 8000:
                 ocr_for_llm = ocr_full
             else:
                 ocr_for_llm = (
-                    ocr_full[:6000]
+                    ocr_full[:3000]
                     + "\n\n[... middle pages omitted ...]\n\n"
-                    + ocr_full[-10000:]
+                    + ocr_full[-5000:]
                 )
             workstation_blocks.append(
                 f"[Current PDF Workstation OCR Text]:\n{ocr_for_llm}"
@@ -540,7 +537,7 @@ async def prepare_pdf_chat_prompt(request: PDFChatRequest):
             "If not found: write 'Not found in OCR text' — never guess.\n"
         )
 
-    user_prompt = (
+    system_instruction = (
         "You are a Motor Accident Claims Tribunal legal assistant.\n\n"
         "=== STRICTOR GROUNDING INSTRUCTIONS ===\n"
         "1. Use ONLY the supplied context (Retrieved Precedents and active Workstation details).\n"
@@ -589,14 +586,19 @@ async def prepare_pdf_chat_prompt(request: PDFChatRequest):
         "The calculator result is based on the currently populated fields and serves as an analytical estimate. The judicially awarded compensation remains ₹[awarded_compensation] unless modified by a court order.\n\n"
         "=== MATHEMATICAL INTEGRITY RULES ===\n"
         "- Under no circumstances should you compute, recalculate, or override mathematical values, multipliers, or final compensation totals.\n"
-        "- You are only reached for this message because it was NOT a recalculation request (recalculation requests are intercepted and answered by the deterministic engine directly, above, before this prompt is built). Do not attempt to do the math yourself.\n\n"
-        f"{case_facts_summary}"
-        f"{justify_block}"
+        "- You are only reached for this message because it was NOT a recalculation request (recalculation requests are intercepted and answered by the deterministic engine directly, above, before this prompt is built). Do not attempt to do the math yourself.\n"
+    )
+    
+    if request.is_justify:
+        system_instruction += f"\n{justify_block}"
+
+    user_prompt = (
+        f"{case_facts_summary}\n"
         f"Context:\n{chunks_combined}\n\n"
         f"Question:\n{question_str}"
     )
     
-    return user_prompt, precedents, None
+    return user_prompt, system_instruction, precedents, None
 
 @app.post("/api/chat/pdf")
 async def chat_with_pdf(request: PDFChatRequest):
@@ -605,13 +607,13 @@ async def chat_with_pdf(request: PDFChatRequest):
     and sends the constructed prompt to the configured LLM.
     """
     try:
-        user_prompt, precedents, recalc_response = await prepare_pdf_chat_prompt(request)
+        user_prompt, system_instruction, precedents, recalc_response = await prepare_pdf_chat_prompt(request)
         if recalc_response is not None:
             return recalc_response
 
         # 5. Generate LLM Response using configured provider (Ollama Qwen2.5:14b)
         from backend.llm_client import generate_response
-        ai_response = await asyncio.to_thread(generate_response, user_prompt)
+        ai_response = await asyncio.to_thread(generate_response, user_prompt, system_instruction)
         
         return {
             "response": ai_response,
@@ -627,7 +629,7 @@ async def chat_with_pdf_stream(request: PDFChatRequest):
     constructs the prompt, and returns a SSE-compatible NDJSON response stream.
     """
     try:
-        user_prompt, precedents, recalc_response = await prepare_pdf_chat_prompt(request)
+        user_prompt, system_instruction, precedents, recalc_response = await prepare_pdf_chat_prompt(request)
         
         if recalc_response is not None:
             async def stream_recalc():
@@ -651,7 +653,7 @@ async def chat_with_pdf_stream(request: PDFChatRequest):
         
         def producer():
             try:
-                for token in generate_response_stream(user_prompt):
+                for token in generate_response_stream(user_prompt, system_instruction):
                     q.put(token)
             except Exception as ex:
                 logger.error(f"Error in stream producer thread: {str(ex)}")

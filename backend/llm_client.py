@@ -570,6 +570,7 @@ import json
 import logging
 import urllib.request
 import urllib.error
+import socket
 import re
 from datetime import datetime
  
@@ -691,6 +692,15 @@ def validate_ollama_setup() -> dict:
  
 def generate_response(prompt: str, system_instruction: str = None) -> str:
     logger.info(f"Generating LLM response using provider '{LLM_PROVIDER}', model '{LLM_MODEL_NAME}'")
+    
+    char_count = len(prompt)
+    token_est = int(char_count / 4)
+    logger.info(f"LLM Prompt size: {char_count} chars, approx {token_est} tokens")
+    if system_instruction:
+        sys_char_count = len(system_instruction)
+        sys_token_est = int(sys_char_count / 4)
+        logger.info(f"LLM System Instruction size: {sys_char_count} chars, approx {sys_token_est} tokens")
+
     final_prompt = prompt
     if system_instruction:
         final_prompt = f"System Instruction:\n{system_instruction}\n\nUser Question:\n{prompt}"
@@ -710,14 +720,24 @@ def generate_response(prompt: str, system_instruction: str = None) -> str:
                 if system_instruction:
                     messages.append({"role": "system", "content": system_instruction})
                 messages.append({"role": "user", "content": prompt})
-                payload = {"model": LLM_MODEL_NAME, "messages": messages, "temperature": 0.2}
+                payload = {
+                    "model": LLM_MODEL_NAME, 
+                    "messages": messages, 
+                    "temperature": 0.2,
+                    "options": {"temperature": 0.2, "keep_alive": "10m", "num_ctx": 16384}
+                }
             else:
                 url = f"{LLM_API_ENDPOINT.rstrip('/')}/api/chat"
                 messages = []
                 if system_instruction:
                     messages.append({"role": "system", "content": system_instruction})
                 messages.append({"role": "user", "content": prompt})
-                payload = {"model": LLM_MODEL_NAME, "messages": messages, "stream": False, "options": {"temperature": 0.2, "keep_alive": "10m"}}
+                payload = {
+                    "model": LLM_MODEL_NAME, 
+                    "messages": messages, 
+                    "stream": False, 
+                    "options": {"temperature": 0.2, "keep_alive": "10m", "num_ctx": 16384}
+                }
             headers = {"Content-Type": "application/json"}
             req_body = json.dumps(payload).encode("utf-8")
         else:
@@ -733,33 +753,62 @@ def generate_response(prompt: str, system_instruction: str = None) -> str:
             req_body = json.dumps(payload).encode("utf-8")
  
         req = urllib.request.Request(url, data=req_body, headers=headers, method="POST")
-        with urllib.request.urlopen(req, timeout=300.0) as response:
+        with urllib.request.urlopen(req, timeout=90.0) as response:
             res_body = response.read().decode("utf-8")
+            logger.debug(f"Raw LLM Response: {res_body}")
             res_json = json.loads(res_body)
+            content = ""
             if LLM_PROVIDER == "gemini":
                 candidates = res_json.get("candidates", [])
                 if candidates:
                     parts = candidates[0].get("content", {}).get("parts", [])
                     if parts:
-                        return parts[0].get("text", "").strip()
-                return ""
+                        content = parts[0].get("text", "")
             else:
                 choices = res_json.get("choices", [])
                 if choices:
-                    return choices[0].get("message", {}).get("content", "").strip()
-                if "message" in res_json and "content" in res_json["message"]:
-                    return res_json["message"]["content"].strip()
-                return ""
+                    content = choices[0].get("message", {}).get("content", "")
+                elif "message" in res_json and "content" in res_json["message"]:
+                    content = res_json["message"]["content"]
+            
+            content_stripped = content.strip()
+            if not content_stripped:
+                logger.error(f"LLM returned an empty response. Raw response: {res_body}")
+                return "LLM returned an empty response — the prompt may have exceeded the model's context window"
+            return content_stripped
     except urllib.error.HTTPError as he:
         err_msg = he.read().decode("utf-8") if he.fp else str(he)
         logger.error(f"LLM API HTTP Error ({he.code}): {err_msg}")
         return f"Error connecting to LLM server: {he.reason}"
+    except (urllib.error.URLError, socket.timeout, TimeoutError) as e:
+        is_timeout = False
+        if isinstance(e, urllib.error.URLError) and isinstance(e.reason, (socket.timeout, TimeoutError)):
+            is_timeout = True
+        elif isinstance(e, (socket.timeout, TimeoutError)):
+            is_timeout = True
+        
+        if is_timeout or "timed out" in str(e).lower():
+            logger.error("LLM Request timed out after 90 seconds.")
+            return "Error connecting to LLM server: Request timed out after 90 seconds"
+        
+        err_msg = str(e)
+        logger.error(f"LLM API URL Error: {err_msg}")
+        return f"Error communicating with LLM client: {err_msg}"
     except Exception as e:
         logger.error(f"Failed to generate LLM response: {str(e)}")
         return f"Error communicating with LLM client: {str(e)}"
  
 def generate_response_stream(prompt: str, system_instruction: str = None):
     logger.info(f"Streaming LLM response using provider '{LLM_PROVIDER}', model '{LLM_MODEL_NAME}'")
+    
+    char_count = len(prompt)
+    token_est = int(char_count / 4)
+    logger.info(f"LLM Stream Prompt size: {char_count} chars, approx {token_est} tokens")
+    if system_instruction:
+        sys_char_count = len(system_instruction)
+        sys_token_est = int(sys_char_count / 4)
+        logger.info(f"LLM Stream System Instruction size: {sys_char_count} chars, approx {sys_token_est} tokens")
+
     try:
         if LLM_PROVIDER == "ollama":
             if "v1" in LLM_API_ENDPOINT:
@@ -768,7 +817,13 @@ def generate_response_stream(prompt: str, system_instruction: str = None):
                 if system_instruction:
                     messages.append({"role": "system", "content": system_instruction})
                 messages.append({"role": "user", "content": prompt})
-                payload = {"model": LLM_MODEL_NAME, "messages": messages, "temperature": 0.2, "stream": True}
+                payload = {
+                    "model": LLM_MODEL_NAME, 
+                    "messages": messages, 
+                    "temperature": 0.2, 
+                    "stream": True,
+                    "options": {"temperature": 0.2, "keep_alive": "10m", "num_ctx": 16384}
+                }
             else:
                 url = f"{LLM_API_ENDPOINT.rstrip('/')}/api/chat"
                 messages = []
@@ -779,13 +834,13 @@ def generate_response_stream(prompt: str, system_instruction: str = None):
                     "model": LLM_MODEL_NAME,
                     "messages": messages,
                     "stream": True,
-                    "options": {"temperature": 0.2, "keep_alive": "10m"}
+                    "options": {"temperature": 0.2, "keep_alive": "10m", "num_ctx": 16384}
                 }
             headers = {"Content-Type": "application/json"}
             req_body = json.dumps(payload).encode("utf-8")
             
             req = urllib.request.Request(url, data=req_body, headers=headers, method="POST")
-            with urllib.request.urlopen(req, timeout=300.0) as response:
+            with urllib.request.urlopen(req, timeout=90.0) as response:
                 for line in response:
                     if not line:
                         continue
@@ -813,6 +868,18 @@ def generate_response_stream(prompt: str, system_instruction: str = None):
         else:
             full_resp = generate_response(prompt, system_instruction)
             yield full_resp
+    except (urllib.error.URLError, socket.timeout, TimeoutError) as e:
+        is_timeout = False
+        if isinstance(e, urllib.error.URLError) and isinstance(e.reason, (socket.timeout, TimeoutError)):
+            is_timeout = True
+        elif isinstance(e, (socket.timeout, TimeoutError)):
+            is_timeout = True
+        
+        if is_timeout or "timed out" in str(e).lower():
+            logger.error("LLM Stream Request timed out after 90 seconds.")
+            yield "Error communicating with LLM stream: Request timed out after 90 seconds"
+        else:
+            yield f"Error communicating with LLM stream: {str(e)}"
     except Exception as e:
         logger.error(f"Failed to stream LLM response: {str(e)}")
         yield f"Error communicating with LLM stream: {str(e)}"

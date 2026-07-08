@@ -47,25 +47,25 @@ class TestCompensationSeparation(unittest.TestCase):
                 loop.close()
             
             called_args, _ = mock_generate.call_args
-            prompt = called_args[0]
+            sys_instruction = called_args[1]
             
             # Assertions:
             # 1. Verify all fields are preserved and referred separately in prompt guidelines
-            self.assertIn("awarded_compensation", prompt, "awarded_compensation concept must be preserved")
-            self.assertIn("claimed_compensation", prompt, "claimed_compensation concept must be preserved")
-            self.assertIn("enhancement_sought", prompt, "enhancement_sought concept must be preserved")
-            self.assertIn("calculated_compensation", prompt, "calculated_compensation concept must be preserved")
+            self.assertIn("awarded_compensation", sys_instruction, "awarded_compensation concept must be preserved")
+            self.assertIn("claimed_compensation", sys_instruction, "claimed_compensation concept must be preserved")
+            self.assertIn("enhancement_sought", sys_instruction, "enhancement_sought concept must be preserved")
+            self.assertIn("calculated_compensation", sys_instruction, "calculated_compensation concept must be preserved")
             
             # 2. Verify prompt specifically forbids merging or source of truth descriptions
-            self.assertIn("NEVER say: 'Calculated amount is the source of truth'", prompt)
-            self.assertIn("NEVER say: 'Compensation amount is \u20b9X'", prompt)
-            self.assertIn("NEVER overwrite judicially awarded compensation with calculator output", prompt)
+            self.assertIn("NEVER say: 'Calculated amount is the source of truth'", sys_instruction)
+            self.assertIn("NEVER say: 'Compensation amount is \u20b9X'", sys_instruction)
+            self.assertIn("NEVER overwrite judicially awarded compensation with calculator output", sys_instruction)
             
             # 3. Verify format demands
-            self.assertIn("According to the PDF (Judicial Record)", prompt)
-            self.assertIn("According to the Compensation Calculator", prompt)
-            self.assertIn("Comparison", prompt)
-            self.assertIn("Difference:", prompt)
+            self.assertIn("According to the PDF (Judicial Record)", sys_instruction)
+            self.assertIn("According to the Compensation Calculator", sys_instruction)
+            self.assertIn("Comparison", sys_instruction)
+            self.assertIn("Difference:", sys_instruction)
 
     def test_stream_prompt_separates_compensation_fields(self):
         mock_payload = {
@@ -107,17 +107,17 @@ class TestCompensationSeparation(unittest.TestCase):
                 loop.close()
             
             called_args, _ = mock_generate_stream.call_args
-            prompt = called_args[0]
+            sys_instruction = called_args[1]
             
             # Assertions
-            self.assertIn("awarded_compensation", prompt)
-            self.assertIn("claimed_compensation", prompt)
-            self.assertIn("enhancement_sought", prompt)
-            self.assertIn("calculated_compensation", prompt)
-            self.assertIn("NEVER say: 'Calculated amount is the source of truth'", prompt)
-            self.assertIn("NEVER say: 'Compensation amount is \u20b9X'", prompt)
-            self.assertIn("According to the PDF (Judicial Record)", prompt)
-            self.assertIn("According to the Compensation Calculator", prompt)
+            self.assertIn("awarded_compensation", sys_instruction)
+            self.assertIn("claimed_compensation", sys_instruction)
+            self.assertIn("enhancement_sought", sys_instruction)
+            self.assertIn("calculated_compensation", sys_instruction)
+            self.assertIn("NEVER say: 'Calculated amount is the source of truth'", sys_instruction)
+            self.assertIn("NEVER say: 'Compensation amount is \u20b9X'", sys_instruction)
+            self.assertIn("According to the PDF (Judicial Record)", sys_instruction)
+            self.assertIn("According to the Compensation Calculator", sys_instruction)
 
 if __name__ == "__main__":
     unittest.main()
