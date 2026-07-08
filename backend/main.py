@@ -170,6 +170,36 @@ async def prepare_pdf_chat_prompt(request: PDFChatRequest):
     question_str = request.question or request.message
     if not question_str:
         raise HTTPException(status_code=400, detail="Missing 'question' or 'message' field.")
+
+    cr = request.calculator_result or {}
+    pf = request.parsed_fields or {}
+    calculated_compensation = cr.get("final_amount") or cr.get("total_compensation") or 0.0
+    try:
+        calculated_compensation = float(calculated_compensation)
+    except (TypeError, ValueError):
+        calculated_compensation = 0.0
+        
+    has_populated_calculator = False
+    if request.calculator_result and calculated_compensation > 0:
+        has_populated_calculator = True
+    elif pf.get("monthly_income") and float(pf.get("monthly_income")) > 0:
+        has_populated_calculator = True
+
+    if has_populated_calculator:
+        calculator_instruction_block = (
+            "According to the Compensation Calculator\n\n"
+            "Calculated Compensation:\n"
+            "₹[calculated_compensation]\n\n\n"
+            "Comparison\n\n"
+            "Difference:\n"
+            "₹[Difference between Calculated Compensation and Awarded Compensation, calculated as calculated_compensation minus awarded_compensation]\n\n"
+            "The calculator result is based on the currently populated fields and serves as an analytical estimate. The judicially awarded compensation remains ₹[awarded_compensation] unless modified by a court order.\n\n"
+        )
+    else:
+        calculator_instruction_block = (
+            "According to the Compensation Calculator\n\n"
+            "Calculator has not been run with populated fields for this session.\n\n"
+        )
         
     from backend.recalc_intent import run_recalculation
     if not request.is_justify:
@@ -577,13 +607,7 @@ async def prepare_pdf_chat_prompt(request: PDFChatRequest):
         "₹[claimed_compensation]\n\n"
         "Enhancement Sought:\n"
         "₹[enhancement_sought]\n\n\n"
-        "According to the Compensation Calculator\n\n"
-        "Calculated Compensation:\n"
-        "₹[calculated_compensation]\n\n\n"
-        "Comparison\n\n"
-        "Difference:\n"
-        "₹[Difference between Calculated Compensation and Awarded Compensation, calculated as calculated_compensation minus awarded_compensation]\n\n"
-        "The calculator result is based on the currently populated fields and serves as an analytical estimate. The judicially awarded compensation remains ₹[awarded_compensation] unless modified by a court order.\n\n"
+        + calculator_instruction_block +
         "=== MATHEMATICAL INTEGRITY RULES ===\n"
         "- Under no circumstances should you compute, recalculate, or override mathematical values, multipliers, or final compensation totals.\n"
         "- You are only reached for this message because it was NOT a recalculation request (recalculation requests are intercepted and answered by the deterministic engine directly, above, before this prompt is built). Do not attempt to do the math yourself.\n"

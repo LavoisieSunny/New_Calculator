@@ -260,19 +260,18 @@ def get_deduction(
     is_bachelor = marital_status.strip().upper() in ("B", "BACHELOR", "SINGLE", "UNMARRIED", "S")
 
     if is_bachelor:
-        # Dependents is not applicable for bachelor/single - always 1/2
-        return 0.50
-
-    # Married
-    if dependents < 2:
-        # Safety net only; UI should prevent this. Defaults to the lowest
-        # real bracket instead of the bachelor rate.
-        return 1 / 3         # 1/3
-    elif dependents <= 3:
-        return 1 / 3         # 1/3
-    elif dependents <= 6:
-        return 0.25          # 1/4
-    return 0.20               # 1/5
+        if dependents <= 1:
+            return 0.50
+        else:
+            return 1 / 3
+    else:
+        # Married
+        if dependents <= 3:
+            return 1 / 3
+        elif dependents <= 6:
+            return 0.25
+        else:
+            return 0.20
 
 
 # ======================================================

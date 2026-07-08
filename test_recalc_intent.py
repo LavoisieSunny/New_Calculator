@@ -98,5 +98,50 @@ class TestRecalcIntent(unittest.TestCase):
         self.assertEqual(result["recalculation"]["changed_field"], "disability")
         self.assertEqual(result["recalculation"]["changed_value"], 50.0)
 
+    def test_new_recalc_patterns(self):
+        # 1. Backward / Bidirectional matching: number before field phrase
+        res1 = parse_recalc_intent("compensation if 10000rs were provided for special diet", "injury")
+        self.assertIsNotNone(res1)
+        self.assertEqual(res1, ("special_diet", 10000.0, "special diet"))
+
+        # 2. Forward order case (still works unchanged)
+        res2 = parse_recalc_intent("what if special diet was 10000", "injury")
+        self.assertIsNotNone(res2)
+        self.assertEqual(res2, ("special_diet", 10000.0, "special diet"))
+
+        # 3. Plain informational question containing "if" but no recalculation intent
+        res3 = parse_recalc_intent("what is the special diet amount if any", "injury")
+        self.assertIsNone(res3)
+
+    def test_recalc_empty_calculator_fallback(self):
+        """
+        Verify that when calculator_result is empty ({}), the base defaults to
+        PDF-extracted tribunal fallback figures (e.g. tribunal_medical=20000)
+        rather than returning 0.
+        """
+        from backend.recalc_intent import build_recalc_base, run_recalculation
+        
+        parsed_fields = {
+            "case_type": "injury",
+            "tribunal_special_diet": 5000.0,
+            "tribunal_medical": 20000.0,
+            "age": 30,
+            "monthly_income": 10000.0,
+        }
+        calculator_result = {}
+        
+        base = build_recalc_base(parsed_fields, calculator_result, "injury")
+        self.assertEqual(base.get("medical_expenses"), 20000.0)
+        self.assertEqual(base.get("special_diet"), 5000.0)
+
+        # Test run_recalculation directly
+        res = run_recalculation("what if special diet was 10000", parsed_fields, calculator_result)
+        self.assertIsNotNone(res)
+        recalc_data = res["recalculation"]["breakdown"]
+        self.assertEqual(recalc_data.get("special_diet"), 10000.0)
+        self.assertEqual(recalc_data.get("medical_expenses"), 20000.0)
+        self.assertIn("pulled from PDF-extracted tribunal figures as a fallback because the calculator had not been run yet", res["response"])
+        self.assertIn("Medical Expenses", res["response"])
+
 if __name__ == "__main__":
     unittest.main()

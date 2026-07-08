@@ -3515,7 +3515,10 @@ This cannot be undone.`)) return;
                 tribunal_special_diet: lastExtractedFields["special_diet"] || "",
                 tribunal_attender: lastExtractedFields["attender_charges"] || "",
                 tribunal_loss_of_income: lastExtractedFields["loss_of_income"] || "",
-                tribunal_future_medical: lastExtractedFields["future_medical_expenses"] || ""
+                tribunal_future_medical: lastExtractedFields["future_medical_expenses"] || "",
+                tribunal_consortium: lastExtractedFields["consortium"] || "",
+                tribunal_funeral: lastExtractedFields["funeral_expenses"] || "",
+                tribunal_estate: lastExtractedFields["loss_estate"] || ""
             };
 
             const calculatorResult = {

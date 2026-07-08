@@ -159,10 +159,10 @@ class TestDeductionBracketFix(unittest.TestCase):
     """
 
     def test_bachelor_always_gets_half_regardless_of_dependents(self):
-        # Bachelor never asks for dependents - must always be 1/2, no matter what slips through
+        # Bachelor gets 1/2 for 0 or 1 dependents, but large family gets 1/3
         self.assertEqual(get_deduction(0, "single"), 0.50)
         self.assertEqual(get_deduction(1, "bachelor"), 0.50)
-        self.assertEqual(get_deduction(5, "B"), 0.50)   # even a stray high value -> still 1/2
+        self.assertEqual(get_deduction(5, "B"), 1 / 3)   # large bachelor family -> 1/3
         self.assertEqual(get_deduction("", "single"), 0.50)
 
     def test_married_with_one_dependent_no_longer_breaks(self):

@@ -512,6 +512,54 @@ class TestParserHeuristics(unittest.TestCase):
         suggestions = parse_extracted_text(lines, case_type="death")
         self.assertEqual(suggestions.get("future_type"), 2)
 
+    def test_regression_ma_10076_conventional_heads(self):
+        """Verify that MA_10076_2025.pdf extracts consortium=44000, funeral_expenses=16500, and loss_estate=16500."""
+        fixture_path = os.path.join(os.path.dirname(__file__), "ma_10076_ocr_lines.txt")
+        self.assertTrue(os.path.exists(fixture_path), f"Fixture not found: {fixture_path}")
+        with open(fixture_path, "r", encoding="utf-8") as f:
+            lines = f.readlines()
+            
+        suggestions = parse_extracted_text(lines, case_type="death")
+        self.assertEqual(suggestions.get("consortium"), 44000.0)
+        self.assertEqual(suggestions.get("funeral_expenses"), 16500.0)
+        self.assertEqual(suggestions.get("loss_estate"), 16500.0)
+
+    def test_regression_ma_10076_estate_list_extraction(self):
+        """Verify that extract_conventional_heads_list extracts correct figures for MA_10076."""
+        from backend.parser_heuristics import extract_conventional_heads_list
+        fixture_path = os.path.join(os.path.dirname(__file__), "ma_10076_ocr_lines.txt")
+        self.assertTrue(os.path.exists(fixture_path), f"Fixture not found: {fixture_path}")
+        with open(fixture_path, "r", encoding="utf-8") as f:
+            text = f.read()
+            
+        res = extract_conventional_heads_list(text)
+        self.assertEqual(res.get("estate_loss"), 16500.0)
+        self.assertEqual(res.get("consortium"), 44000.0)
+        self.assertEqual(res.get("funeral_expenses"), 16500.0)
+
+        # Also verify the final parser output for loss_estate
+        with open(fixture_path, "r", encoding="utf-8") as f:
+            lines = f.readlines()
+        suggestions = parse_extracted_text(lines, case_type="death")
+        self.assertEqual(suggestions.get("loss_estate"), 16500.0)
+
+    def test_regression_ma_10076_deduct_pct(self):
+        """Verify that personal expense deduction for single with 4 dependents is 1/3, not 0.50."""
+        from backend.parser_heuristics import get_personal_deduction_pct
+        from backend.calculator import get_deduction
+        
+        # Test parser heuristics lookup
+        deduct_parser = get_personal_deduction_pct("single", 4)
+        self.assertAlmostEqual(deduct_parser, 1.0 / 3.0, places=4)
+        
+        # Test calculator lookup
+        deduct_calc = get_deduction(4, "single")
+        self.assertAlmostEqual(deduct_calc, 1.0 / 3.0, places=4)
+        
+        # Test standard married lookup for 4 dependents
+        deduct_married = get_deduction(4, "married")
+        self.assertEqual(deduct_married, 0.25)
+
 if __name__ == "__main__":
     unittest.main()
 

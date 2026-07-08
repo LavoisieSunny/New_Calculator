@@ -2141,6 +2141,124 @@ def extract_compensation_table_fields(section_content, case_type=None):
     return fields
 
 
+def extract_conventional_heads_list(text):
+    """
+    Dedicated parser that looks for a sentence listing conventional head amounts and labels:
+    "entitled to <amt1>, <amt2> and <amt3> ... on account of <label1>, <label2> and <label3> ... respectively"
+    and maps them to consortium, estate_loss, and funeral_expenses by keyword matching.
+    """
+    results = {}
+    if not text:
+        return results
+        
+    text_lower = text.lower()
+    
+    # Find "entitled to"
+    for m_ent in re.finditer(r'entitled\s+to', text_lower):
+        start_pos = m_ent.start()
+        end_pos = text_lower.find(".", start_pos)
+        if end_pos == -1:
+            end_pos = min(len(text_lower), start_pos + 400)
+        else:
+            end_pos = min(end_pos + 1, start_pos + 400)
+            
+        sentence = text[start_pos:end_pos]
+        sentence_lower = sentence.lower()
+        
+        # Check if it has "respectively"
+        if "respectively" not in sentence_lower:
+            continue
+            
+        # Extract amounts in the sentence
+        amounts = []
+        for amt_match in re.finditer(r'\b(?:rs\.?|inr|हैं|%|₹)?\s*([\d,]{4,7})\b', sentence, re.IGNORECASE):
+            val = parse_indian_rupee_value(amt_match.group(1))
+            if 1980 <= val <= 2050:
+                continue
+            if val > 0:
+                amounts.append((val, amt_match.start()))
+                
+        if len(amounts) == 3:
+            has_cons = "consortium" in sentence_lower
+            has_est = "estate" in sentence_lower
+            has_fun = "funeral" in sentence_lower
+            
+            if has_cons and has_est and has_fun:
+                pos_cons = sentence_lower.find("consortium")
+                pos_est = sentence_lower.find("estate")
+                pos_fun = sentence_lower.find("funeral")
+                
+                heads = sorted([
+                    ("consortium", pos_cons),
+                    ("estate_loss", pos_est),
+                    ("funeral_expenses", pos_fun)
+                ], key=lambda x: x[1])
+                
+                sorted_amounts = sorted(amounts, key=lambda x: x[1])
+                
+                temp_results = {}
+                for i in range(3):
+                    temp_results[heads[i][0]] = sorted_amounts[i][0]
+                    
+                return temp_results
+                
+    return results
+
+
+def _score_award_context(text, match_start):
+    """
+    Evaluates the preceding context (~80 chars) of a candidate conventional head match.
+    Prefers case-specific award context (score > 0) over general legal precedent statement context (score < 0).
+    """
+    start_pos = max(0, match_start - 150)
+    preceding_context = text[start_pos:match_start].lower()
+    
+    score = 0
+    # Positive indicator phrases (score +1 for each match)
+    positives = ["entitled to", "awarded", "awards", "granted", "claimants are entitled"]
+    for p in positives:
+        if p in preceding_context:
+            score += 1
+            
+    # Negative indicator phrases (score -1 for each match)
+    negatives = [
+        "held that", "namely", "prescribed", "as per pranay sethi", 
+        "reasonable figures on conventional heads should be",
+        "reasonable figures on conventional heads"
+    ]
+    for n in negatives:
+        if n in preceding_context:
+            score -= 1
+            
+    return score
+
+
+def get_personal_deduction_pct(marital_status, dependents):
+    """
+    Computes the personal expense deduction percentage using standard Sarla Verma / Pranay Sethi bands.
+    Lookup is driven by dependent count first, with marital status as tiebreaker/fallback.
+    """
+    status = str(marital_status).strip().lower() if marital_status else ""
+    try:
+        dep_cnt = int(dependents) if dependents is not None else 0
+    except (ValueError, TypeError):
+        dep_cnt = 0
+        
+    is_single = status in ("single", "bachelor", "unmarried", "b", "s")
+    if is_single:
+        if dep_cnt <= 1:
+            return 0.50
+        else:
+            return 1.0 / 3.0
+    else:
+        if dep_cnt <= 3:
+            return 1.0 / 3.0
+        elif dep_cnt <= 6:
+            return 0.25
+        else:
+            return 0.20
+
+
 def contextual_extract(patterns, sections, priority_list, type_cast=str, default_val=None, field_name=None, debug_info=None, pages=None, sections_metadata=None, page_importances=None):
     """
     Upgraded Contextual Entity Extraction with dynamic section priority and page-importance tracking.
@@ -2162,6 +2280,9 @@ def contextual_extract(patterns, sections, priority_list, type_cast=str, default
     if debug_info is None:
         debug_info = {}
         
+    is_scored_field = field_name in ["consortium", "funeral_expenses", "estate_loss", "loss_estate"]
+    candidates = []
+
     for sec_name, base_weight in priority_list:
         text = sections.get(sec_name, "")
         if not text:
@@ -2222,15 +2343,6 @@ def contextual_extract(patterns, sections, priority_list, type_cast=str, default
                 if is_text_field:
                     final_val = clean_legal_name(final_val)
                     
-                if field_name:
-                    debug_info[field_name] = {
-                        "matched_source_text": matched_source.strip(),
-                        "regex_used": pat,
-                        "stop_token_triggered": stop_token_triggered,
-                        "raw_captured": raw_val.strip(),
-                        "final_extracted": final_val
-                    }
-                    
                 # Determine source page
                 sec_meta = sections_metadata.get(sec_name, {}) if sections_metadata else {}
                 start_p = sec_meta.get("start_page", 1)
@@ -2261,22 +2373,54 @@ def contextual_extract(patterns, sections, priority_list, type_cast=str, default
                 if is_text_field:
                     confidence = validate_name_confidence(final_val, confidence)
                     
+                valid_candidate = False
+                val_to_store = None
+                
                 if type_cast == float:
                     val = parse_indian_rupee_value(final_val)
                     if val > 0:
-                        return val, round(confidence, 2), sec_name, matched_page
+                        valid_candidate = True
+                        val_to_store = val
                 elif type_cast == int:
                     digit_match = re.search(r'\d+', final_val)
                     if digit_match:
                         try:
                             val = int(digit_match.group(0))
-                            return val, round(confidence, 2), sec_name, matched_page
+                            valid_candidate = True
+                            val_to_store = val
                         except ValueError:
                             pass
                 else:
                     if len(final_val) > 2:
-                        return final_val, round(confidence, 2), sec_name, matched_page
+                        valid_candidate = True
+                        val_to_store = final_val
                         
+                if valid_candidate:
+                    candidate_debug = {
+                        "matched_source_text": matched_source.strip(),
+                        "regex_used": pat,
+                        "stop_token_triggered": stop_token_triggered,
+                        "raw_captured": raw_val.strip(),
+                        "final_extracted": final_val
+                    }
+                    if is_scored_field:
+                        score = _score_award_context(text, m.start())
+                        priority_idx = next((i for i, (s, _) in enumerate(priority_list) if s == sec_name), 999)
+                        candidates.append({
+                            "val": val_to_store,
+                            "confidence": round(confidence, 2),
+                            "sec_name": sec_name,
+                            "matched_page": matched_page,
+                            "score": score,
+                            "priority": priority_idx,
+                            "pos": m.start(),
+                            "debug": candidate_debug
+                        })
+                    else:
+                        if field_name:
+                            debug_info[field_name] = candidate_debug
+                        return val_to_store, round(confidence, 2), sec_name, matched_page
+
     # Targeted raw_ocr document-wide search fallback
     raw_ocr_text = sections.get("raw_ocr", "")
     if raw_ocr_text and not any(sec_name == "raw_ocr" for sec_name, _ in priority_list):
@@ -2316,20 +2460,63 @@ def contextual_extract(patterns, sections, priority_list, type_cast=str, default
                     if is_text_field:
                         confidence = validate_name_confidence(final_val, confidence)
                     
+                    valid_candidate = False
+                    val_to_store = None
+                    
                     if type_cast == float:
                         val = parse_indian_rupee_value(final_val)
                         if val > 0:
-                            return val, confidence, "raw_ocr_fallback", matched_page
+                            valid_candidate = True
+                            val_to_store = val
                     elif type_cast == int:
                         digit_match = re.search(r'\d+', final_val)
                         if digit_match:
                             try:
-                                return int(digit_match.group(0)), confidence, "raw_ocr_fallback", matched_page
+                                val = int(digit_match.group(0))
+                                valid_candidate = True
+                                val_to_store = val
                             except ValueError:
                                 pass
                     else:
                         if len(final_val) > 2:
-                            return final_val, confidence, "raw_ocr_fallback", matched_page
+                            valid_candidate = True
+                            val_to_store = final_val
+                            
+                    if valid_candidate:
+                        candidate_debug = {
+                            "matched_source_text": matched_source.strip(),
+                            "regex_used": pat,
+                            "stop_token_triggered": "raw_ocr_fallback",
+                            "raw_captured": raw_val.strip(),
+                            "final_extracted": final_val
+                        }
+                        if is_scored_field:
+                            score = _score_award_context(raw_ocr_text, m.start())
+                            candidates.append({
+                                "val": val_to_store,
+                                "confidence": confidence,
+                                "sec_name": "raw_ocr_fallback",
+                                "matched_page": matched_page,
+                                "score": score,
+                                "priority": 999,
+                                "pos": m.start(),
+                                "debug": candidate_debug
+                            })
+                        else:
+                            if field_name:
+                                debug_info[field_name] = candidate_debug
+                            return val_to_store, confidence, "raw_ocr_fallback", matched_page
+
+    if is_scored_field and candidates:
+        # Sort candidates:
+        # 1. score descending
+        # 2. priority ascending (lower index is better priority)
+        # 3. pos descending (prefer last match)
+        candidates.sort(key=lambda x: (-x["score"], x["priority"], -x["pos"]))
+        best = candidates[0]
+        if field_name:
+            debug_info[field_name] = best["debug"]
+        return best["val"], best["confidence"], best["sec_name"], best["matched_page"]
 
     fallback_confidence = 0.30
     return default_val, fallback_confidence, "raw_ocr", 1
@@ -2426,15 +2613,7 @@ def deduce_notional_income(award_amount, age, marital_status, dependents, future
         multiplier = expected_multiplier
         
     # Deduction
-    dep_cnt = int(dependents) if (isinstance(dependents, int) or (isinstance(dependents, str) and dependents.isdigit())) else 3
-    if marital_status == "single" or dep_cnt <= 1:
-        deduct_pct = 0.50
-    elif dep_cnt <= 3:
-        deduct_pct = 1.0 / 3.0
-    elif dep_cnt <= 6:
-        deduct_pct = 0.25
-    else:
-        deduct_pct = 0.20
+    deduct_pct = get_personal_deduction_pct(marital_status, dependents)
         
     # Prospects
     if future_prospect is None or future_prospect == "":
@@ -3290,6 +3469,62 @@ def parse_extracted_text(text_lines, case_type=None):
         )
         method_future_prospect = "Section-Aware Contextual Regex"
 
+    # 9.35 Respectively-based Triple conventional heads extraction
+    resp_consortium = None
+    resp_funeral = None
+    resp_estate = None
+    resp_consortium_score = -999999
+    
+    # We search the compensation/award copy sections or full_text for "respectively"
+    # and patterns matching 3 amounts and the conventional head keywords.
+    search_text_resp = (sections.get("compensation_section", "") or sections.get("award_copy_section", "") or full_text)
+    
+    for m_resp in re.finditer(r'\brespectively\b', search_text_resp, re.IGNORECASE):
+        start = max(0, m_resp.start() - 250)
+        end = min(len(search_text_resp), m_resp.end() + 250)
+        window = search_text_resp[start:end]
+        window_lower = window.lower()
+        
+        amounts = []
+        for amt_match in re.finditer(r'\b(?:rs\.?|inr|हैं|%|₹)?\s*([\d,]{4,7})\b', window, re.IGNORECASE):
+            val = parse_indian_rupee_value(amt_match.group(1))
+            if 1980 <= val <= 2050:
+                continue
+            if val > 0:
+                amounts.append((val, amt_match.start()))
+                
+        if len(amounts) >= 3:
+            has_cons = "consortium" in window_lower
+            has_est = "estate" in window_lower
+            has_fun = "funeral" in window_lower
+            
+            if has_cons and has_est and has_fun:
+                pos_cons = window_lower.find("consortium")
+                pos_est = window_lower.find("estate")
+                pos_fun = window_lower.find("funeral")
+                
+                heads = sorted([
+                    ("consortium", pos_cons),
+                    ("estate", pos_est),
+                    ("funeral", pos_fun)
+                ], key=lambda x: x[1])
+                
+                sorted_amounts = sorted(amounts, key=lambda x: x[1])[:3]
+                
+                mapping = {}
+                for i in range(3):
+                    mapping[heads[i][0]] = sorted_amounts[i][0]
+                    
+                score = _score_award_context(search_text_resp, m_resp.start())
+                if score >= resp_consortium_score:
+                    resp_consortium = mapping["consortium"]
+                    resp_estate = mapping["estate"]
+                    resp_funeral = mapping["funeral"]
+                    resp_consortium_score = score
+
+    # 9.36 Conventional heads list extraction
+    conv_list_vals = extract_conventional_heads_list(search_text_resp)
+
     # 9.4 Consortium
     consortium = comp_fields["consortium"]
     if consortium:
@@ -3299,12 +3534,27 @@ def parse_extracted_text(text_lines, case_type=None):
         page_consortium = find_exact_page(int(consortium), sec_meta.get("start_page", 1), sec_meta.get("end_page", 1), pages)
         method_consortium = "Compensation Table Extraction"
     else:
-        cons_patterns = [r'consortium\s*(?:of)?\s*(?:rs\.?|inr)?\s*(\d{4,6})\b']
-        consortium, conf_consortium, sec_consortium, page_consortium = contextual_extract(
-            cons_patterns, sections, [("compensation_section", 95), ("award_copy_section", 90)], default_val=48400.0, type_cast=float,
-            field_name="consortium", debug_info=parser_debug, pages=pages, sections_metadata=sections_metadata, page_importances=page_importances
-        )
-        method_consortium = "Section-Aware Contextual Regex"
+        if conv_list_vals and "consortium" in conv_list_vals:
+            consortium = conv_list_vals["consortium"]
+            conf_consortium = 0.95
+            sec_consortium = "compensation_section" if sections.get("compensation_section", "") else "award_copy_section"
+            sec_meta = sections_metadata.get(sec_consortium, {})
+            page_consortium = find_exact_page(int(consortium), sec_meta.get("start_page", 1), sec_meta.get("end_page", 1), pages)
+            method_consortium = "Conventional Heads List Extraction"
+        elif resp_consortium is not None:
+            consortium = resp_consortium
+            conf_consortium = 0.95
+            sec_consortium = "compensation_section" if sections.get("compensation_section", "") else "award_copy_section"
+            sec_meta = sections_metadata.get(sec_consortium, {})
+            page_consortium = find_exact_page(int(consortium), sec_meta.get("start_page", 1), sec_meta.get("end_page", 1), pages)
+            method_consortium = "Respectively Sentence Extraction"
+        else:
+            cons_patterns = [r'consortium\s*(?:of|is|was|to|@)?\s*(?:rs\.?|inr|rupees)?\s*([\d,]{4,7})\b']
+            consortium, conf_consortium, sec_consortium, page_consortium = contextual_extract(
+                cons_patterns, sections, [("compensation_section", 95), ("award_copy_section", 90)], default_val=48400.0, type_cast=float,
+                field_name="consortium", debug_info=parser_debug, pages=pages, sections_metadata=sections_metadata, page_importances=page_importances
+            )
+            method_consortium = "Section-Aware Contextual Regex"
 
     # 9.5 Funeral Expenses
     funeral_expenses = comp_fields["funeral_expenses"]
@@ -3315,12 +3565,27 @@ def parse_extracted_text(text_lines, case_type=None):
         page_funeral_expenses = find_exact_page(int(funeral_expenses), sec_meta.get("start_page", 1), sec_meta.get("end_page", 1), pages)
         method_funeral_expenses = "Compensation Table Extraction"
     else:
-        fun_patterns = [r'funeral\s*(?:expenses)?\s*(?:of)?\s*(?:rs\.?|inr)?\s*(\d{4,6})\b']
-        funeral_expenses, conf_funeral_expenses, sec_funeral_expenses, page_funeral_expenses = contextual_extract(
-            fun_patterns, sections, [("compensation_section", 95), ("award_copy_section", 90)], default_val=18150.0, type_cast=float,
-            field_name="funeral_expenses", debug_info=parser_debug, pages=pages, sections_metadata=sections_metadata, page_importances=page_importances
-        )
-        method_funeral_expenses = "Section-Aware Contextual Regex"
+        if conv_list_vals and "funeral_expenses" in conv_list_vals:
+            funeral_expenses = conv_list_vals["funeral_expenses"]
+            conf_funeral_expenses = 0.95
+            sec_funeral_expenses = "compensation_section" if sections.get("compensation_section", "") else "award_copy_section"
+            sec_meta = sections_metadata.get(sec_funeral_expenses, {})
+            page_funeral_expenses = find_exact_page(int(funeral_expenses), sec_meta.get("start_page", 1), sec_meta.get("end_page", 1), pages)
+            method_funeral_expenses = "Conventional Heads List Extraction"
+        elif resp_funeral is not None:
+            funeral_expenses = resp_funeral
+            conf_funeral_expenses = 0.95
+            sec_funeral_expenses = "compensation_section" if sections.get("compensation_section", "") else "award_copy_section"
+            sec_meta = sections_metadata.get(sec_funeral_expenses, {})
+            page_funeral_expenses = find_exact_page(int(funeral_expenses), sec_meta.get("start_page", 1), sec_meta.get("end_page", 1), pages)
+            method_funeral_expenses = "Respectively Sentence Extraction"
+        else:
+            fun_patterns = [r'funeral\s*(?:expenses?|rites?|rituals?)?\s*(?:of|is|was|to|@)?\s*(?:rs\.?|inr|rupees)?\s*([\d,]{4,7})\b']
+            funeral_expenses, conf_funeral_expenses, sec_funeral_expenses, page_funeral_expenses = contextual_extract(
+                fun_patterns, sections, [("compensation_section", 95), ("award_copy_section", 90)], default_val=18150.0, type_cast=float,
+                field_name="funeral_expenses", debug_info=parser_debug, pages=pages, sections_metadata=sections_metadata, page_importances=page_importances
+            )
+            method_funeral_expenses = "Section-Aware Contextual Regex"
 
     # 9.6 Total Compensation
     total_compensation = comp_fields["total_compensation"]
@@ -3353,12 +3618,27 @@ def parse_extracted_text(text_lines, case_type=None):
     method_disability = "Section-Aware Contextual Regex"
 
     # 9.8 Estate Loss
-    est_patterns = [r'(?:loss\s+of\s+)?estate\s*(?:of)?\s*(?:rs\.?|inr)?\s*(\d{4,6})\b']
-    estate_loss, conf_estate_loss, sec_estate_loss, page_estate_loss = contextual_extract(
-        est_patterns, sections, [("compensation_section", 95), ("award_copy_section", 90)], default_val=18150.0, type_cast=float,
-        field_name="estate_loss", debug_info=parser_debug, pages=pages, sections_metadata=sections_metadata, page_importances=page_importances
-    )
-    method_estate_loss = "Section-Aware Contextual Regex"
+    if conv_list_vals and "estate_loss" in conv_list_vals:
+        estate_loss = conv_list_vals["estate_loss"]
+        conf_estate_loss = 0.95
+        sec_estate_loss = "compensation_section" if sections.get("compensation_section", "") else "award_copy_section"
+        sec_meta = sections_metadata.get(sec_estate_loss, {})
+        page_estate_loss = find_exact_page(int(estate_loss), sec_meta.get("start_page", 1), sec_meta.get("end_page", 1), pages)
+        method_estate_loss = "Conventional Heads List Extraction"
+    elif resp_estate is not None:
+        estate_loss = resp_estate
+        conf_estate_loss = 0.95
+        sec_estate_loss = "compensation_section" if sections.get("compensation_section", "") else "award_copy_section"
+        sec_meta = sections_metadata.get(sec_estate_loss, {})
+        page_estate_loss = find_exact_page(int(estate_loss), sec_meta.get("start_page", 1), sec_meta.get("end_page", 1), pages)
+        method_estate_loss = "Respectively Sentence Extraction"
+    else:
+        est_patterns = [r'(?:loss\s+of\s+)?estate\s*(?:of|is|was|to|@)?\s*(?:rs\.?|inr|rupees)?\s*([\d,]{4,7})\b']
+        estate_loss, conf_estate_loss, sec_estate_loss, page_estate_loss = contextual_extract(
+            est_patterns, sections, [("compensation_section", 95), ("award_copy_section", 90)], default_val=18150.0, type_cast=float,
+            field_name="estate_loss", debug_info=parser_debug, pages=pages, sections_metadata=sections_metadata, page_importances=page_importances
+        )
+        method_estate_loss = "Section-Aware Contextual Regex"
 
     # ======================================================
     # 10. NEW STRUCTURED FIELDS: FIR, Policy, Vehicle, Insurance
@@ -3890,17 +4170,7 @@ def parse_extracted_text(text_lines, case_type=None):
                 pros_pct = float(future_prospect) if future_prospect else expected_prospects
                 enhanced_monthly = inc_val * (1.0 + pros_pct / 100.0)
                 annual_inc = enhanced_monthly * 12.0
-                dep_cnt = int(dependents) if dependents else 3
-                if marital_status == "single":
-                    deduct_pct = 0.50
-                elif dep_cnt <= 1:
-                    deduct_pct = 0.50
-                elif dep_cnt <= 3:
-                    deduct_pct = 1.0 / 3.0
-                elif dep_cnt <= 6:
-                    deduct_pct = 0.25
-                else:
-                    deduct_pct = 0.20
+                deduct_pct = get_personal_deduction_pct(marital_status, dependents)
                 family_contribution = annual_inc * (1.0 - deduct_pct)
                 loss_of_dependency = family_contribution * mult_val
                 reconstructed_compensation = loss_of_dependency + consortium + funeral_expenses + estate_loss
@@ -4148,8 +4418,7 @@ def parse_extracted_text(text_lines, case_type=None):
     citations = sorted(list(unique_citations))
     conf_citations = 0.95 if citations else 0.0
 
-    dep_cnt = int(dependents) if dependents else 3
-    deduct_pct = 0.50 if marital_status == "single" or dep_cnt <= 1 else 0.33
+    deduct_pct = get_personal_deduction_pct(marital_status, dependents)
     dependency_deduction = round(deduct_pct * 100, 2)
 
     if not monthly_income: monthly_income = ""

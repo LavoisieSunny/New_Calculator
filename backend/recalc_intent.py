@@ -78,6 +78,12 @@ _ASSIGN_CUE = r"(?:is|=|:|to|as|at|of)?\s*₹?\s*([\d][\d,\.]*)"
 def _looks_informational(lower_text: str) -> bool:
     if any(trig in lower_text for trig in RECALC_TRIGGER_WORDS):
         return False
+    if re.search(r"\bif\b", lower_text):
+        if lower_text.strip().startswith(INFORMATIONAL_STARTERS):
+            if re.search(r"\d", lower_text):
+                return False
+        else:
+            return False
     return lower_text.strip().startswith(INFORMATIONAL_STARTERS)
 
 
@@ -91,6 +97,7 @@ def parse_recalc_intent(text: str, case_type: str) -> Optional[Tuple[str, float,
     field_map = DEATH_FIELD_MAP if case_type == "death" else INJURY_FIELD_MAP
     keys = sorted(field_map.keys(), key=len, reverse=True)
 
+    # First pass: try AFTER-match (preferred)
     for phrase in keys:
         idx = lower.find(phrase)
         if idx == -1:
@@ -100,19 +107,34 @@ def parse_recalc_intent(text: str, case_type: str) -> Optional[Tuple[str, float,
         if m:
             try:
                 value = float(m.group(1).replace(",", ""))
+                return field_map[phrase], value, phrase
             except ValueError:
                 continue
-            return field_map[phrase], value, phrase
 
-    if any(trig in lower for trig in RECALC_TRIGGER_WORDS):
+    # Second pass: try BEFORE-match
+    for phrase in keys:
+        idx = lower.find(phrase)
+        if idx == -1:
+            continue
+        head = lower[max(0, idx - 40):idx]
+        rx = r"\b(\d[\d,\.]*)\s*(?:rs|rupees|inr|₹)?(?:\s+(?:were provided|provided|awarded|granted|for|of|is|was|to|as|at|assigned|under|towards|under the head of|for the|with|were|are|be|be provided|amounting to))*\s*$"
+        m_before = re.search(rx, head, re.IGNORECASE)
+        if m_before:
+            try:
+                value = float(m_before.group(1).replace(",", ""))
+                return field_map[phrase], value, phrase
+            except ValueError:
+                continue
+
+    if any(trig in lower for trig in RECALC_TRIGGER_WORDS) or re.search(r"\bif\b", lower):
         nums = re.findall(r"[\d][\d,\.]*", lower)
         matched_fields = [phrase for phrase in keys if phrase in lower]
         if nums and len(matched_fields) == 1:
             try:
                 value = float(nums[-1].replace(",", ""))
+                return field_map[matched_fields[0]], value, matched_fields[0]
             except ValueError:
                 return None
-            return field_map[matched_fields[0]], value, matched_fields[0]
 
     return None
 
@@ -132,20 +154,20 @@ def build_recalc_base(parsed_fields: Dict[str, Any], calculator_result: Dict[str
             "dependents": pf.get("dependents", 0),
             "marital_status": pf.get("marital_status", "married"),
             "future_type": pf.get("future_type", 2),
-            "consortium": cr.get("consortium", 48400),
-            "funeral_expenses": cr.get("funeral_expenses", 18150),
-            "loss_estate": cr.get("loss_estate", 18150),
+            "consortium": cr.get("consortium") or pf.get("tribunal_consortium") or pf.get("consortium") or 48400,
+            "funeral_expenses": cr.get("funeral_expenses") or pf.get("tribunal_funeral") or pf.get("funeral_expenses") or 18150,
+            "loss_estate": cr.get("loss_estate") or pf.get("tribunal_estate") or pf.get("loss_estate") or 18150,
         })
     else:
         base.update({
             "disability": pf.get("disability", 0),
-            "medical_expenses": cr.get("medical_expenses", 0),
-            "future_medical_expenses": cr.get("future_medical_expenses", 0),
-            "pain_and_suffering": cr.get("pain_and_suffering", 0),
-            "transportation": cr.get("transportation", 0),
-            "special_diet": cr.get("special_diet", 0),
-            "attender_charges": cr.get("attender_charges", 0),
-            "loss_of_income": cr.get("loss_of_income", 0),
+            "medical_expenses": cr.get("medical_expenses") or pf.get("tribunal_medical", 0),
+            "future_medical_expenses": cr.get("future_medical_expenses") or pf.get("tribunal_future_medical", 0),
+            "pain_and_suffering": cr.get("pain_and_suffering") or pf.get("tribunal_pain_suffering", 0),
+            "transportation": cr.get("transportation") or pf.get("tribunal_transport", 0),
+            "special_diet": cr.get("special_diet") or pf.get("tribunal_special_diet", 0),
+            "attender_charges": cr.get("attender_charges") or pf.get("tribunal_attender", 0),
+            "loss_of_income": cr.get("loss_of_income") or pf.get("tribunal_loss_of_income", 0),
         })
 
     return base
@@ -219,6 +241,45 @@ def run_recalculation(question: str, parsed_fields: Optional[Dict[str, Any]], ca
             lines.append(f"- {label}: {val}%")
         else:
             lines.append(f"- {label}: Rs. {val:,.0f}")
+
+    lines.append("")
+    
+    fallback_heads = []
+    workstation_heads = []
+    
+    if case_type == "death":
+        for label, cr_key, pf_key in [
+            ("Consortium", "consortium", "tribunal_consortium"),
+            ("Funeral Expenses", "funeral_expenses", "tribunal_funeral"),
+            ("Loss of Estate", "loss_estate", "tribunal_estate")
+        ]:
+            if cr_key == field_key:
+                continue
+            if cr.get(cr_key):
+                workstation_heads.append(label)
+            elif pf.get(pf_key) or pf.get(cr_key):
+                fallback_heads.append(label)
+    else:
+        for label, cr_key, pf_key in [
+            ("Medical Expenses", "medical_expenses", "tribunal_medical"),
+            ("Future Medical Expenses", "future_medical_expenses", "tribunal_future_medical"),
+            ("Pain & Suffering", "pain_and_suffering", "tribunal_pain_suffering"),
+            ("Transportation", "transportation", "tribunal_transport"),
+            ("Special Diet", "special_diet", "tribunal_special_diet"),
+            ("Attender Charges", "attender_charges", "tribunal_attender"),
+            ("Loss of Income", "loss_of_income", "tribunal_loss_of_income")
+        ]:
+            if cr_key == field_key:
+                continue
+            if cr.get(cr_key):
+                workstation_heads.append(label)
+            elif pf.get(pf_key):
+                fallback_heads.append(label)
+
+    if fallback_heads:
+        lines.append(f"*(Note: Figures for {', '.join(fallback_heads)} were pulled from PDF-extracted tribunal figures as a fallback because the calculator had not been run yet.)*")
+    if workstation_heads:
+        lines.append(f"*(Note: Figures for {', '.join(workstation_heads)} were pulled from already-calculated workstation values.)*")
 
     lines.append("")
     lines.append(f"**Revised Total: Rs. {new_total:,.0f}**")
