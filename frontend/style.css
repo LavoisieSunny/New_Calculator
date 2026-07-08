@@ -2994,3 +2994,7 @@ select.low-confidence-input {
     visibility: visible !important;
     pointer-events: auto !important;
 }
+
+.visually-hidden-calc-field {
+    display: none !important;
+}

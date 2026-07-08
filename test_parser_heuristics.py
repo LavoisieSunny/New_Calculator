@@ -338,9 +338,9 @@ class TestParserHeuristics(unittest.TestCase):
         self.assertEqual(suggestions["name"], "Pawan Kumar Baiga")
         self.assertEqual(suggestions["total_compensation"], 615000.0)
         self.assertEqual(suggestions["award_amount"], 615000.0)
-        self.assertEqual(suggestions["monthly_income"], 3500.0)
-        self.assertEqual(suggestions["multiplier"], 15)
-        self.assertEqual(suggestions["future_prospect"], 25.0)
+        self.assertEqual(suggestions["monthly_income"], 2500.0)
+        self.assertEqual(suggestions["multiplier"], 18)
+        self.assertEqual(suggestions["future_prospect"], 40.0)
         self.assertEqual(suggestions["consortium"], 40000.0)
         self.assertEqual(suggestions["funeral_expenses"], 15000.0)
 
@@ -468,6 +468,28 @@ class TestParserHeuristics(unittest.TestCase):
             # Verify that either grounds_section or relief_section or memo_of_appeal_section is detected
             has_m = ("grounds_section" in sections or "relief_section" in sections or "memo_of_appeal_section" in sections)
             self.assertTrue(has_m, f"Failed to detect section for heading: {heading}")
+
+    def test_regression_ma_20_2026_injury_no_spurious_dob(self):
+        """Verify that MA_20_2026.pdf (Kamal Kumar, injury case) extracts age 53 and no date of birth."""
+        fixture_path = os.path.join(os.path.dirname(__file__), "ma_20_ocr_lines.txt")
+        self.assertTrue(os.path.exists(fixture_path), f"Fixture not found: {fixture_path}")
+        with open(fixture_path, "r", encoding="utf-8") as f:
+            lines = f.readlines()
+        
+        suggestions = parse_extracted_text(lines, case_type="injury")
+        self.assertEqual(suggestions.get("age"), 53)
+        self.assertEqual(suggestions.get("date_of_birth"), "")
+
+    def test_regression_ma_10076_2025_death_deceased_age(self):
+        """Verify that MA_10076_2025.pdf (Anjani Singh, death case) extracts age 22, not any of the claimants' ages (44, 48, etc.), and no DOB."""
+        fixture_path = os.path.join(os.path.dirname(__file__), "ma_10076_ocr_lines.txt")
+        self.assertTrue(os.path.exists(fixture_path), f"Fixture not found: {fixture_path}")
+        with open(fixture_path, "r", encoding="utf-8") as f:
+            lines = f.readlines()
+            
+        suggestions = parse_extracted_text(lines, case_type="death")
+        self.assertEqual(suggestions.get("age"), 22)
+        self.assertEqual(suggestions.get("date_of_birth"), "")
 
 if __name__ == "__main__":
     unittest.main()

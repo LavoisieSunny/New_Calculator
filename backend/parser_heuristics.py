@@ -81,9 +81,14 @@ FIELD_LABEL_ALIASES = {
         "father/husband name", "father / husband name",
         "father or husband name", "guardian name"
     ],
+    "age_deceased": [
+        "age of deceased", "age of victim", "age at the time of accident", "age at accident"
+    ],
+    "age_claimant": [
+        "age of claimant", "age of injured"
+    ],
     "age": [
-        "age", "age of claimant", "age of deceased", "age of injured",
-        "age of victim", "age at the time of accident", "age at accident"
+        "age"
     ],
     "date_of_birth": [
         "date of birth", "dob", "d.o.b", "born on", "birth date",
@@ -352,6 +357,10 @@ def parse_mact_tabular_form(text_lines):
         # Partial alias match (label contains alias or alias contains label)
         if not canonical:
             for alias, can in alias_lookup.items():
+                if can == "date_of_birth":
+                    valid_dob_phrases = ["date of birth", "dob", "d.o.b", "born on", "birth date"]
+                    if not any(phrase in label_norm for phrase in valid_dob_phrases):
+                        continue
                 if alias in label_norm or label_norm in alias:
                     canonical = can
                     break
@@ -2767,30 +2776,115 @@ def parse_extracted_text(text_lines, case_type=None):
             }
 
     # 4. Age only from claimant/petition section or chronological events
+    # 4. Age only from claimant/petition section or chronological events
     if case_type == "death":
-        # Target patterns that explicitly mention deceased/victim/late person
-        death_age_patterns = [
-            r'\b(?:deceased|victim|deceased\s+person|description\s+of\s+deceased)\b.*?\b(?:age|aged)\s*(?:about|is|was)?\s*[:\-;]?\s*(\d{1,2})\b',
-            r'\b(?:age|aged)\s+of\s+(?:the\s+)?(?:deceased|victim)\s+(?:was|is)?\s*[:\-]?\s*(\d{1,2})\b',
-            r'\b(?:deceased|victim)\s+(?:was\s+)?aged?\s*(?:about|is)?\s*(\d{1,2})\b',
-            r'\b(?:deceased|victim)\b.*?\baged?\s*[:\-]?\s*(\d{1,2})\b',
-            r'\bage\s+of\s+the?\s*deceased\s*[:\-]?\s*(\d{1,2})\b',
-            r'\bdeceased\s+was\s+aged\s*(?:about)?\s*(\d{1,2})\b',
-            r'\bdeceased\s+aged\s*(?:about)?\s*(\d{1,2})\b',
-            r'\bage\s+at\s+the?\s*time\s+of\s+(?:the\s+)?accident\s*[:\-]?\s*(\d{1,2})\b',
-        ]
-        # Avoid checking claimant_section first, as it contains claimant/petitioner list with ages
-        age, conf_age, sec_age, page_age = contextual_extract(
-            death_age_patterns, sections, [("chronological_events_section", 90), ("compensation_section", 80), ("award_copy_section", 70)], default_val="", type_cast=int,
-            field_name="age", debug_info=parser_debug, pages=pages, sections_metadata=sections_metadata, page_importances=page_importances
+        age = ""
+        conf_age = 0.0
+        sec_age = "raw_ocr"
+        page_age = 1
+        method_age = "Fallback"
+
+        # A. Search specifically within a "Name and Description of the Deceased person" section/heading
+        # or equivalent phrasing in full_text
+        dec_sec_match = re.search(
+            r'\b(?:name\s+and\s+description\s+of\s+(?:the\s+)?deceased(?:\s+person)?|description\s+of\s+(?:the\s+)?deceased(?:\s+person)?|deceased\s+person|fatal\s+accident\s+case)\b',
+            full_text,
+            re.IGNORECASE
         )
+        if dec_sec_match:
+            start_pos = dec_sec_match.end()
+            end_pos = min(len(full_text), start_pos + 600)
+            deceased_block = full_text[start_pos:end_pos]
+            
+            for pat in [
+                r'\b(?:age|aged)\s*(?:about|is|was)?\s*[:\-;]?\s*(\d{1,2})\b',
+                r'\b(\d{1,2})\s*(?:years|yrs)\b'
+            ]:
+                m = re.search(pat, deceased_block, re.IGNORECASE)
+                if m:
+                    val = int(m.group(1))
+                    if 5 <= val <= 100:
+                        age = val
+                        conf_age = 0.99
+                        sec_age = "deceased_section"
+                        page_age = find_exact_page(str(age), 1, len(pages), pages) if pages else 1
+                        method_age = "Deceased Section Extraction"
+                        parser_debug["age"] = {
+                            "matched_source_text": dec_sec_match.group(0) + " ... " + m.group(0),
+                            "regex_used": pat,
+                            "stop_token_triggered": "Section Match",
+                            "raw_captured": m.group(1),
+                            "final_extracted": age
+                        }
+                        break
+
+        # B. Contextual extraction from non-claimant sections using death patterns
         if not age:
-            # If not found, fall back to grounds_section or relief_section which describe the deceased/accident details
+            death_age_patterns = [
+                r'\b(?:deceased|victim|deceased\s+person|description\s+of\s+deceased)\b.*?\b(?:age|aged)\s*(?:about|is|was)?\s*[:\-;]?\s*(\d{1,2})\b',
+                r'\b(?:age|aged)\s+of\s+(?:the\s+)?(?:deceased|victim)\s+(?:was|is)?\s*[:\-]?\s*(\d{1,2})\b',
+                r'\b(?:deceased|victim)\s+(?:was\s+)?aged?\s*(?:about|is)?\s*(\d{1,2})\b',
+                r'\b(?:deceased|victim)\b.*?\baged?\s*[:\-]?\s*(\d{1,2})\b',
+                r'\bage\s+of\s+the?\s*deceased\s*[:\-]?\s*(\d{1,2})\b',
+                r'\bdeceased\s+was\s+aged\s*(?:about)?\s*(\d{1,2})\b',
+                r'\bdeceased\s+aged\s*(?:about)?\s*(\d{1,2})\b',
+                r'\bage\s+at\s+the?\s*time\s+of\s+(?:the\s+)?accident\s*[:\-]?\s*(\d{1,2})\b',
+            ]
             age, conf_age, sec_age, page_age = contextual_extract(
-                death_age_patterns, sections, [("grounds_section", 80), ("relief_section", 70)], default_val="", type_cast=int,
+                death_age_patterns, sections, [("chronological_events_section", 90), ("compensation_section", 80), ("award_copy_section", 70)], default_val="", type_cast=int,
                 field_name="age", debug_info=parser_debug, pages=pages, sections_metadata=sections_metadata, page_importances=page_importances
             )
+            if age:
+                method_age = "Section-Aware Contextual Regex"
+            else:
+                age, conf_age, sec_age, page_age = contextual_extract(
+                    death_age_patterns, sections, [("grounds_section", 80), ("relief_section", 70)], default_val="", type_cast=int,
+                    field_name="age", debug_info=parser_debug, pages=pages, sections_metadata=sections_metadata, page_importances=page_importances
+                )
+                if age:
+                    method_age = "Section-Aware Contextual Regex"
+
+        # C. Fallback: search for age value near the deceased's name specifically
+        if not age and deceased_name:
+            name_tokens = [t for t in deceased_name.split() if len(t) > 2]
+            if name_tokens:
+                search_term = name_tokens[0]
+                pos = 0
+                while True:
+                    idx = full_text.lower().find(search_term.lower(), pos)
+                    if idx == -1:
+                        break
+                    w_start = max(0, idx - 150)
+                    w_end = min(len(full_text), idx + len(search_term) + 150)
+                    window = full_text[w_start:w_end]
+                    
+                    for pat in [
+                        r'\b(?:age|aged)\s*(?:about|is|was)?\s*[:\-;]?\s*(\d{1,2})\b',
+                        r'\b(\d{1,2})\s*(?:years|yrs)\b'
+                    ]:
+                        m = re.search(pat, window, re.IGNORECASE)
+                        if m:
+                            val = int(m.group(1))
+                            if 5 <= val <= 100:
+                                age = val
+                                conf_age = 0.95
+                                sec_age = "near_deceased_name"
+                                page_age = find_exact_page(str(age), 1, len(pages), pages) if pages else 1
+                                method_age = "Proximity to Deceased Name"
+                                parser_debug["age"] = {
+                                    "matched_source_text": window,
+                                    "regex_used": pat,
+                                    "stop_token_triggered": "Name Proximity",
+                                    "raw_captured": m.group(1),
+                                    "final_extracted": age
+                                }
+                                break
+                    if age:
+                        break
+                    pos = idx + len(search_term)
+
     else:
+        # Injury case (applicant is the injured person, keep original logic)
         age_patterns = [
             r'\bage\s+of\s+the?\s*deceased\s*[:\-]?\s*(\d{1,2})\b',
             r'\bage\s+of\s+the?\s*injured\s*[:\-]?\s*(\d{1,2})\b',
@@ -2811,7 +2905,8 @@ def parse_extracted_text(text_lines, case_type=None):
             age_patterns, sections, [("claimant_section", 95), ("chronological_events_section", 80)], default_val="", type_cast=int,
             field_name="age", debug_info=parser_debug, pages=pages, sections_metadata=sections_metadata, page_importances=page_importances
         )
-    method_age = "Section-Aware Contextual Regex"
+        method_age = "Section-Aware Contextual Regex"
+
     # Guard: reject implausible ages (e.g. paragraph numbers matched as age)
     if isinstance(age, int) and age < 6:
         age = ""
@@ -2819,36 +2914,43 @@ def parse_extracted_text(text_lines, case_type=None):
         sec_age = "raw_ocr"
         method_age = "Fallback"
 
-    # Tabular form fallback for age
-    if not age and tabular_fields.get("age"):
-        age_raw = tabular_fields["age"]
-        age_m = re.search(r'(\d{1,2})', age_raw)
-        if age_m and int(age_m.group(1)) >= 6:
-            age = int(age_m.group(1))
-            conf_age = 0.88
-            sec_age = "tabular_form"
-            page_age = 1
-            method_age = "Tabular Form Extraction"
+    # Tabular form fallback for age (case-type-aware)
+    if not age:
+        age_raw = None
+        if case_type == "death":
+            age_raw = tabular_fields.get("age_deceased") or tabular_fields.get("age")
+        else:
+            age_raw = tabular_fields.get("age_claimant") or tabular_fields.get("age")
 
-    # Deceased Block Extraction (Age)
-    deceased_age_match = re.search(
-        r'\b(?:deceased\s+person|description\s+of\s+deceased)\b.*?\b(?:age)\s*[:\-;]\s*(\d{1,2})\b',
-        full_text,
-        re.IGNORECASE | re.DOTALL
-    )
-    if deceased_age_match:
-        age = int(deceased_age_match.group(1))
-        conf_age = 0.99
-        sec_age = "compensation_section"
-        page_age = find_exact_page(str(age), 1, len(pages), pages) if pages else 8
-        method_age = "Deceased Block Extraction"
-        parser_debug["age"] = {
-            "matched_source_text": deceased_age_match.group(0).strip(),
-            "regex_used": "Deceased Block Extraction (Age)",
-            "stop_token_triggered": "Block Match",
-            "raw_captured": deceased_age_match.group(1),
-            "final_extracted": age
-        }
+        if age_raw:
+            age_m = re.search(r'(\d{1,2})', age_raw)
+            if age_m and int(age_m.group(1)) >= 6:
+                age = int(age_m.group(1))
+                conf_age = 0.88
+                sec_age = "tabular_form"
+                page_age = 1
+                method_age = "Tabular Form Extraction"
+
+    # Deceased Block Extraction (Age) Fallback
+    if not age:
+        deceased_age_match = re.search(
+            r'\b(?:deceased\s+person|description\s+of\s+deceased)\b.*?\b(?:age)\s*[:\-;]\s*(\d{1,2})\b',
+            full_text,
+            re.IGNORECASE | re.DOTALL
+        )
+        if deceased_age_match:
+            age = int(deceased_age_match.group(1))
+            conf_age = 0.99
+            sec_age = "compensation_section"
+            page_age = find_exact_page(str(age), 1, len(pages), pages) if pages else 8
+            method_age = "Deceased Block Extraction"
+            parser_debug["age"] = {
+                "matched_source_text": deceased_age_match.group(0).strip(),
+                "regex_used": "Deceased Block Extraction (Age)",
+                "stop_token_triggered": "Block Match",
+                "raw_captured": deceased_age_match.group(1),
+                "final_extracted": age
+            }
 
     # 5. Occupation only from claimant/petition section
     occ_patterns = [
@@ -3276,15 +3378,27 @@ def parse_extracted_text(text_lines, case_type=None):
     page_date_of_birth = 1
     method_date_of_birth = "Fallback Contextual Search"
     
-    dob_dates = extract_dates_with_context(sections.get("claimant_section", "") or full_text)
-    for d_val, ctx in dob_dates:
-        if any(kw in ctx for kw in ["dob", "date of birth", "born on", "birth", "d.o.b",
-                                    "dob:", "d.o.b.", "birth date", "date of birth of"]):
-            date_of_birth = d_val
-            conf_date_of_birth = 0.95
-            sec_date_of_birth = "claimant_section" if d_val in sections.get("claimant_section", "") else "raw_ocr"
-            page_date_of_birth = find_exact_page(d_val, 1, 10, pages)
-            break
+    # Bug 1 Fix: Only match DOB directly following a valid label via regex
+    dob_target_text = sections.get("claimant_section", "")
+    dob_match = re.search(
+        r'\b(?:date\s+of\s+birth|dob|d\.o\.b\.?|born\s+on|birth\s+date)\s*[:\-]?\s*(\d{1,2})[-/\.](\d{1,2})[-/\.](\d{4})\b',
+        dob_target_text,
+        re.IGNORECASE
+    )
+    if not dob_match:
+        # Fallback to full_text but must be direct label match
+        dob_match = re.search(
+            r'\b(?:date\s+of\s+birth|dob|d\.o\.b\.?|born\s+on|birth\s+date)\s*[:\-]?\s*(\d{1,2})[-/\.](\d{1,2})[-/\.](\d{4})\b',
+            full_text,
+            re.IGNORECASE
+        )
+    if dob_match:
+        d_val = f"{int(dob_match.group(1)):02d}-{int(dob_match.group(2)):02d}-{dob_match.group(3)}"
+        date_of_birth = d_val
+        conf_date_of_birth = 0.95
+        sec_date_of_birth = "claimant_section" if d_val in (sections.get("claimant_section", "") or "") else "raw_ocr"
+        page_date_of_birth = find_exact_page(d_val, 1, 10, pages)
+        method_date_of_birth = "Direct Label Pattern Matching"
 
     # Tabular form fallback for date_of_birth
     if not date_of_birth and tabular_fields.get("date_of_birth"):
@@ -3442,43 +3556,40 @@ def parse_extracted_text(text_lines, case_type=None):
                 break
                 
         pg_age = None
-        age_anchors = [m.start() for m in re.finditer(r'\b(?:deceased|late|death of)\b', prayer_grounds_text, re.IGNORECASE)]
-        for anchor in age_anchors:
-            start_idx = max(0, anchor - 200)
-            end_idx = min(len(prayer_grounds_text), anchor + 200)
-            window = prayer_grounds_text[start_idx:end_idx]
-            
-            for pat in [
-                r'\baged\s+about\s+(\d{1,2})\s*years\b',
-                r'\bage\s+of\s+the\s+deceased\s+was\s+(\d{1,2})\b',
-                r'\bage\s+of\s+deceased\s+was\s+(\d{1,2})\b',
-                r'\baged\s+(\d{1,2})\s*years\b',
-                r'\baged\s+about\s+(\d{1,2})\b',
-                r'\bage\s*[:\-]\s*(\d{1,2})\b',
-            ]:
-                age_m = re.search(pat, window, re.IGNORECASE)
-                if age_m:
-                    val = int(age_m.group(1))
-                    if 5 <= val <= 100:
-                        pg_age = val
+        target_deceased_name = pg_deceased_name or deceased_name
+        if target_deceased_name:
+            name_tokens = [t for t in target_deceased_name.split() if len(t) > 2]
+            if name_tokens:
+                search_term = name_tokens[0]
+                pos = 0
+                while True:
+                    idx = prayer_grounds_text.lower().find(search_term.lower(), pos)
+                    if idx == -1:
                         break
-            if pg_age is not None:
-                break
-                
-        if pg_age is None:
-            for pat in [
-                r'\baged\s+about\s+(\d{1,2})\s*years\b',
-                r'\bage\s+of\s+the\s+deceased\s+was\s+(\d{1,2})\b',
-                r'\bage\s+of\s+deceased\s+was\s+(\d{1,2})\b',
-                r'\baged\s+(\d{1,2})\s*years\b',
-                r'\baged\s+about\s+(\d{1,2})\b',
-            ]:
-                age_m = re.search(pat, prayer_grounds_text, re.IGNORECASE)
-                if age_m:
-                    val = int(age_m.group(1))
-                    if 5 <= val <= 100:
-                        pg_age = val
+                    w_start = max(0, idx - 150)
+                    w_end = min(len(prayer_grounds_text), idx + len(search_term) + 150)
+                    window = prayer_grounds_text[w_start:w_end]
+                    for pat in [
+                        r'\b(?:is|was|aged?)\s*(?:about|around)?\s*(\d{1,2})\s*years?\s*old\b',
+                        r'\baged\s+about\s+(\d{1,2})\s*years\b',
+                        r'\bage\s+of\s+the\s+deceased\s+was\s+(\d{1,2})\b',
+                        r'\bage\s+of\s+deceased\s+was\s+(\d{1,2})\b',
+                        r'\baged\s+(\d{1,2})\s*years\b',
+                        r'\baged\s+about\s+(\d{1,2})\b',
+                        r'\bage\s*[:\-]\s*(\d{1,2})\b',
+                        r'\b(\d{1,2})\s*years?\s*old\b',
+                        r'\baged\s+(\d{1,2})\b',
+                        r'\b(\d{1,2})\s*(?:years|yrs)\b',
+                    ]:
+                        age_m = re.search(pat, window, re.IGNORECASE)
+                        if age_m:
+                            val = int(age_m.group(1))
+                            if 5 <= val <= 100:
+                                pg_age = val
+                                break
+                    if pg_age:
                         break
+                    pos = idx + len(search_term)
 
         # Apply new extraction if found
         if pg_deceased_name:

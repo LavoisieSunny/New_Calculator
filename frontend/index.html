@@ -289,29 +289,35 @@
                                 </div>
 
                                 <!-- Future prospects percentage addition (Calculated via Age and Job Type) -->
-                                <div class="form-group highlighted-group" style="display: none;">
-                                    <label for="future-prospect">Future Prospects (%) <span class="req">*</span></label>
-                                    <div class="input-icon-wrapper disabled">
-                                        <i class="fa-solid fa-chart-line field-icon"></i>
-                                        <input type="number" id="future-prospect" name="future_prospect" readonly placeholder="Auto-calculated">
+                                <div class="visually-hidden-calc-field">
+                                    <div class="form-group highlighted-group">
+                                        <label for="future-prospect">Future Prospects (%) <span class="req">*</span></label>
+                                        <div class="input-icon-wrapper disabled">
+                                            <i class="fa-solid fa-chart-line field-icon"></i>
+                                            <input type="number" id="future-prospect" name="future_prospect" readonly placeholder="Auto-calculated">
+                                        </div>
                                     </div>
                                 </div>
 
                                 <!-- Age-based multiplier coefficient derived from standard Sarla Verma schedule (Read-only) -->
-                                <div class="form-group highlighted-group" style="display: none;">
-                                    <label for="death-multiplier">Multiplier <span class="req">*</span></label>
-                                    <div class="input-icon-wrapper disabled">
-                                        <i class="fa-solid fa-scale-unbalanced field-icon"></i>
-                                        <input type="number" id="death-multiplier" name="multiplier" readonly placeholder="Auto-calculated">
+                                <div class="visually-hidden-calc-field">
+                                    <div class="form-group highlighted-group">
+                                        <label for="death-multiplier">Multiplier <span class="req">*</span></label>
+                                        <div class="input-icon-wrapper disabled">
+                                            <i class="fa-solid fa-scale-unbalanced field-icon"></i>
+                                            <input type="number" id="death-multiplier" name="multiplier" readonly placeholder="Auto-calculated">
+                                        </div>
                                     </div>
                                 </div>
 
                                 <!-- Deduction percentage for personal expenses of deceased (Read-only) -->
-                                <div class="form-group highlighted-group" style="display: none;">
-                                    <label for="death-deduction">Deduction % <span class="req">*</span></label>
-                                    <div class="input-icon-wrapper disabled">
-                                        <i class="fa-solid fa-percent field-icon"></i>
-                                        <input type="number" id="death-deduction" name="deduction_percentage" readonly placeholder="Auto-calculated">
+                                <div class="visually-hidden-calc-field">
+                                    <div class="form-group highlighted-group">
+                                        <label for="death-deduction">Deduction % <span class="req">*</span></label>
+                                        <div class="input-icon-wrapper disabled">
+                                            <i class="fa-solid fa-percent field-icon"></i>
+                                            <input type="number" id="death-deduction" name="deduction_percentage" readonly placeholder="Auto-calculated">
+                                        </div>
                                     </div>
                                 </div>
 
@@ -343,58 +349,64 @@
                                 </div>
 
                                 <!-- Calculated Loss of Dependency: (Salary + Prospects) * Multiplier * (1 - Deduction) -->
-                                <div class="form-group highlighted-group" style="display: none;">
-                                    <label for="loss-of-dependency">Loss of Dependency (Rs.)</label>
-                                    <div class="input-icon-wrapper disabled">
-                                        <i class="fa-solid fa-money-bill-transfer field-icon"></i>
-                                        <input type="number" id="loss-of-dependency" name="loss_of_dependency" readonly placeholder="Auto-calculated">
+                                <div class="visually-hidden-calc-field">
+                                    <div class="form-group highlighted-group">
+                                        <label for="loss-of-dependency">Loss of Dependency (Rs.)</label>
+                                        <div class="input-icon-wrapper disabled">
+                                            <i class="fa-solid fa-money-bill-transfer field-icon"></i>
+                                            <input type="number" id="loss-of-dependency" name="loss_of_dependency" readonly placeholder="Auto-calculated">
+                                        </div>
                                     </div>
                                 </div>
 
                                 <!-- Final Calculated Death Compensation total sum (Dependency + Conventional Heads) -->
-                                <div class="form-group highlighted-group" style="display: none;">
-                                    <label for="death-final-compensation">Final Compensation (Rs.)</label>
-                                    <div class="input-icon-wrapper disabled">
-                                        <i class="fa-solid fa-scale-balanced field-icon"></i>
-                                        <input type="number" id="death-final-compensation" name="final_compensation" readonly placeholder="Auto-calculated">
+                                <div class="visually-hidden-calc-field">
+                                    <div class="form-group highlighted-group">
+                                        <label for="death-final-compensation">Final Compensation (Rs.)</label>
+                                        <div class="input-icon-wrapper disabled">
+                                            <i class="fa-solid fa-scale-balanced field-icon"></i>
+                                            <input type="number" id="death-final-compensation" name="final_compensation" readonly placeholder="Auto-calculated">
+                                        </div>
+                                        <span style="font-size: 0.72rem; color: var(--text-secondary); margin-top: 4px; display: block; line-height: 1.3;"><i class="fa-solid fa-triangle-exclamation" style="color: var(--color-warning); margin-right: 4px;"></i> Please review all fields, as parameters were auto-extracted using AI.</span>
                                     </div>
-                                    <span style="font-size: 0.72rem; color: var(--text-secondary); margin-top: 4px; display: block; line-height: 1.3;"><i class="fa-solid fa-triangle-exclamation" style="color: var(--color-warning); margin-right: 4px;"></i> Please review all fields, as parameters were auto-extracted using AI.</span>
                                 </div>
 
                                 <!-- Dynamic Live Calculations Preview Dashboard -->
-                                <div class="live-calc-dashboard full-width" style="display: none;">
-                                    <div class="live-calc-header">
-                                        <h4><i class="fa-solid fa-clock-rotate-left"></i> Real-time calculation breakdown</h4>
-                                        <span class="live-badge">Live Update</span>
-                                    </div>
-                                    <div class="live-calc-grid">
-                                        <div class="live-calc-item">
-                                            <span class="label">Annual Income</span>
-                                            <span class="value" id="live-calc-annual">—</span>
+                                <div class="visually-hidden-calc-field">
+                                    <div class="live-calc-dashboard full-width">
+                                        <div class="live-calc-header">
+                                            <h4><i class="fa-solid fa-clock-rotate-left"></i> Real-time calculation breakdown</h4>
+                                            <span class="live-badge">Live Update</span>
                                         </div>
-                                        <div class="live-calc-item">
-                                            <span class="label">Enhanced Monthly</span>
-                                            <span class="value" id="live-calc-future">—</span>
-                                        </div>
-                                        <div class="live-calc-item">
-                                            <span class="label">Deduction %</span>
-                                            <span class="value" id="live-calc-deduct-pct">—</span>
-                                        </div>
-                                        <div class="live-calc-item">
-                                            <span class="label">Deduction Amount</span>
-                                            <span class="value" id="live-calc-deduct-amt">—</span>
-                                        </div>
-                                        <div class="live-calc-item">
-                                            <span class="label">Multiplier</span>
-                                            <span class="value" id="live-calc-multiplier">—</span>
-                                        </div>
-                                        <div class="live-calc-item">
-                                            <span class="label">Loss of Dependency</span>
-                                            <span class="value text-glow-green" id="live-calc-dependency">—</span>
-                                        </div>
-                                        <div class="live-calc-item highlight-total">
-                                            <span class="label">Final Settlement</span>
-                                            <span class="value text-glow-purple" id="live-calc-total">—</span>
+                                        <div class="live-calc-grid">
+                                            <div class="live-calc-item">
+                                                <span class="label">Annual Income</span>
+                                                <span class="value" id="live-calc-annual">—</span>
+                                            </div>
+                                            <div class="live-calc-item">
+                                                <span class="label">Enhanced Monthly</span>
+                                                <span class="value" id="live-calc-future">—</span>
+                                            </div>
+                                            <div class="live-calc-item">
+                                                <span class="label">Deduction %</span>
+                                                <span class="value" id="live-calc-deduct-pct">—</span>
+                                            </div>
+                                            <div class="live-calc-item">
+                                                <span class="label">Deduction Amount</span>
+                                                <span class="value" id="live-calc-deduct-amt">—</span>
+                                            </div>
+                                            <div class="live-calc-item">
+                                                <span class="label">Multiplier</span>
+                                                <span class="value" id="live-calc-multiplier">—</span>
+                                            </div>
+                                            <div class="live-calc-item">
+                                                <span class="label">Loss of Dependency</span>
+                                                <span class="value text-glow-green" id="live-calc-dependency">—</span>
+                                            </div>
+                                            <div class="live-calc-item highlight-total">
+                                                <span class="label">Final Settlement</span>
+                                                <span class="value text-glow-purple" id="live-calc-total">—</span>
+                                            </div>
                                         </div>
                                     </div>
                                 </div>
