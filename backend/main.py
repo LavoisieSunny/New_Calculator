@@ -608,6 +608,58 @@ async def chat_with_pdf(request: PDFChatRequest):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"LLM Chat failed: {str(e)}")
 
+@app.post("/api/chat/pdf/stream")
+async def chat_with_pdf_stream(request: PDFChatRequest):
+    """
+    RAG PDF Assistant: retrieves semantic chunks from Qdrant,
+    constructs the prompt, and returns a SSE-compatible NDJSON response stream.
+    """
+    try:
+        user_prompt, precedents, recalc_response = await prepare_pdf_chat_prompt(request)
+        
+        if recalc_response is not None:
+            async def stream_recalc():
+                # Yield full response in one NDJSON chunk
+                yield json.dumps({
+                    "message": {
+                        "content": recalc_response["response"]
+                    },
+                    "recalculation": recalc_response["recalculation"]
+                }) + "\n"
+            from fastapi.responses import StreamingResponse
+            return StreamingResponse(stream_recalc(), media_type="text/event-stream")
+
+        from backend.llm_client import generate_response_stream
+        from fastapi.responses import StreamingResponse
+        import queue
+        import threading
+        import json
+
+        q = queue.Queue()
+        
+        def producer():
+            try:
+                for token in generate_response_stream(user_prompt):
+                    q.put(token)
+            except Exception as ex:
+                logger.error(f"Error in stream producer thread: {str(ex)}")
+            finally:
+                q.put(None)
+                
+        thread = threading.Thread(target=producer, daemon=True)
+        thread.start()
+
+        async def event_generator():
+            while True:
+                token = await asyncio.to_thread(q.get)
+                if token is None:
+                    break
+                yield json.dumps({"message": {"content": token}}) + "\n"
+
+        return StreamingResponse(event_generator(), media_type="text/event-stream")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"LLM Chat Stream failed: {str(e)}")
+
 @app.get("/api/qdrant/points")
 async def get_qdrant_points():
     """
