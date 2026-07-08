@@ -723,10 +723,18 @@ document.addEventListener("DOMContentLoaded", () => {
 
     function getFutureProspectPercentage(age, futureType) {
         const fType = parseInt(futureType);
-        if (fType === 1) {
-            return 15;
-        } else {
-            return 10;
+        const a = parseInt(age);
+        if (isNaN(a)) return fType === 1 ? 50 : 40; // sensible default before age is entered
+        if (fType === 1) { // permanent job
+            if (a < 40) return 50;
+            if (a <= 50) return 30;
+            if (a <= 60) return 15;
+            return 0;
+        } else { // self-employed / fixed salary
+            if (a < 40) return 40;
+            if (a <= 50) return 25;
+            if (a <= 60) return 10;
+            return 0;
         }
     }
 
@@ -778,7 +786,7 @@ document.addEventListener("DOMContentLoaded", () => {
         if (caseType === "death") {
             const futureType = futureTypeSelect ? futureTypeSelect.value : 2;
             const futureProspectInput = document.getElementById("future-prospect");
-            const prospects = getFutureProspectPercentage(null, futureType);
+            const prospects = getFutureProspectPercentage(age, futureType);
             if (futureProspectInput) {
                 futureProspectInput.value = prospects;
             }
