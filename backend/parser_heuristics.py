@@ -1748,6 +1748,7 @@ def format_suggestions_for_calculator(suggestions):
             "marital_status": get_field_val("marital_status", "marital_status", "married"),
             "monthly_income": clean_numeric_to_float_or_int(get_field_val("monthly_income", "monthly_income"), "monthly_income"),
             "future_prospect": clean_numeric_to_float_or_int(get_field_val("future_prospect", "future_prospect"), "future_prospect"),
+            "future_type": get_field_val("future_type", "future_type", 2),
             "place_of_accident": get_field_val("place_of_accident", "place_of_accident"),
             "fir_number": get_field_val("fir_number", "fir_number"),
             "policy_number": get_field_val("policy_number", "policy_number"),
@@ -1794,6 +1795,7 @@ def format_suggestions_for_calculator(suggestions):
             "marital_status": get_field_val("marital_status", "marital_status", "married"),
             "monthly_income": clean_numeric_to_float_or_int(get_field_val("monthly_income", "monthly_income"), "monthly_income"),
             "future_prospect": clean_numeric_to_float_or_int(get_field_val("future_prospect", "future_prospect"), "future_prospect"),
+            "future_type": get_field_val("future_type", "future_type", 2),
             "place_of_accident": get_field_val("place_of_accident", "place_of_accident"),
             "fir_number": get_field_val("fir_number", "fir_number"),
             "policy_number": get_field_val("policy_number", "policy_number"),
@@ -2559,6 +2561,11 @@ def parse_extracted_text(text_lines, case_type=None):
     parser_debug = {}
     claimant_relationship_to_deceased = ""
     conf_claimant_relationship = 0.0
+    future_type = 2
+    conf_future_type = 0.50
+    sec_future_type = "raw_ocr"
+    page_future_type = 1
+    method_future_type = "Default Heuristic"
 
     # Cause Title Claimant Extraction (e.g. "Insurance vs Claimant" or "Claimant vs Driver")
     cause_title_claimant = None
@@ -3174,6 +3181,45 @@ def parse_extracted_text(text_lines, case_type=None):
             page_marital_status = find_exact_page(status, sec_meta.get("start_page", 1), sec_meta.get("end_page", 1), pages)
             method_marital_status = "Keyword Matching"
             break
+
+    # 8.2 Future Type from compensation or award section
+    future_type_patterns = {
+        1: ["permanent job", "permanent employment", "government employee", "govt employee",
+            "government job", "permanent service", "regular employment"],
+        2: ["self employed", "self-employed", "fixed salary", "not in any permanent employment",
+            "daily wage", "no permanent job"],
+    }
+    comp_sec_text = sections.get("compensation_section", "").lower()
+    award_sec_text = sections.get("award_copy_section", "").lower()
+    found_ftype = None
+    found_sec = None
+    found_kw = None
+    for ftype, keywords in future_type_patterns.items():
+        for kw in keywords:
+            if kw in comp_sec_text:
+                found_ftype = ftype
+                found_sec = "compensation_section"
+                found_kw = kw
+                break
+        if found_ftype:
+            break
+    if not found_ftype:
+        for ftype, keywords in future_type_patterns.items():
+            for kw in keywords:
+                if kw in award_sec_text:
+                    found_ftype = ftype
+                    found_sec = "award_copy_section"
+                    found_kw = kw
+                    break
+            if found_ftype:
+                break
+    if found_ftype is not None:
+        future_type = found_ftype
+        conf_future_type = 0.90
+        sec_future_type = found_sec
+        sec_meta = sections_metadata.get(found_sec, {})
+        page_future_type = find_exact_page(found_kw, sec_meta.get("start_page", 1), sec_meta.get("end_page", 1), pages)
+        method_future_type = "Keyword Matching"
 
     # ======================================================
     # QUANTITATIVE AND COMPENSATION TABLE EXTRACTION
@@ -4242,6 +4288,7 @@ def parse_extracted_text(text_lines, case_type=None):
         deceased_name = ""
         dependents = ""
         future_prospect = ""
+        future_type = ""
         multiplier = ""
         consortium = 0.0
         funeral_expenses = 0.0
@@ -4288,6 +4335,7 @@ def parse_extracted_text(text_lines, case_type=None):
         "disability": disability,
         "dependents": dependents,
         "marital_status": marital_status,
+        "future_type": future_type,
         "award_amount": total_compensation,
         "place_of_accident": place_of_accident,
         
@@ -4546,6 +4594,14 @@ def parse_extracted_text(text_lines, case_type=None):
                 "source_section": "claimant_section" if claimant_relationship_to_deceased else "raw_ocr",
                 "source_page": 1,
                 "extraction_method": "Relationship Splitting"
+            },
+            "future_type": {
+                "value": future_type,
+                "confidence": conf_future_type,
+                "source": sec_future_type,
+                "source_section": sec_future_type,
+                "source_page": page_future_type,
+                "extraction_method": method_future_type
             }
         }
     }
