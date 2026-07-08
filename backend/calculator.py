@@ -202,16 +202,28 @@ def get_multiplier(age: int):
 # FUTURE PROSPECTS
 # ======================================================
 
-def get_future_prospect(
-    age: int,
-    future_type: int
-):
-    # permanent job
-    if future_type == 1:
-        return 0.15
-    # self employed / fixed salary / daily wage
-    else:
-        return 0.10
+def get_future_prospect(age: int, future_type: int):
+    """
+    Future prospects addition per National Insurance Co. Ltd. v. Pranay Sethi,
+    (2017) 16 SCC 680, para 59.3/59.4 -- percentage depends on the deceased's
+    AGE, not a flat rate.
+    """
+    if future_type == 1:  # permanent job
+        if age < 40:
+            return 0.50
+        elif age <= 50:
+            return 0.30
+        elif age <= 60:
+            return 0.15
+        return 0.0
+    else:  # self-employed / fixed salary / daily wage
+        if age < 40:
+            return 0.40
+        elif age <= 50:
+            return 0.25
+        elif age <= 60:
+            return 0.10
+        return 0.0
 
 
 # ======================================================
