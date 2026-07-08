@@ -2513,9 +2513,9 @@ This cannot be undone.`)) return;
                     marital_status: maritalStatusSelect.value || "married",
                     future_type: parseInt(futureTypeSelect?.value || 2),
                     future_prospect: (() => { const fp = document.getElementById("future-prospect"); const v = fp ? fp.value : null; return (v !== null && v !== "" && v !== "0") ? parseFloat(v) : null; })(),
-                    consortium: parseFloat(document.getElementById("consortium")?.value || 40000),
-                    funeral_expenses: parseFloat(document.getElementById("funeral-expenses")?.value || 15000),
-                    loss_estate: parseFloat(document.getElementById("loss-estate")?.value || 15000),
+                    consortium: parseFloat(document.getElementById("consortium")?.value || 48400),
+                    funeral_expenses: parseFloat(document.getElementById("funeral-expenses")?.value || 18150),
+                    loss_estate: parseFloat(document.getElementById("loss-estate")?.value || 18150),
                     disability: parseFloat(document.getElementById("disability")?.value || 0)
                 },
                 calculated_amount: currentCalculationAmount
@@ -2671,9 +2671,9 @@ This cannot be undone.`)) return;
             marital_status: maritalStatusSelect.value || "married",
             future_type: Number(futureTypeSelect?.value || 2),
             future_prospect: (() => { const fp = document.getElementById("future-prospect"); const v = fp ? fp.value : null; return (v !== null && v !== "" && v !== "0") ? Number(v) : null; })(),
-            consortium: Number(document.getElementById("consortium")?.value || 40000),
-            funeral_expenses: Number(document.getElementById("funeral-expenses")?.value || 15000),
-            loss_estate: Number(document.getElementById("loss-estate")?.value || 15000),
+            consortium: Number(document.getElementById("consortium")?.value || 48400),
+            funeral_expenses: Number(document.getElementById("funeral-expenses")?.value || 18150),
+            loss_estate: Number(document.getElementById("loss-estate")?.value || 18150),
 
             // Consortium sub-heads removed from form — kept as zero for API compatibility
             conlum: 0, conspo: 0, conpar: 0, conchil: 0, conwif: 0,
@@ -3660,9 +3660,9 @@ This cannot be undone.`)) return;
             dependents: getDomVal("dependents", parsedFields.dependents || 0),
             marital_status: getDomStr("marital-status", parsedFields.marital_status || "married"),
             future_type: getDomVal("future-type", 2),
-            consortium: calculatorResult.consortium || 40000,
-            funeral_expenses: calculatorResult.funeral_expenses || 15000,
-            loss_estate: calculatorResult.loss_estate || 15000
+            consortium: calculatorResult.consortium || 48400,
+            funeral_expenses: calculatorResult.funeral_expenses || 18150,
+            loss_estate: calculatorResult.loss_estate || 18150
         } : {
             case_type: caseType,
             age: getDomVal("age", parsedFields.age || 30),

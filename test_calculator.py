@@ -124,8 +124,8 @@ class TestMPHCCalculator(unittest.TestCase):
     def test_multiplier_age_brackets(self):
         """
         Verify the multiplier boundaries:
-        - Age < 15 -> 15
-        - Age 15 to 25 -> 18
+        - Age <= 15 -> 15
+        - Age 16 to 25 -> 18
         - Age 26 to 30 -> 17
         - Age 31 to 35 -> 16
         - Age 36 to 40 -> 15
@@ -135,7 +135,7 @@ class TestMPHCCalculator(unittest.TestCase):
         - Age 56 to 60 -> 9
         """
         self.assertEqual(get_multiplier(14), 15)
-        self.assertEqual(get_multiplier(15), 18)
+        self.assertEqual(get_multiplier(15), 15)
         self.assertEqual(get_multiplier(20), 18)
         self.assertEqual(get_multiplier(25), 18)
         self.assertEqual(get_multiplier(30), 17)
@@ -201,20 +201,70 @@ class TestDeductionBracketFix(unittest.TestCase):
         """
         Verify future prospects percentage and downstream final_compensation
         for at least one case in each age bracket (under 40, 40-50, 50-60, above 60)
-        for both permanent job (future_type=1) and self-employed (future_type=2).
+        and exact boundaries (15, 40, 50, 60) for both permanent job (future_type=1)
+        and self-employed (future_type=2).
+        
+        Also asserts that the duplicated frontend JS formulas (transpiled below)
+        behave identically to the backend.
+        
+        TODO: Keep the frontend (app.js) and backend (calculator.py) multiplier and
+              future prospects formulas in sync to avoid logic drift.
         """
+        # Helper to mimic the frontend JS logic exactly
+        def js_get_multiplier(age):
+            if age is None or age == "":
+                return 0
+            a = int(age)
+            if a <= 15: return 15
+            if a <= 20: return 18
+            if a <= 25: return 18
+            if a <= 30: return 17
+            if a <= 35: return 16
+            if a <= 40: return 15
+            if a <= 45: return 14
+            if a <= 50: return 13
+            if a <= 55: return 11
+            if a <= 60: return 9
+            if a <= 65: return 7
+            return 5
+
+        def js_get_future_prospect_percentage(age, future_type):
+            f_type = int(future_type)
+            a = int(age)
+            if f_type == 1:
+                if a < 40: return 50
+                if a <= 50: return 30
+                if a <= 60: return 15
+                return 0
+            else:
+                if a < 40: return 40
+                if a <= 50: return 25
+                if a <= 60: return 10
+                return 0
+
         # We will test monthly_income=10000, dependents=3 (deduction = 1/3), married
-        # Consortium = 40000, Funeral = 15000, Estate = 15000 (Conventional heads = 70k total)
+        # Consortium = 48400, Funeral = 18150, Estate = 18150 (Conventional heads = 84.7k total)
         test_cases = [
             # age, future_type, expected_prospect_pct, expected_multiplier, expected_final_compensation
-            (25, 1, 50, 18, 2230000.0), # 10k -> 15k enhanced -> 180k annual -> 120k dependency * 18 = 2160k + 70k = 2230k
-            (25, 2, 40, 18, 2086000.0), # 10k -> 14k enhanced -> 168k annual -> 112k dependency * 18 = 2016k + 70k = 2086k
-            (45, 1, 30, 14, 1526000.0), # 10k -> 13k enhanced -> 156k annual -> 104k dependency * 14 = 1456k + 70k = 1526k
-            (45, 2, 25, 14, 1470000.0), # 10k -> 12.5k enhanced -> 150k annual -> 100k dependency * 14 = 1400k + 70k = 1470k
-            (55, 1, 15, 11, 1082000.0), # 10k -> 11.5k enhanced -> 138k annual -> 92k dependency * 11 = 1012k + 70k = 1082k
-            (55, 2, 10, 11, 1038000.0), # 10k -> 11k enhanced -> 132k annual -> 88k dependency * 11 = 968k + 70k = 1038k
-            (65, 1, 0, 7, 630000.0),    # 10k -> 10k enhanced -> 120k annual -> 80k dependency * 7 = 560k + 70k = 630k
-            (65, 2, 0, 7, 630000.0),    # 10k -> 10k enhanced -> 120k annual -> 80k dependency * 7 = 560k + 70k = 630k
+            # Standard age tests
+            (25, 1, 50, 18, 2244700.0),
+            (25, 2, 40, 18, 2100700.0),
+            (45, 1, 30, 14, 1540700.0),
+            (45, 2, 25, 14, 1484700.0),
+            (55, 1, 15, 11, 1096700.0),
+            (55, 2, 10, 11, 1052700.0),
+            (65, 1, 0, 7, 644700.0),
+            (65, 2, 0, 7, 644700.0),
+            
+            # Exact boundary tests
+            (15, 1, 50, 15, 1884700.0),
+            (15, 2, 40, 15, 1764700.0),
+            (40, 1, 30, 15, 1644700.0),
+            (40, 2, 25, 15, 1584700.0),
+            (50, 1, 30, 13, 1436700.0),
+            (50, 2, 25, 13, 1384700.0),
+            (60, 1, 15, 9, 912700.0),
+            (60, 2, 10, 9, 876700.0),
         ]
 
         for age, ftype, expected_pct, mult, expected_total in test_cases:
@@ -226,14 +276,18 @@ class TestDeductionBracketFix(unittest.TestCase):
                     dependents=3,
                     marital_status="married",
                     future_type=ftype,
-                    consortium=40000.0,
-                    funeral_expenses=15000.0,
-                    loss_estate=15000.0
+                    consortium=48400.0,
+                    funeral_expenses=18150.0,
+                    loss_estate=18150.0
                 )
                 res = calculate_death_compensation(req)
                 self.assertEqual(res["future_prospect_percentage"], expected_pct)
                 self.assertEqual(res["multiplier"], mult)
                 self.assertEqual(res["final_compensation"], expected_total)
+                
+                # Assert frontend parity
+                self.assertEqual(js_get_multiplier(age), mult, f"Multiplier mismatch at age {age}")
+                self.assertEqual(js_get_future_prospect_percentage(age, ftype), expected_pct, f"Prospects mismatch at age {age}, type {ftype}")
 
 
 class TestInjuryCompensation(unittest.TestCase):

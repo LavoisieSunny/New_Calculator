@@ -2369,8 +2369,8 @@ def deduce_notional_income(award_amount, age, marital_status, dependents, future
     if not award_amount or award_amount <= 0:
         return 5000.0 # standard fallback
         
-    # Standard conventional heads: Consortium (40k), Funeral (15k), Estate (15k)
-    conventional_heads = 40000.0 + 15000.0 + 15000.0
+    # Standard conventional heads: Consortium (48.4k), Funeral (18.15k), Estate (18.15k)
+    conventional_heads = 48400.0 + 18150.0 + 18150.0
     
     # Estimate loss of dependency
     loss_of_dependency = max(0.0, award_amount - conventional_heads)
@@ -3024,7 +3024,7 @@ def parse_extracted_text(text_lines, case_type=None):
     else:
         cons_patterns = [r'consortium\s*(?:of)?\s*(?:rs\.?|inr)?\s*(\d{4,6})\b']
         consortium, conf_consortium, sec_consortium, page_consortium = contextual_extract(
-            cons_patterns, sections, [("compensation_section", 95), ("award_copy_section", 90)], default_val=40000.0, type_cast=float,
+            cons_patterns, sections, [("compensation_section", 95), ("award_copy_section", 90)], default_val=48400.0, type_cast=float,
             field_name="consortium", debug_info=parser_debug, pages=pages, sections_metadata=sections_metadata, page_importances=page_importances
         )
         method_consortium = "Section-Aware Contextual Regex"
@@ -3040,7 +3040,7 @@ def parse_extracted_text(text_lines, case_type=None):
     else:
         fun_patterns = [r'funeral\s*(?:expenses)?\s*(?:of)?\s*(?:rs\.?|inr)?\s*(\d{4,6})\b']
         funeral_expenses, conf_funeral_expenses, sec_funeral_expenses, page_funeral_expenses = contextual_extract(
-            fun_patterns, sections, [("compensation_section", 95), ("award_copy_section", 90)], default_val=15000.0, type_cast=float,
+            fun_patterns, sections, [("compensation_section", 95), ("award_copy_section", 90)], default_val=18150.0, type_cast=float,
             field_name="funeral_expenses", debug_info=parser_debug, pages=pages, sections_metadata=sections_metadata, page_importances=page_importances
         )
         method_funeral_expenses = "Section-Aware Contextual Regex"
@@ -3078,7 +3078,7 @@ def parse_extracted_text(text_lines, case_type=None):
     # 9.8 Estate Loss
     est_patterns = [r'(?:loss\s+of\s+)?estate\s*(?:of)?\s*(?:rs\.?|inr)?\s*(\d{4,6})\b']
     estate_loss, conf_estate_loss, sec_estate_loss, page_estate_loss = contextual_extract(
-        est_patterns, sections, [("compensation_section", 95), ("award_copy_section", 90)], default_val=15000.0, type_cast=float,
+        est_patterns, sections, [("compensation_section", 95), ("award_copy_section", 90)], default_val=18150.0, type_cast=float,
         field_name="estate_loss", debug_info=parser_debug, pages=pages, sections_metadata=sections_metadata, page_importances=page_importances
     )
     method_estate_loss = "Section-Aware Contextual Regex"
@@ -3897,7 +3897,7 @@ def parse_extracted_text(text_lines, case_type=None):
     # Map table/heuristic values to flat fields
     # Map table/heuristic values to flat fields
     _raw_estate = get_table_value(["estate"]) or estate_loss
-    loss_estate_val = _raw_estate if (_raw_estate and _raw_estate <= 50000) else 15000.0
+    loss_estate_val = _raw_estate if (_raw_estate and _raw_estate <= 50000) else 18150.0
     
     # Granular consortium extraction
     extracted_conlum = get_table_value(["consortium-lumpsum", "lumpsum consortium", "consortium lumpsum"])

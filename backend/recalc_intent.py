@@ -132,9 +132,9 @@ def build_recalc_base(parsed_fields: Dict[str, Any], calculator_result: Dict[str
             "dependents": pf.get("dependents", 0),
             "marital_status": pf.get("marital_status", "married"),
             "future_type": pf.get("future_type", 2),
-            "consortium": cr.get("consortium", 40000),
-            "funeral_expenses": cr.get("funeral_expenses", 15000),
-            "loss_estate": cr.get("loss_estate", 15000),
+            "consortium": cr.get("consortium", 48400),
+            "funeral_expenses": cr.get("funeral_expenses", 18150),
+            "loss_estate": cr.get("loss_estate", 18150),
         })
     else:
         base.update({

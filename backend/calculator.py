@@ -54,11 +54,11 @@ class CompensationRequest(BaseModel):
 
     future_prospect: Optional[float] = None
 
-    consortium: float = 40000.0
+    consortium: float = 48400.0
 
-    funeral_expenses: float = 15000.0
+    funeral_expenses: float = 18150.0
 
-    loss_estate: float = 15000.0
+    loss_estate: float = 18150.0
 
     # Consortium Breakdown Subheadings (from PHP claim calculator)
     conlum: float = 0.0
@@ -122,9 +122,9 @@ class CompensationRequest(BaseModel):
                     cleaned[k] = None
                 elif k in ["monthly_income", "consortium", "funeral_expenses", "loss_estate", "disability"]:
                     if k == "consortium":
-                        cleaned[k] = 40000.0
+                        cleaned[k] = 48400.0
                     elif k in ["funeral_expenses", "loss_estate"]:
-                        cleaned[k] = 15000.0
+                        cleaned[k] = 18150.0
                     else:
                         cleaned[k] = 0.0
                 else:
@@ -162,7 +162,7 @@ class CompensationRequest(BaseModel):
 
 def get_multiplier(age: int):
 
-    if age < 15:
+    if age <= 15:
         return 15  # Corrected to match MPHC PHP formula exactly
 
     elif age <= 20:
@@ -310,9 +310,9 @@ def calculate_death_compensation(
     loss_of_dependency = dependency_income * multiplier
 
     # Conventional heads — mirrors PHP: loc + loa + fe + conlum + conspo + ...
-    consortium    = safe_float(data.consortium, 40000.0)
-    funeral_expenses = safe_float(data.funeral_expenses, 15000.0)
-    loss_estate   = safe_float(data.loss_estate, 15000.0)
+    consortium    = safe_float(data.consortium, 48400.0)
+    funeral_expenses = safe_float(data.funeral_expenses, 18150.0)
+    loss_estate   = safe_float(data.loss_estate, 18150.0)
 
     # Consortium breakdown sub-heads (Pranay Sethi / Nanu Ram style)
     # Each is a separate user-entered per-person value, added independently per PHP line 351
