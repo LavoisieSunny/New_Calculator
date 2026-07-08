@@ -1469,7 +1469,7 @@ This cannot be undone.`)) return;
         if (caseType && (caseType === "injury" || caseType === "death")) {
             caseTypeSelect.value = caseType;
             caseTypeSelect.dispatchEvent(new Event("change"));
-            applyAllOcrSuggestions(matchedFile.suggestions, null, null, null, true);
+            applyAllOcrSuggestions(matchedFile.suggestions, null, null, null, true, false);
             window.lastRawText = (matchedFile.raw_text || []).join("\n");
             switchTab("calculator");
             if (currentOcrRawText.length > 0) {
@@ -1566,7 +1566,7 @@ This cannot be undone.`)) return;
             if (isBatch) {
                 if (data.suggestions) {
                     data.suggestions.case_type = type;
-                    applyAllOcrSuggestions(data.suggestions, null, null, null, true);
+                    applyAllOcrSuggestions(data.suggestions, null, null, null, true, false);
                 }
                 switchTab("calculator");
                 if (currentOcrRawText.length > 0) {
@@ -2027,7 +2027,7 @@ This cannot be undone.`)) return;
     }
 
     // Apply parsed suggestions
-    function applyAllOcrSuggestions(suggestions, confidenceScores = null, ocrEvidence = null, rawRecovered = null, isSilent = false) {
+    function applyAllOcrSuggestions(suggestions, confidenceScores = null, ocrEvidence = null, rawRecovered = null, isSilent = false, autoCalculate = true) {
         if (!suggestions) return;
 
         // Normalize flat suggestions into expected nested structure
@@ -2249,12 +2249,14 @@ This cannot be undone.`)) return;
         }
 
         // Auto trigger automatic recalculation after autofill is completed (Task 18)
-        setTimeout(() => {
-            console.log("AUTO RECALCULATING after OCR autofill...");
-            if (compensationForm) {
-                compensationForm.dispatchEvent(new Event("submit"));
-            }
-        }, 500);
+        if (autoCalculate) {
+            setTimeout(() => {
+                console.log("AUTO RECALCULATING after OCR autofill...");
+                if (compensationForm) {
+                    compensationForm.dispatchEvent(new Event("submit"));
+                }
+            }, 500);
+        }
     }
 
     // ==========================================================================
@@ -4034,7 +4036,7 @@ This cannot be undone.`)) return;
 
                 setTimeout(() => {
                     // Trigger actual autofill
-                    applyAllOcrSuggestions(data.suggestions, null, null, null, false);
+                    applyAllOcrSuggestions(data.suggestions, null, null, null, false, false);
 
                     if (currentOcrRawText.length > 0) {
                         runAiRecovery(currentOcrRawText, window.detectedTrack);
