@@ -230,5 +230,110 @@ class TestHindiParser(unittest.TestCase):
                     f"Fixture {name}: Field '{field}' expected {expected_val}, got {actual_val}"
                 )
 
+    def test_document_a_lettered(self):
+        text_lines = [
+            "अ. स्थायी अपंगता हेतु क्षतिपूर्ति 5,00,000/-",
+            "ब. शारीरिक एवं मानसिक वेदना 1,00,000",
+            "स. चिकित्सा व्यय 4,00,000",
+            "द. विशेष खुराक 50,000/-",
+            "ध. परिचारक व रुकने वाले व्यक्ति का खर्च 50,000",
+            "ऊ. भविष्य में होने वाले खर्च व आघात की हानि 2,00,000",
+            "कुल योग 13,00,000/-"
+        ]
+        
+        # Test Case 1: BUNDLED_FUTURE_TARGET_FIELD = "loss_of_income"
+        with patch("backend.parser_heuristics.BUNDLED_FUTURE_TARGET_FIELD", "loss_of_income"):
+            res = parse_hindi_extracted_text(text_lines)
+            self.assertEqual(res.get("pain_and_suffering"), 600000.0) # 500000 + 100000
+            self.assertEqual(res.get("medical_expenses"), 400000.0)
+            self.assertEqual(res.get("special_diet"), 50000.0)
+            self.assertEqual(res.get("attender_charges"), 50000.0)
+            self.assertEqual(res.get("transportation"), 0.0)
+            self.assertEqual(res.get("loss_of_income"), 200000.0)
+            self.assertEqual(res.get("future_medical_expenses"), 0.0)
+
+        # Test Case 2: BUNDLED_FUTURE_TARGET_FIELD = "future_medical_expenses"
+        with patch("backend.parser_heuristics.BUNDLED_FUTURE_TARGET_FIELD", "future_medical_expenses"):
+            res = parse_hindi_extracted_text(text_lines)
+            self.assertEqual(res.get("pain_and_suffering"), 600000.0)
+            self.assertEqual(res.get("medical_expenses"), 400000.0)
+            self.assertEqual(res.get("special_diet"), 50000.0)
+            self.assertEqual(res.get("attender_charges"), 50000.0)
+            self.assertEqual(res.get("transportation"), 0.0)
+            self.assertEqual(res.get("loss_of_income"), 0.0)
+            self.assertEqual(res.get("future_medical_expenses"), 200000.0)
+
+    def test_document_b_numbered(self):
+        text_lines = [
+            "1. स्थायी अपंगता हेतु क्षतिपूर्ति 3,00,000",
+            "2. शारीरिक एवं मानसिक वेदना 50,000",
+            "3. विशेष आहार एवं परिवहन व्यय 40,000",
+            "4. इलाज व अस्पताल खर्च 1,00,000",
+            "5. आवेदक जो नुकसानी का : 30,000/-",
+            "6. परिचारक व्यय 20,000",
+            "7. भविष्य में होने वाले व्यय व आघात की हानि 2,00,000",
+            "कुल 7,40,000"
+        ]
+        
+        # Test Case 1: BUNDLED_DIET_TRANSPORT_TARGET_FIELD = "special_diet"
+        with patch("backend.parser_heuristics.BUNDLED_DIET_TRANSPORT_TARGET_FIELD", "special_diet"), \
+             patch("backend.parser_heuristics.BUNDLED_FUTURE_TARGET_FIELD", "loss_of_income"):
+            res = parse_hindi_extracted_text(text_lines)
+            self.assertEqual(res.get("pain_and_suffering"), 350000.0) # 300000 + 50000
+            self.assertEqual(res.get("special_diet"), 40000.0)
+            self.assertEqual(res.get("transportation"), 0.0)
+            self.assertEqual(res.get("medical_expenses"), 100000.0)
+            self.assertEqual(res.get("attender_charges"), 20000.0)
+            self.assertEqual(res.get("loss_of_income"), 200000.0)
+            self.assertIn("5. आवेदक जो नुकसानी का : 30,000/-", res.get("needs_manual_review", []))
+
+        # Test Case 2: BUNDLED_DIET_TRANSPORT_TARGET_FIELD = "transportation"
+        with patch("backend.parser_heuristics.BUNDLED_DIET_TRANSPORT_TARGET_FIELD", "transportation"), \
+             patch("backend.parser_heuristics.BUNDLED_FUTURE_TARGET_FIELD", "loss_of_income"):
+            res = parse_hindi_extracted_text(text_lines)
+            self.assertEqual(res.get("pain_and_suffering"), 350000.0)
+            self.assertEqual(res.get("special_diet"), 0.0)
+            self.assertEqual(res.get("transportation"), 40000.0)
+            self.assertEqual(res.get("medical_expenses"), 100000.0)
+            self.assertEqual(res.get("attender_charges"), 20000.0)
+            self.assertEqual(res.get("loss_of_income"), 200000.0)
+            self.assertIn("5. आवेदक जो नुकसानी का : 30,000/-", res.get("needs_manual_review", []))
+
+    def test_document_c_biographical(self):
+        text_lines = [
+            "1. आवेदक का नाम व पिता का नाम : राजेश कुमार पुत्र श्री रमेश कुमार",
+            "2. आवेदक का पूरा पता : जबलपुर, मध्य प्रदेश",
+            "3. आवेदक की आयु : 35 वर्ष",
+            "4. आवेदक का व्यवसाय : निजी नौकरी",
+            "5. आवेदक की मासिक आय : 10,000/- रुपये प्रतिमाह",
+            "6. घटना दिनांक, समय व स्थान : 12.05.2025 को जबलपुर",
+            "7. घटना की रिपोर्ट किस थाने में : थाना कोतवाली में अपराध क्र 12/2025"
+        ]
+        
+        res = parse_hindi_extracted_text(text_lines)
+        
+        # Verify it did NOT misfire as a damages table
+        self.assertEqual(res.get("pain_and_suffering"), 0.0)
+        self.assertEqual(res.get("medical_expenses"), 0.0)
+        self.assertEqual(res.get("special_diet"), 0.0)
+        
+        # Verify biographical fields are populated correctly
+        self.assertEqual(res.get("injured_name"), "राजेश")
+        self.assertEqual(res.get("father_name"), "रमेश")
+        self.assertEqual(res.get("age"), 35)
+        self.assertEqual(res.get("monthly_income"), 10000.0)
+        self.assertEqual(res.get("date_of_accident"), "12.05.2025")
+        self.assertEqual(res.get("place_of_accident"), "जबलपुर")
+        self.assertEqual(res.get("fir_number"), "12/2025")
+
+    def test_self_insurance_and_vehicle_variants(self):
+        text_lines = [
+            "बीमा कंपनी : स्वयं",
+            "वाहन क.-MP-20-BA-0911"
+        ]
+        res = parse_hindi_extracted_text(text_lines)
+        self.assertEqual(res.get("insurance_company"), "स्वयं")
+        self.assertEqual(res.get("vehicle_number"), "MP-20-BA-0911")
+
 if __name__ == "__main__":
     unittest.main()

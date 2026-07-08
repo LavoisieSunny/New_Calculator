@@ -5098,7 +5098,14 @@ def match_bundle_b(norm: str) -> bool:
     has_future = "भविष्य" in norm or "भावी" in norm or "future" in norm.lower()
     has_income = any(x in norm for x in ["आय", "क्षति", "हानि"])
     has_med = any(x in norm for x in ["इलाज", "उपचार", "चिकित्सा"])
-    return has_future and has_income and has_med
+    if has_future and has_income and has_med:
+        return True
+    # Looser fallback:
+    has_expense = any(x in norm for x in ["खर्च", "व्यय"])
+    has_loss = any(x in norm for x in ["हानि", "क्षति", "नुकसानी"])
+    if has_future and has_expense and has_loss:
+        return True
+    return False
 
 def match_bundle_c(norm: str) -> bool:
     has_trans = any(x in norm for x in ["अस्पताल", "आने-जाने", "आवागमन"])
@@ -5226,6 +5233,166 @@ def classify_hindi_line(line_text: str):
         
     return all_matches[0]
 
+
+def get_damage_head_keyword(desc: str) -> str:
+    norm = desc.replace("स्थाई", "स्थायी").replace("शारीरीक", "शारीरिक").replace("सुखों", "सुख").replace("सुखमय", "सुख").lower()
+    
+    # Check future/future medical/bundle B first
+    if "भविष्य" in norm or "भावी" in norm or "future" in norm:
+        return "future"
+        
+    # Check disability
+    if any(x in norm for x in ["अपंगता", "विकलांगता", "निःशक्तता", "निर्योग्यता"]):
+        return "disability"
+        
+    # Check pain
+    if any(x in norm for x in ["पीड़ा", "कष्ट", "वेदना", "दर्द", "pain", "suffering"]):
+        return "pain"
+        
+    # Check medical
+    if any(x in norm for x in ["चिकित्सा", "इलाज", "उपचार", "दवा", "औषधि", "अस्पताल", "डॉ", "doctor", "medical", "treatment", "hospital", "operation"]):
+        return "medical"
+        
+    # Check diet
+    if any(x in norm for x in ["आहार", "पौष्टिक", "खुराक", "भोजन", "nutrition", "diet"]):
+        return "diet"
+        
+    # Check transport
+    if any(x in norm for x in ["परिवहन", "यातायात", "यात्रा", "आवागमन", "conveyance", "transportation", "transport"]):
+        return "transport"
+        
+    # Check attender
+    if any(x in norm for x in ["परिचारक", "परिचर", "अटेंडेंट", "देखभाल", "सेवक", "सहायक", "सहायता", "attendant", "attender", "nursing"]):
+        return "attender"
+        
+    return None
+
+
+def check_structural_block_validity(block_lines: list) -> bool:
+    items = [bl for bl in block_lines if not bl.get("is_totals")]
+    n = len(items)
+    if n < 4:
+        return False
+        
+    for idx in range(n - 3):
+        window = items[idx : idx + 4]
+        keywords = []
+        valid_window = True
+        for bl in window:
+            amt_str = bl.get("amount_str")
+            if not amt_str:
+                valid_window = False
+                break
+            if bl.get("is_totals"):
+                valid_window = False
+                break
+            kw = get_damage_head_keyword(bl.get("desc", ""))
+            if not kw:
+                valid_window = False
+                break
+            keywords.append(kw)
+        if valid_window and len(set(keywords)) == 4:
+            return True
+    return False
+
+
+def extract_hindi_biographical_list(text_lines: list) -> dict:
+    lines_norm = []
+    for l in text_lines:
+        line_clean = re.sub(r'[ \t]+', ' ', l).strip()
+        lines_norm.append(line_clean)
+        
+    bio_items = {}
+    lbl_re = re.compile(r'^\s*(?:\[|\()? *([1-7]|[१-७]) *(?:\]|\)|[\.\-\):])+ +(.*)$')
+    for line in lines_norm:
+        m = lbl_re.match(line)
+        if m:
+            val_num = int(translate_deva_digits(m.group(1)))
+            content = m.group(2).strip()
+            is_valid = False
+            if val_num == 1 and any(x in content for x in ["नाम", "पिता"]):
+                is_valid = True
+            elif val_num == 2 and any(x in content for x in ["पता", "निवास"]):
+                is_valid = True
+            elif val_num == 3 and any(x in content for x in ["आयु", "उम्र", "वय"]):
+                is_valid = True
+            elif val_num == 4 and any(x in content for x in ["व्यवसाय", "धंधा", "कार्य", "काम"]):
+                is_valid = True
+            elif val_num == 5 and "आय" in content:
+                is_valid = True
+            elif val_num == 6 and any(x in content for x in ["घटना", "दिनांक", "समय", "स्थान"]):
+                is_valid = True
+            elif val_num == 7 and any(x in content for x in ["थाने", "थाना", "रिपोर्ट", "आरक्षी"]):
+                is_valid = True
+                
+            if is_valid:
+                bio_items[val_num] = content
+
+    if len(bio_items) >= 5:
+        res = {}
+        if 1 in bio_items:
+            text = bio_items[1]
+            text = re.sub(r'^(?:आवेदक\s+)?(?:का\s+)?नाम\s*(?:व\s+पिता\s+का\s+नाम|और\s+पिता\s+का\s+नाम)?\s*[:\-]*\s*', '', text, flags=re.IGNORECASE)
+            text = text.strip()
+            m_rel = re.search(r'(.+?)\s+(?:पुत्र|पुत्री|son of|daughter of|s/o|d/o|w/o|पत्नी|पिता|पति)\s+(?:श्री\s+|late\s+|स्व\.\s+)?(.+)', text, re.IGNORECASE)
+            if m_rel:
+                res["injured_name"] = _hi_trim_stopwords(m_rel.group(1))
+                res["father_name"] = _hi_trim_stopwords(m_rel.group(2))
+            else:
+                parts = re.split(r'[:\-]+', text)
+                if len(parts) >= 2:
+                    res["injured_name"] = _hi_trim_stopwords(parts[0])
+                    res["father_name"] = _hi_trim_stopwords(parts[1])
+                else:
+                    res["injured_name"] = _hi_trim_stopwords(text)
+
+        if 3 in bio_items:
+            m_age = re.search(r'(\d+)', translate_deva_digits(bio_items[3]))
+            if m_age:
+                res["age"] = int(m_age.group(1))
+
+        if 5 in bio_items:
+            text = bio_items[5]
+            text_trans = translate_deva_digits(text)
+            text_trans = re.sub(r'(?:प्रतिमाह|प्रति\s+माह|प्रतिमास|प्रति\s+मास|\/-\s*रुपये\s*प्रतिमाह|\/-\s*रूपये\s*प्रतिमाह)', '', text_trans)
+            cleaned = text_trans.replace(',', '')
+            m_num = re.search(r'(\d+(?:\.\d+)?)', cleaned)
+            if m_num:
+                try:
+                    res["monthly_income"] = float(m_num.group(1))
+                except ValueError:
+                    pass
+
+        if 6 in bio_items:
+            text = bio_items[6]
+            m_dt = re.search(r'(\d{1,2}[./-]\d{1,2}[./-]\d{4})', translate_deva_digits(text))
+            if m_dt:
+                res["date_of_accident"] = m_dt.group(1).replace("/", ".")
+            place = None
+            m_pl = re.search(r'(?:स्थान|को)\s*[:\-]*\s*(.+)', text)
+            if m_pl:
+                place_cand = m_pl.group(1).strip()
+                place_cand = re.sub(r'\d{1,2}[./-]\d{1,2}[./-]\d{4}', '', place_cand)
+                place_cand = re.sub(r'\d{1,2}[:.]\d{2}', '', place_cand)
+                place_cand = re.sub(r'(?:बजे|समय|दिनांक|के\s+पास|को)', '', place_cand)
+                place_cand = re.sub(r'[ \t\.\-\–:,]+', ' ', place_cand).strip()
+                if place_cand:
+                    place = place_cand
+            if place:
+                res["place_of_accident"] = place
+
+        if 7 in bio_items:
+            text = bio_items[7]
+            m_th = re.search(r'(थाना\s+\w+)', text)
+            if m_th:
+                res["police_station"] = m_th.group(1).strip()
+            m_fir = re.search(r'(?:अपराध|क्र|क्रमांक|नं)\.?\s*[:\-]*\s*(\d+/\d{2,4})', translate_deva_digits(text))
+            if m_fir:
+                res["fir_number"] = m_fir.group(1).strip()
+
+        return res
+    return None
+
 def extract_hindi_structural_block(text_lines: list) -> dict:
     """
     Detects a structural Hindi compensation block: a sequence of 5-9 consecutive short lines,
@@ -5281,9 +5448,10 @@ def extract_hindi_structural_block(text_lines: list) -> dict:
                 
                 structural_count = sum(1 for bl in block_lines if not bl.get("is_totals"))
                 if 5 <= structural_count <= 9:
-                    blocks.append(block_lines)
-                    i = j
-                    continue
+                    if check_structural_block_validity(block_lines):
+                        blocks.append(block_lines)
+                        i = j
+                        continue
         i += 1
         
     if not blocks:
@@ -5315,6 +5483,7 @@ def extract_hindi_structural_block(text_lines: list) -> dict:
         
         classification = classify_hindi_line(desc)
         if not classification:
+            needs_manual_review.append(line_text)
             continue
             
         if isinstance(classification, tuple) and classification[0] == "AMBIGUOUS":
@@ -6235,11 +6404,13 @@ def parse_hindi_extracted_text(text_lines: list, case_type: str = None) -> dict:
 
     # ---- vehicle number -------------------------------------------------------
     m = re.search(
-        r'(?:मो\.? *सा\.?|वाहन) *(?:क्रं|क्रमांक|नं)?\.? *([A-Z]{2}[ \-]?\d{1,2}[ \-]?[A-Z]{1,3}[ \-]?\d{3,4})',
+        r'(?:मो\.? *सा\.?|वाहन|क\.-|क)? *(?:क्रं|क्रमांक|नं|क\.-|क)?\.? *([A-Z]{2}[ \-]?\d{1,2}[ \-]?[A-Z]{1,3}[ \-]?\d{3,4})',
         flat, re.IGNORECASE
     )
     if m:
-        out["vehicle_number"] = m.group(1).strip()
+        val = m.group(1).strip()
+        val = re.sub(r'^(?:क\.-|क\-)', '', val, flags=re.IGNORECASE).strip()
+        out["vehicle_number"] = val
         conf["vehicle_number"] = 0.75
 
     # ---- policy number ---------------------------------------------------------
@@ -6249,13 +6420,54 @@ def parse_hindi_extracted_text(text_lines: list, case_type: str = None) -> dict:
         conf["policy_number"] = 0.75
 
     # ---- insurance company -------------------------------------------------------
-    m = re.search(
-        rf'({_HI_NAME_SPAN} +(?:इन्शोरेंस|इंश्योरेंस|इंश्योरेन्स|इन्श्योरेंस) +{_HI_NAME_TOK}(?: +{_HI_NAME_TOK}){{0,2}})',
-        flat
+    ins_self_pat = re.compile(
+        r'(?:बीमा *कंपनी|बीमाकर्ता|बीमा *कम्पनी|बीमा *पालिसी|बीमा *पॉलिसी|insurer|insurance *company|ins. *co.) *[:\-]+ *(स्वयं|स्व\.|स्वयं *का)',
+        re.IGNORECASE
     )
-    if m:
-        out["insurance_company"] = m.group(1).strip()
-        conf["insurance_company"] = 0.70
+    m_self = ins_self_pat.search(flat)
+    if m_self:
+        out["insurance_company"] = m_self.group(1).strip()
+        conf["insurance_company"] = 0.90
+    else:
+        m = re.search(
+            rf'({_HI_NAME_SPAN} +(?:इन्शोरेंस|इंश्योरेंस|इंश्योरेन्स|इन्श्योरेंस) +{_HI_NAME_TOK}(?: +{_HI_NAME_TOK}){{0,2}})',
+            flat
+        )
+        if m:
+            out["insurance_company"] = m.group(1).strip()
+            conf["insurance_company"] = 0.70
+
+    # ---- biographical list override ----
+    bio_res = extract_hindi_biographical_list(text_lines)
+    if bio_res:
+        logger.info("[HINDI PARSER] Biographical list format detected! Applying updates to biographical fields.")
+        for k, val in bio_res.items():
+            if k == "injured_name":
+                out["injured_name"] = val
+                conf["injured_name"] = 0.95
+            elif k == "father_name":
+                out["father_name"] = val
+                conf["father_name"] = 0.95
+            elif k == "age":
+                out["age"] = val
+                conf["age"] = 0.95
+            elif k == "monthly_income":
+                out["monthly_income"] = val
+                conf["monthly_income"] = 0.95
+            elif k == "date_of_accident":
+                out["date_of_accident"] = val
+                conf["date_of_accident"] = 0.95
+            elif k == "place_of_accident":
+                out["place_of_accident"] = val
+                conf["place_of_accident"] = 0.95
+            elif k == "fir_number":
+                out["fir_number"] = val
+                conf["fir_number"] = 0.95
+            elif k == "police_station":
+                logger.info(f"Follow-up field addition: police_station field does not exist, logged for future addition. Value: {val}")
+                if not out.get("fir_number"):
+                    out["fir_number"] = val
+                    conf["fir_number"] = 0.70
 
     # ---- case type: death vs injury ----------------------------------------------
     if case_type is not None:
