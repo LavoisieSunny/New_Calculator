@@ -44,9 +44,7 @@ HEADING_KEYWORDS = {
         "particulars of accident"
     ],
     "compensation_section": [
-        "compensation", "quantum", "assessment of compensation", "heads of claim", "calculation", "loss of dependency",
-        "amount of expenses on treatment", "amount of damages", "general damages", "expenses on treatment",
-        "treatment expenses", "award by the tribunal", "adjudged by the tribunal"
+        "compensation", "quantum", "assessment of compensation", "heads of claim", "calculation"
     ],
     "relief_section": [
         "प्रार्थना", "याचना", "अनुतोष", "राहत की प्रार्थना", "अतः प्रार्थना है",
@@ -456,13 +454,13 @@ def merge_ocr_lines_to_paragraphs(text_lines):
             current_block = line
             continue
             
-        # If the current block does not end with sentence-terminal punctuation
-        # and the next line doesn't start with an uppercase heading, merge them!
         ends_with_terminal = current_block[-1] in ['.', '?', '!', ':']
         starts_with_heading = line.isupper() and len(line) > 5
         starts_with_bullet = bool(re.match(r'^\s*(?:\d+|[a-zA-Z])[\.\)\-\]]', line))
+        starts_with_number = bool(re.match(r'^\s*(?:rs\.?|inr)?\s*\d', line, re.IGNORECASE))
+        current_ends_numeric = bool(re.search(r'\d(?:\s*[\/\-]*)$', current_block.strip()))
         
-        if not ends_with_terminal and not starts_with_heading and not starts_with_bullet:
+        if not ends_with_terminal and not starts_with_heading and not starts_with_bullet and not starts_with_number and not current_ends_numeric:
             # Word hyphenation continuation check, e.g. "compen-" + "sation"
             if current_block.endswith('-'):
                 current_block = current_block[:-1] + line
@@ -2522,7 +2520,7 @@ def parse_extracted_text(text_lines, case_type=None):
         prayer_block = "\n".join(merged_lines_english[start_idx:end_idx])
         
     if not award_block:
-        start_idx = int(total_lines * 0.6)
+        start_idx = int(total_lines * 0.6) if total_lines >= 50 else 0
         award_block = "\n".join(merged_lines_english[start_idx:])
 
     # Helper for contextual extraction parameters
@@ -2769,26 +2767,50 @@ def parse_extracted_text(text_lines, case_type=None):
             }
 
     # 4. Age only from claimant/petition section or chronological events
-    age_patterns = [
-        r'\bage\s+of\s+the?\s*deceased\s*[:\-]?\s*(\d{1,2})\b',
-        r'\bage\s+of\s+the?\s*injured\s*[:\-]?\s*(\d{1,2})\b',
-        r'\bdeceased\s+was\s+aged\s*(?:about)?\s*(\d{1,2})\b',
-        r'\binjured\s+was\s+aged\s*(?:about)?\s*(\d{1,2})\b',
-        r'\bdeceased\s+aged\s*(?:about)?\s*(\d{1,2})\b',
-        r'\binjured\s+aged\s*(?:about)?\s*(\d{1,2})\b',
-        r'\bage\s+at\s+the?\s*time\s+of\s+(?:the\s+)?accident\s*[:\-]?\s*(\d{1,2})\b',
-        r'\bdate\s+of\s+accident\s+age\s*[:\-]?\s*(\d{1,2})\b',
-        r'(?:aged\s+about|age\s+of\s+claimant|aged|approximately)\s*[:\-]?\s*(\d{1,2})\b',
-        r'\b([1-9]\d)\s*years\s*(?:old)?\b',
-        r'\bage\s*[:\-]\s*(\d{1,2})\s*(?:years|yrs)?\b',
-        r'(?:is|was)\s+(\d{1,2})\s+years\s+(?:of\s+age|old)\b',
-        r'\bage\s*[:\-]?\s*(\d{1,2})\b',
-        r'\baged\s+(\d{1,2})\b',
-    ]
-    age, conf_age, sec_age, page_age = contextual_extract(
-        age_patterns, sections, [("claimant_section", 95), ("chronological_events_section", 80)], default_val="", type_cast=int,
-        field_name="age", debug_info=parser_debug, pages=pages, sections_metadata=sections_metadata, page_importances=page_importances
-    )
+    if case_type == "death":
+        # Target patterns that explicitly mention deceased/victim/late person
+        death_age_patterns = [
+            r'\b(?:deceased|victim|deceased\s+person|description\s+of\s+deceased)\b.*?\b(?:age|aged)\s*(?:about|is|was)?\s*[:\-;]?\s*(\d{1,2})\b',
+            r'\b(?:age|aged)\s+of\s+(?:the\s+)?(?:deceased|victim)\s+(?:was|is)?\s*[:\-]?\s*(\d{1,2})\b',
+            r'\b(?:deceased|victim)\s+(?:was\s+)?aged?\s*(?:about|is)?\s*(\d{1,2})\b',
+            r'\b(?:deceased|victim)\b.*?\baged?\s*[:\-]?\s*(\d{1,2})\b',
+            r'\bage\s+of\s+the?\s*deceased\s*[:\-]?\s*(\d{1,2})\b',
+            r'\bdeceased\s+was\s+aged\s*(?:about)?\s*(\d{1,2})\b',
+            r'\bdeceased\s+aged\s*(?:about)?\s*(\d{1,2})\b',
+            r'\bage\s+at\s+the?\s*time\s+of\s+(?:the\s+)?accident\s*[:\-]?\s*(\d{1,2})\b',
+        ]
+        # Avoid checking claimant_section first, as it contains claimant/petitioner list with ages
+        age, conf_age, sec_age, page_age = contextual_extract(
+            death_age_patterns, sections, [("chronological_events_section", 90), ("compensation_section", 80), ("award_copy_section", 70)], default_val="", type_cast=int,
+            field_name="age", debug_info=parser_debug, pages=pages, sections_metadata=sections_metadata, page_importances=page_importances
+        )
+        if not age:
+            # If not found, fall back to grounds_section or relief_section which describe the deceased/accident details
+            age, conf_age, sec_age, page_age = contextual_extract(
+                death_age_patterns, sections, [("grounds_section", 80), ("relief_section", 70)], default_val="", type_cast=int,
+                field_name="age", debug_info=parser_debug, pages=pages, sections_metadata=sections_metadata, page_importances=page_importances
+            )
+    else:
+        age_patterns = [
+            r'\bage\s+of\s+the?\s*deceased\s*[:\-]?\s*(\d{1,2})\b',
+            r'\bage\s+of\s+the?\s*injured\s*[:\-]?\s*(\d{1,2})\b',
+            r'\bdeceased\s+was\s+aged\s*(?:about)?\s*(\d{1,2})\b',
+            r'\binjured\s+was\s+aged\s*(?:about)?\s*(\d{1,2})\b',
+            r'\bdeceased\s+aged\s*(?:about)?\s*(\d{1,2})\b',
+            r'\binjured\s+aged\s*(?:about)?\s*(\d{1,2})\b',
+            r'\bage\s+at\s+the?\s*time\s+of\s+(?:the\s+)?accident\s*[:\-]?\s*(\d{1,2})\b',
+            r'\bdate\s+of\s+accident\s+age\s*[:\-]?\s*(\d{1,2})\b',
+            r'(?:aged\s+about|age\s+of\s+claimant|aged|approximately)\s*[:\-]?\s*(\d{1,2})\b',
+            r'\b([1-9]\d)\s*years\s*(?:old)?\b',
+            r'\bage\s*[:\-]\s*(\d{1,2})\s*(?:years|yrs)?\b',
+            r'(?:is|was)\s+(\d{1,2})\s+years\s+(?:of\s+age|old)\b',
+            r'\bage\s*[:\-]?\s*(\d{1,2})\b',
+            r'\baged\s+(\d{1,2})\b',
+        ]
+        age, conf_age, sec_age, page_age = contextual_extract(
+            age_patterns, sections, [("claimant_section", 95), ("chronological_events_section", 80)], default_val="", type_cast=int,
+            field_name="age", debug_info=parser_debug, pages=pages, sections_metadata=sections_metadata, page_importances=page_importances
+        )
     method_age = "Section-Aware Contextual Regex"
     # Guard: reject implausible ages (e.g. paragraph numbers matched as age)
     if isinstance(age, int) and age < 6:
@@ -3710,7 +3732,21 @@ def parse_extracted_text(text_lines, case_type=None):
                 pass
                 
         if not age:
-            m = re.search(r'\b(?:age|aged)\s*(?:about|is)?\s*(\d{1,2})\b', petition_block.lower())
+            if case_type == "death":
+                # For death cases, avoid raw 'age is 35' in claimant lists
+                m = re.search(
+                    r'\b(?:deceased|victim|deceased\s+person|description\s+of\s+deceased)\b.*?\b(?:age|aged)\s*(?:about|is|was)?\s*[:\-;]?\s*(\d{1,2})\b',
+                    petition_block.lower(),
+                    re.IGNORECASE | re.DOTALL
+                )
+                if not m:
+                    m = re.search(
+                        r'\b(?:age|aged)\s+of\s+(?:the\s+)?(?:deceased|victim)\s+(?:was|is)?\s*[:\-]?\s*(\d{1,2})\b',
+                        petition_block.lower(),
+                        re.IGNORECASE
+                    )
+            else:
+                m = re.search(r'\b(?:age|aged)\s*(?:about|is)?\s*(\d{1,2})\b', petition_block.lower())
             if m:
                 age = int(m.group(1))
                 conf_age = 0.75

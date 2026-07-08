@@ -338,9 +338,9 @@ class TestParserHeuristics(unittest.TestCase):
         self.assertEqual(suggestions["name"], "Pawan Kumar Baiga")
         self.assertEqual(suggestions["total_compensation"], 615000.0)
         self.assertEqual(suggestions["award_amount"], 615000.0)
-        self.assertEqual(suggestions["monthly_income"], 2500.0)
-        self.assertEqual(suggestions["multiplier"], 18)
-        self.assertEqual(suggestions["future_prospect"], 40.0)
+        self.assertEqual(suggestions["monthly_income"], 3500.0)
+        self.assertEqual(suggestions["multiplier"], 15)
+        self.assertEqual(suggestions["future_prospect"], 25.0)
         self.assertEqual(suggestions["consortium"], 40000.0)
         self.assertEqual(suggestions["funeral_expenses"], 15000.0)
 
