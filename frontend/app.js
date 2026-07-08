@@ -900,7 +900,32 @@ document.addEventListener("DOMContentLoaded", () => {
         }
     });
 
+    function resetSingleUploadUI(triggerClick = false) {
+        if (singleDropZone) {
+            singleDropZone.classList.remove("compact");
+        }
+        if (singleFileInput) {
+            singleFileInput.value = "";
+            if (triggerClick) {
+                singleFileInput.click();
+            }
+        }
+    }
+
+    // Attach click handler for change-file-btn
+    const changeFileBtn = document.getElementById("change-file-btn");
+    if (changeFileBtn) {
+        changeFileBtn.addEventListener("click", (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            resetSingleUploadUI(true);
+        });
+    }
+
     singleDropZone.addEventListener("click", (e) => {
+        if (singleDropZone.classList.contains("compact")) {
+            return;
+        }
         if (e.target === singleFileInput) return;
         singleFileInput.click();
     });
@@ -918,6 +943,7 @@ document.addEventListener("DOMContentLoaded", () => {
     async function handleSinglePdfUpload(file) {
         window.lastEnhancementVerdict = null;
         window.currentRenderedVerdict = null;
+        resetSingleUploadUI(false);
         const isPdf = file.type === "application/pdf" || file.name.toLowerCase().endsWith(".pdf");
         if (!isPdf) {
             alert("Please upload a valid legal PDF case document.");
@@ -1071,6 +1097,21 @@ document.addEventListener("DOMContentLoaded", () => {
                         if (data.success) {
                             // Stop timer on success
                             stopOcrTimerSuccess();
+
+                            // Change drop-zone to compact view
+                            if (singleDropZone) {
+                                singleDropZone.classList.add("compact");
+                            }
+                            const compactFilename = document.getElementById("compact-filename");
+                            if (compactFilename) {
+                                compactFilename.textContent = file.name;
+                            }
+                            const compactDuration = document.getElementById("compact-duration-caption");
+                            if (compactDuration) {
+                                const elapsedText = document.getElementById("ocr-timer-elapsed");
+                                const elapsedVal = elapsedText ? elapsedText.textContent.trim() : "";
+                                compactDuration.textContent = elapsedVal ? `(completed in ${elapsedVal})` : "";
+                            }
 
                             // TEMPORARY: Log OCR suggestions structure
                             console.log("OCR suggestions structure:", JSON.stringify(data.suggestions, null, 2));
@@ -3478,7 +3519,13 @@ This cannot be undone.`)) return;
                 transportation: currentCalculationBreakdown.transportation || 0,
                 special_diet: currentCalculationBreakdown.special_diet || 0,
                 attender_charges: currentCalculationBreakdown.attender_charges || 0,
-                loss_of_income: currentCalculationBreakdown.loss_of_income || 0
+                loss_of_income: currentCalculationBreakdown.loss_of_income || 0,
+                loss_of_dependency: currentCalculationBreakdown.loss_of_dependency || 0,
+                consortium: currentCalculationBreakdown.consortium || 0,
+                funeral_expenses: currentCalculationBreakdown.funeral_expenses || 0,
+                loss_estate: currentCalculationBreakdown.loss_estate || 0,
+                deduction_percentage: currentCalculationBreakdown.deduction_percentage || 0,
+                future_prospect_percentage: currentCalculationBreakdown.future_prospect_percentage || 0
             };
 
             // Identify current active PDF filename
@@ -3499,17 +3546,72 @@ This cannot be undone.`)) return;
                 is_justify: isJustify
             };
 
-            const response = await fetch("/api/chat/pdf", {
+            const response = await fetch("/api/chat/pdf/stream", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify(payload)
             });
 
             if (!response.ok) throw new Error("Assistant API returned error");
-            const data = await response.json();
 
             document.getElementById(loadingId).remove();
-            appendAssistantChatBubble(data.response, "bot");
+
+            // Create a bot chat bubble to append tokens to
+            const botBubbleId = appendAssistantChatBubble("", "bot", false);
+            const botBubble = document.getElementById(botBubbleId);
+            const chatTextDiv = botBubble ? botBubble.querySelector(".chat-text") : null;
+
+            function formatText(text) {
+                return text
+                    .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+                    .replace(/\*(.*?)\*/g, '<em>$1</em>')
+                    .replace(/\n/g, '<br>');
+            }
+
+            const reader = response.body.getReader();
+            const decoder = new TextDecoder();
+            let accumulatedText = "";
+            let buffer = "";
+
+            while (true) {
+                const { value, done } = await reader.read();
+                if (done) break;
+
+                buffer += decoder.decode(value, { stream: true });
+                const lines = buffer.split("\n");
+                buffer = lines.pop();
+
+                for (const line of lines) {
+                    if (!line.trim()) continue;
+                    try {
+                        const parsed = JSON.parse(line);
+                        const token = parsed.message?.content || "";
+                        accumulatedText += token;
+                        if (chatTextDiv) {
+                            chatTextDiv.innerHTML = formatText(accumulatedText);
+                        }
+                        assistantChatMessages.scrollTop = assistantChatMessages.scrollHeight;
+                    } catch (e) {
+                        console.warn("Error parsing stream line:", e);
+                    }
+                }
+            }
+
+            if (buffer.trim()) {
+                try {
+                    const parsed = JSON.parse(buffer);
+                    const token = parsed.message?.content || "";
+                    accumulatedText += token;
+                    if (chatTextDiv) {
+                        chatTextDiv.innerHTML = formatText(accumulatedText);
+                    }
+                } catch (e) {}
+            }
+
+            // Bind click handlers to the newly populated bubble
+            if (typeof bindChatBubbleClick === "function" && botBubble) {
+                bindChatBubbleClick(botBubble);
+            }
 
             // After justify, inject the "Recalculate Compensation" follow-up action
             if (isJustify) {

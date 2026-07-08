@@ -134,13 +134,24 @@
                             <div id="single-upload-section" class="form-group full-width show-flex">
                                 <label class="main-label">Upload Case PDF for AI Auto-Fill</label>
                                 <div id="single-drop-zone" class="single-drop-zone">
-                                    <div class="single-drop-zone-content">
+                                    <div class="single-drop-zone-content full-only">
                                         <i class="fa-solid fa-file-pdf single-drop-icon" style="color: var(--color-danger); font-size: 2.2rem; margin-bottom: 8px;"></i>
                                         <p class="single-drop-title">Drag & Drop case PDF here or click to browse</p>
                                         <p class="single-drop-subtitle">Runs PaddleOCR to autofill previous judgment, petition, and prayer details</p>
                                         <span class="btn btn-small btn-secondary" style="margin-top: 6px;">Select Document</span>
-                                        <input type="file" id="single-file-input" accept="application/pdf" style="display: none;">
                                     </div>
+                                    <div class="compact-only" style="display: none;">
+                                        <div style="display: flex; align-items: center; justify-content: space-between; width: 100%; gap: 12px; padding: 12px 16px;">
+                                            <div style="display: flex; align-items: center; gap: 10px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; flex: 1;">
+                                                <i class="fa-solid fa-file-pdf" style="color: var(--color-danger); font-size: 1.4rem; flex-shrink: 0;"></i>
+                                                <span id="compact-filename" style="font-weight: 600; font-size: 0.85rem; color: var(--text-primary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">filename.pdf</span>
+                                                <span class="badge badge-success" style="background: rgba(46, 204, 113, 0.15); border: 1px solid rgba(46, 204, 113, 0.3); color: #2ecc71; font-size: 0.72rem; padding: 2px 8px; border-radius: 50px; font-weight: 600; display: inline-flex; align-items: center; gap: 4px; flex-shrink: 0;"><i class="fa-solid fa-check"></i> Extracted</span>
+                                                <span id="compact-duration-caption" style="font-size: 0.75rem; color: var(--text-muted); flex-shrink: 0;"></span>
+                                            </div>
+                                            <button type="button" id="change-file-btn" style="background: transparent; border: none; color: var(--color-primary); font-size: 0.82rem; font-weight: 600; cursor: pointer; text-decoration: underline; white-space: nowrap; padding: 0;">Change File</button>
+                                        </div>
+                                    </div>
+                                    <input type="file" id="single-file-input" accept="application/pdf" style="display: none;">
                                 </div>
                                 
                                 <!-- Premium Live OCR Timer Container

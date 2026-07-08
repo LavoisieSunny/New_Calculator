@@ -911,12 +911,25 @@ def index_document(filename: str, text_lines: list, suggestions: dict) -> bool:
     try:
         logger.info(f"Generating Ollama nomic-embed-text embeddings for {len(chunks_with_page)} chunks of: {filename}")
         
-        points = []
-        for idx, chunk_item in enumerate(chunks_with_page):
+        from concurrent.futures import ThreadPoolExecutor
+
+        def embed_chunk(item_with_idx):
+            idx, chunk_item = item_with_idx
             chunk = chunk_item["text"]
             p_num = chunk_item["page"]
-            
-            vector = get_ollama_embedding(chunk)
+            try:
+                vector = get_ollama_embedding(chunk)
+                return idx, p_num, chunk, vector
+            except Exception as e:
+                logger.error(f"Error calling get_ollama_embedding for chunk {idx} of '{filename}': {str(e)}")
+                return idx, p_num, chunk, None
+
+        indexed_chunks = list(enumerate(chunks_with_page))
+        with ThreadPoolExecutor(max_workers=6) as executor:
+            embeddings_results = list(executor.map(embed_chunk, indexed_chunks))
+
+        points = []
+        for idx, p_num, chunk, vector in embeddings_results:
             if vector is None:
                 logger.warning(f"Embedding generation failed for chunk {idx} of '{filename}'. Skipping this chunk.")
                 continue

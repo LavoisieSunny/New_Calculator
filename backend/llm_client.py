@@ -717,7 +717,7 @@ def generate_response(prompt: str, system_instruction: str = None) -> str:
                 if system_instruction:
                     messages.append({"role": "system", "content": system_instruction})
                 messages.append({"role": "user", "content": prompt})
-                payload = {"model": LLM_MODEL_NAME, "messages": messages, "stream": False, "options": {"temperature": 0.2}}
+                payload = {"model": LLM_MODEL_NAME, "messages": messages, "stream": False, "options": {"temperature": 0.2, "keep_alive": "10m"}}
             headers = {"Content-Type": "application/json"}
             req_body = json.dumps(payload).encode("utf-8")
         else:
@@ -757,6 +757,65 @@ def generate_response(prompt: str, system_instruction: str = None) -> str:
     except Exception as e:
         logger.error(f"Failed to generate LLM response: {str(e)}")
         return f"Error communicating with LLM client: {str(e)}"
+ 
+def generate_response_stream(prompt: str, system_instruction: str = None):
+    logger.info(f"Streaming LLM response using provider '{LLM_PROVIDER}', model '{LLM_MODEL_NAME}'")
+    try:
+        if LLM_PROVIDER == "ollama":
+            if "v1" in LLM_API_ENDPOINT:
+                url = f"{LLM_API_ENDPOINT.rstrip('/')}/chat/completions"
+                messages = []
+                if system_instruction:
+                    messages.append({"role": "system", "content": system_instruction})
+                messages.append({"role": "user", "content": prompt})
+                payload = {"model": LLM_MODEL_NAME, "messages": messages, "temperature": 0.2, "stream": True}
+            else:
+                url = f"{LLM_API_ENDPOINT.rstrip('/')}/api/chat"
+                messages = []
+                if system_instruction:
+                    messages.append({"role": "system", "content": system_instruction})
+                messages.append({"role": "user", "content": prompt})
+                payload = {
+                    "model": LLM_MODEL_NAME,
+                    "messages": messages,
+                    "stream": True,
+                    "options": {"temperature": 0.2, "keep_alive": "10m"}
+                }
+            headers = {"Content-Type": "application/json"}
+            req_body = json.dumps(payload).encode("utf-8")
+            
+            req = urllib.request.Request(url, data=req_body, headers=headers, method="POST")
+            with urllib.request.urlopen(req, timeout=300.0) as response:
+                for line in response:
+                    if not line:
+                        continue
+                    line_str = line.decode("utf-8").strip()
+                    if not line_str:
+                        continue
+                    try:
+                        if "v1" in LLM_API_ENDPOINT:
+                            if line_str.startswith("data:"):
+                                line_str = line_str[5:].strip()
+                            if line_str == "[DONE]":
+                                break
+                            res_json = json.loads(line_str)
+                            choices = res_json.get("choices", [])
+                            if choices:
+                                delta = choices[0].get("delta", {})
+                                if "content" in delta:
+                                    yield delta["content"]
+                        else:
+                            res_json = json.loads(line_str)
+                            if "message" in res_json and "content" in res_json["message"]:
+                                yield res_json["message"]["content"]
+                    except Exception as e:
+                        logger.warning(f"Error parsing stream line: {str(e)}")
+        else:
+            full_resp = generate_response(prompt, system_instruction)
+            yield full_resp
+    except Exception as e:
+        logger.error(f"Failed to stream LLM response: {str(e)}")
+        yield f"Error communicating with LLM stream: {str(e)}"
  
 def classify_case_type_by_ocr_text(ocr_text: str) -> str:
     text_lower = ocr_text.lower()
