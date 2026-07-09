@@ -5808,6 +5808,10 @@ def extract_hindi_biographical_list(text_lines: list) -> dict:
             res["police_station"] = m_th.group(1).strip()
             
     if len(res) >= 1:
+        is_claim_form = any(f in res for f in ("injured_name", "father_name", "address", "age", "occupation", "other_case_info"))
+        if not is_claim_form:
+            return None
+
         if "other_case_info" in res:
             if "fir_number" not in res:
                 m_fir = re.search(r'(?:अपराध|क्र|क्रमांक|नं)\.?\s*[:\-]*\s*(\d+/\d{2,4})', translate_deva_digits(res["other_case_info"]))
@@ -5817,6 +5821,109 @@ def extract_hindi_biographical_list(text_lines: list) -> dict:
                 m_th = re.search(r'(थाना\s+[^\s,।\d]+)', res["other_case_info"])
                 if m_th:
                     res["police_station"] = m_th.group(1).strip()
+
+        # Build field confidences for standard biographical fields
+        field_confidences = {}
+        for f in list(res.keys()):
+            source_field = f
+            if f in ("injured_name", "father_name"):
+                source_field = "injured_name" if "injured_name" in field_scores else "father_name"
+            elif f == "place_of_accident":
+                source_field = "place_of_accident" if "place_of_accident" in field_scores else "date_of_accident"
+            elif f in ("driver_name", "driver_address"):
+                source_field = "driver_name_address"
+            elif f in ("owner_name", "owner_address"):
+                source_field = "owner_name_address"
+            elif f == "was_traveling_in_vehicle":
+                source_field = "was_traveling"
+                
+            score = field_scores.get(source_field, 95.0)
+            field_confidences[f] = min(0.99, score / 100.0)
+            
+        needs_manual_review = []
+        
+        if "compensation_claimed_breakdown" in res:
+            CLAIM_FORM_COMPENSATION_HEAD_ALIASES = {
+                "permanent_disability_amount": ["स्थायी अपंगता का", "स्थाई अपंगता का", "स्थायी निर्योग्यता का"],
+                "pain_and_suffering":          ["दुख दर्द", "मानसिक परेशानी", "पीड़ा कष्ट"],
+                "special_diet_transport_bundle": ["पौष्टिक आहार व आने जाने", "पोष्टिक आहार व आवागमन"],
+                "medical_expenses":            ["इलाज", "आपरेशन", "दवाई खर्च", "दवाई का खर्च"],
+                "attender_charges":            ["सहायक व्यय", "सहायक का खर्च"],
+                "future_medical_expenses":     ["भविष्य में होने वाली इलाज", "भविष्य के इलाज का"],
+            }
+            
+            # Count occurrences of each amount
+            amount_counts = {}
+            for item in res["compensation_claimed_breakdown"]:
+                amt = item.get("amount", 0.0)
+                if amt > 0:
+                    amount_counts[amt] = amount_counts.get(amt, 0) + 1
+                    
+            for item in res["compensation_claimed_breakdown"]:
+                label = item.get("label", "")
+                amt = item.get("amount", 0.0)
+                if not label or amt <= 0.0:
+                    continue
+                    
+                best_field = None
+                best_score = 0.0
+                next_best_score = 0.0
+                
+                for field, aliases in CLAIM_FORM_COMPENSATION_HEAD_ALIASES.items():
+                    for alias in aliases:
+                        matched, score = _hi_fuzzy_contains_with_score(label, alias)
+                        if matched:
+                            if score > best_score:
+                                next_best_score = best_score
+                                best_score = score
+                                best_field = field
+                            elif score > next_best_score:
+                                next_best_score = score
+                                
+                if best_field and best_score >= 80.0:
+                    base_conf = min(0.99, best_score / 100.0)
+                    
+                    # Check for duplicate amount penalty
+                    if amount_counts.get(amt, 0) > 1:
+                        base_conf *= 0.7
+                        needs_manual_review.append(
+                            f"Low confidence: Multiple claim items share the same amount of {amt:.2f} (item label: '{label}')."
+                        )
+                        
+                    # Check for ambiguity penalty
+                    if (best_score - next_best_score) < 15.0:
+                        base_conf *= 0.8
+                        needs_manual_review.append(
+                            f"Low confidence: Claim label '{label}' is ambiguous (next best match score close to best score)."
+                        )
+                    
+                    # Assign to canonical fields
+                    if best_field == "special_diet_transport_bundle":
+                        target_field = BUNDLED_DIET_TRANSPORT_TARGET_FIELD or "special_diet"
+                        if target_field not in res or field_confidences.get(target_field, 0.0) < base_conf:
+                            res[target_field] = amt
+                            field_confidences[target_field] = base_conf
+                        
+                        other_field = "transportation"
+                        if other_field not in res or field_confidences.get(other_field, 0.0) < base_conf:
+                            res[other_field] = 0.0
+                            field_confidences[other_field] = base_conf
+                    else:
+                        if best_field not in res or field_confidences.get(best_field, 0.0) < base_conf:
+                            res[best_field] = amt
+                            field_confidences[best_field] = base_conf
+                else:
+                    if best_field:
+                        needs_manual_review.append(
+                            f"Low confidence match ignored: Claim label '{label}' matched '{best_field}' but score ({best_score:.1f}%) was below threshold."
+                        )
+            
+            # Ensure 'disability' percentage is not incorrectly populated with an amount or wrong percentage
+            res["disability"] = 0.0
+            field_confidences["disability"] = 0.99
+
+        res["field_confidences"] = field_confidences
+        res["needs_manual_review"] = needs_manual_review
         return res
         
     fallback_res = extract_hindi_narrative_petition(text_lines)
@@ -7077,15 +7184,22 @@ def parse_hindi_extracted_text(text_lines: list, case_type: str = None) -> dict:
     bio_res = extract_hindi_biographical_list(text_lines)
     if bio_res:
         logger.info("[HINDI PARSER] Biographical list format detected! Applying updates to biographical fields.")
+        bio_confs = bio_res.pop("field_confidences", {})
+        bio_review = bio_res.pop("needs_manual_review", [])
+        if bio_review:
+            if "needs_manual_review" not in out:
+                out["needs_manual_review"] = []
+            out["needs_manual_review"].extend(bio_review)
+            
         for k, val in bio_res.items():
             if val is not None and val != "":
                 if k == "police_station":
                     logger.info(f"Follow-up field addition: police_station field does not exist, logged for future addition. Value: {val}")
                     if not out.get("fir_number"):
                         out["fir_number"] = val
-                        conf["fir_number"] = 0.70
+                        conf["fir_number"] = bio_confs.get(k, 0.70)
                 out[k] = val
-                conf[k] = 0.95
+                conf[k] = bio_confs.get(k, 0.95)
 
     # ---- case type: death vs injury ----------------------------------------------
     if case_type is not None:

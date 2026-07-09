@@ -208,7 +208,7 @@ class TestHindiParser(unittest.TestCase):
         self.assertTrue(os.path.exists(fixtures_dir), f"Fixtures directory not found: {fixtures_dir}")
         
         files = [f for f in os.listdir(fixtures_dir) if f.endswith(".txt")]
-        self.assertEqual(len(files), 10, f"Expected 10 fixture files, found {len(files)}")
+        self.assertEqual(len(files), 11, f"Expected 11 fixture files, found {len(files)}")
         
         for f in files:
             name = os.path.splitext(f)[0]
@@ -556,6 +556,49 @@ class TestHindiParser(unittest.TestCase):
         self.assertGreater(conf_cand.get("medical_expenses", {}).get("confidence", 0.0), 0.80)
         self.assertLessEqual(conf_cand.get("medical_expenses", {}).get("confidence", 0.0), 1.0)
         self.assertTrue(any("Felled back to candidate search logic" in msg for msg in res_cand.get("needs_manual_review", [])))
+
+    def test_hindi_claim_form_compensation_mapping_and_confidence(self):
+        text_lines = [
+            "1. आवेदक का नाम व पिता का नाम : राजेश कुमार पुत्र श्री रमेश कुमार",
+            "2. आवेदक का पूरा पता : जबलपुर, मध्य प्रदेश",
+            "17. चाही गई मुआवजा राशि :-",
+            "(1) आवेदिका को आई स्थाई अपंगता का : 2,00,000/-",
+            "(2) दुख दर्द व मानसिक परेशानी का : 1,00,000/-",
+            "(3) पौष्टिक आहार व आने जाने : 25,000/-",
+            "(4) इलाज, आपरेशन व दवाई खर्च : 2,00,000/-",
+            "(5) सहायक व्यय का खर्च : 25,000/-",
+            "(6) भविष्य में होने वाली इलाज का : 2,00,000/-",
+            "कुल : 7,50,000/-"
+        ]
+        
+        res = parse_hindi_extracted_text(text_lines)
+        
+        # Verify mapped fields
+        self.assertEqual(res.get("permanent_disability_amount"), 200000.0)
+        self.assertEqual(res.get("pain_and_suffering"), 100000.0)
+        self.assertEqual(res.get("special_diet"), 25000.0)
+        self.assertEqual(res.get("transportation"), 0.0)  # Bundled target, other field gets 0
+        self.assertEqual(res.get("medical_expenses"), 200000.0)
+        self.assertEqual(res.get("attender_charges"), 25000.0)
+        self.assertEqual(res.get("future_medical_expenses"), 200000.0)
+        self.assertEqual(res.get("disability"), 0.0)  # Percentage field is set to 0 to prevent contamination
+        
+        # Verify duplicate amount confidence penalty (2,00,000 appears 3 times, 25,000 appears 2 times)
+        conf_scores = res.get("confidence_scores", {})
+        
+        # permanent_disability_amount, medical_expenses, future_medical_expenses (amount 2,00,000)
+        self.assertLess(conf_scores.get("permanent_disability_amount", {}).get("confidence", 1.0), 0.75)
+        self.assertLess(conf_scores.get("medical_expenses", {}).get("confidence", 1.0), 0.75)
+        self.assertLess(conf_scores.get("future_medical_expenses", {}).get("confidence", 1.0), 0.75)
+        
+        # special_diet, attender_charges, transportation (amount 25,000)
+        self.assertLess(conf_scores.get("special_diet", {}).get("confidence", 1.0), 0.75)
+        self.assertLess(conf_scores.get("attender_charges", {}).get("confidence", 1.0), 0.75)
+        
+        # Verify manual review alerts
+        review_msgs = res.get("needs_manual_review", [])
+        self.assertTrue(any("Multiple claim items share the same amount of 200000.00" in msg for msg in review_msgs))
+        self.assertTrue(any("Multiple claim items share the same amount of 25000.00" in msg for msg in review_msgs))
 
 if __name__ == "__main__":
     unittest.main()
