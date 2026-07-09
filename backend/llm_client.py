@@ -123,7 +123,7 @@ def validate_ollama_setup() -> dict:
         logger.error(f"Ollama startup connection failed at {base_url}: {str(e)}")
     return stats
  
-def generate_response(prompt: str, system_instruction: str = None) -> str:
+def generate_response(prompt: str, system_instruction: str = None, response_format: str = None) -> str:
     logger.info(f"Generating LLM response using provider '{LLM_PROVIDER}', model '{LLM_MODEL_NAME}'")
     
     char_count = len(prompt)
@@ -145,6 +145,8 @@ def generate_response(prompt: str, system_instruction: str = None) -> str:
             if system_instruction:
                 payload["systemInstruction"] = {"parts": [{"text": system_instruction}]}
                 payload["contents"][0]["parts"][0]["text"] = prompt
+            if response_format == "json":
+                payload["generationConfig"] = {"responseMimeType": "application/json"}
             req_body = json.dumps(payload).encode("utf-8")
         elif LLM_PROVIDER == "ollama":
             if "v1" in LLM_API_ENDPOINT:
@@ -159,6 +161,8 @@ def generate_response(prompt: str, system_instruction: str = None) -> str:
                     "temperature": 0.2,
                     "options": {"temperature": 0.2, "keep_alive": "10m", "num_ctx": 16384}
                 }
+                if response_format == "json":
+                    payload["response_format"] = {"type": "json_object"}
             else:
                 url = f"{LLM_API_ENDPOINT.rstrip('/')}/api/chat"
                 messages = []
@@ -171,6 +175,8 @@ def generate_response(prompt: str, system_instruction: str = None) -> str:
                     "stream": False, 
                     "options": {"temperature": 0.2, "keep_alive": "10m", "num_ctx": 16384}
                 }
+                if response_format == "json":
+                    payload["format"] = "json"
             headers = {"Content-Type": "application/json"}
             req_body = json.dumps(payload).encode("utf-8")
         else:
@@ -183,6 +189,8 @@ def generate_response(prompt: str, system_instruction: str = None) -> str:
                 messages.append({"role": "system", "content": system_instruction})
             messages.append({"role": "user", "content": prompt})
             payload = {"model": LLM_MODEL_NAME, "messages": messages, "temperature": 0.2}
+            if response_format == "json":
+                payload["response_format"] = {"type": "json_object"}
             req_body = json.dumps(payload).encode("utf-8")
  
         req = urllib.request.Request(url, data=req_body, headers=headers, method="POST")
@@ -478,6 +486,18 @@ def extract_smart_context_for_llm(raw_ocr_text: str, track: str = "high_court") 
         f"{end_context}"
     )
  
+def validate_recovery_shape(raw_data: dict) -> bool:
+    if not isinstance(raw_data, dict):
+        return False
+    expected_sample_keys = {
+        "case_type", "claimant_name", "deceased_name", "age",
+        "monthly_income", "award_amount", "medical_expenses",
+        "pain_and_suffering", "disability", "disability_percentage"
+    }
+    if any(k in raw_data for k in expected_sample_keys):
+        return True
+    return False
+
 def ai_data_recovery(raw_ocr_text: str, track: str = "high_court", case_type: str = None) -> dict:
     """
     Invokes the LLM to parse raw OCR text and extract ALL legal claims fields
@@ -591,15 +611,60 @@ def ai_data_recovery(raw_ocr_text: str, track: str = "high_court", case_type: st
     logger.info(f"Exact text being sent to LLM prompt (length={len(prompt)}):\n{prompt}")
     logger.info(f"Exact system instruction being sent to LLM:\n{system_instruction}")
  
-    response = generate_response(prompt, system_instruction)
+    # Try with JSON mode enabled
+    attempts = 2
+    response = None
+    raw_data = None
+    
+    current_prompt = prompt
+    for attempt in range(attempts):
+        try:
+            response = generate_response(current_prompt, system_instruction, response_format="json")
+        except Exception as gen_err:
+            logger.warning(f"[AI-RECOVERY] Attempt {attempt+1} failed to generate response: {gen_err}")
+            if attempt == attempts - 1:
+                raise gen_err
+            current_prompt = prompt + "\n\nREMINDER: your last response must be corrected — output ONLY the JSON object, nothing else, no summary, no explanation"
+            continue
+
+        try:
+            # 1. Direct parse
+            parsed = json.loads(response)
+            if validate_recovery_shape(parsed):
+                raw_data = parsed
+                logger.info(f"[AI-RECOVERY] Attempt {attempt+1} direct parse and shape validation succeeded")
+                break
+            else:
+                logger.warning(f"[AI-RECOVERY] Attempt {attempt+1} direct parse succeeded but failed shape validation")
+        except Exception:
+            # 2. Repair extraction
+            start_idx = response.find("{")
+            end_idx = response.rfind("}")
+            if start_idx != -1 and end_idx != -1 and end_idx > start_idx:
+                candidate = response[start_idx:end_idx+1]
+                try:
+                    parsed = json.loads(candidate)
+                    if validate_recovery_shape(parsed):
+                        raw_data = parsed
+                        logger.info(f"[AI-RECOVERY] Attempt {attempt+1} direct parse failed, repair-extraction and shape validation succeeded")
+                        break
+                    else:
+                        logger.warning(f"[AI-RECOVERY] Attempt {attempt+1} repair-extraction succeeded but failed shape validation")
+                except Exception as e2:
+                    logger.warning(f"[AI-RECOVERY] Attempt {attempt+1} direct parse failed, repair-extraction also failed: {e2}")
+            else:
+                logger.warning(f"[AI-RECOVERY] Attempt {attempt+1} direct parse failed, no valid matching braces found for repair-extraction")
+        
+        if attempt < attempts - 1:
+            logger.info("[AI-RECOVERY] Retrying with forceful format instruction...")
+            current_prompt = prompt + "\n\nREMINDER: your last response must be corrected — output ONLY the JSON object, nothing else, no summary, no explanation"
+
+    if raw_data is None:
+        err_msg = "AI-assisted recovery unavailable for this document — please fill remaining fields manually."
+        logger.error(f"Failed to parse AI Data Recovery JSON after all retries. Raw response: {response}")
+        return {"ai_recovery_error": err_msg, "raw_response_preview": response[:300] if response else ""}
  
     try:
-        json_match = re.search(r"\{.*\}", response, re.DOTALL)
-        if json_match:
-            raw_data = json.loads(json_match.group(0))
-        else:
-            raw_data = json.loads(response)
- 
         data = {}
         confidence_scores = {}
  
@@ -746,5 +811,6 @@ def ai_data_recovery(raw_ocr_text: str, track: str = "high_court", case_type: st
         return data
  
     except Exception as e:
+        err_msg = "AI-assisted recovery unavailable for this document — please fill remaining fields manually."
         logger.error(f"Failed to parse AI Data Recovery JSON: {str(e)}. Raw response: {response}")
-        return {"ai_recovery_error": str(e), "raw_response_preview": response[:300]}
+        return {"ai_recovery_error": err_msg, "raw_response_preview": (response[:300] if response else str(e))}

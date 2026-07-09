@@ -1535,41 +1535,81 @@ def perform_targeted_ocr_lower_court(
             total_ocr_time=time.time() - start_time
         )
 
-    text_lines = []
-    pages_meta = []
     scale = OCR_RENDER_DPI / 72.0
-    for i, idx in enumerate(page_idxs):
-        with pdfium.PdfDocument(file_path) as doc:
-            page_obj = doc[idx]
-            bitmap = page_obj.render(scale=scale)
-            pil_img = bitmap.to_pil()
-            del bitmap, page_obj
-        pil_img = guard_and_downscale_image(pil_img)
-        classification = classify_scanned_page(pil_img)
-        if classification in ("blank", "image-heavy"):
+    page_results = {}
+
+    def process_page(idx):
+        try:
+            with _PDFIUM_LOCK:
+                with pdfium.PdfDocument(file_path) as doc:
+                    page_obj = doc[idx]
+                    bitmap = page_obj.render(scale=scale)
+                    pil_img = bitmap.to_pil()
+                    del bitmap, page_obj
+            pil_img = guard_and_downscale_image(pil_img)
+            classification = classify_scanned_page(pil_img)
+            if classification in ("blank", "image-heavy"):
+                del pil_img
+                _tlog(f"[TARGETED-OCR] Page {idx+1} is {classification} — skipping expensive OCR")
+                return idx, [], {
+                    "page": idx + 1, "engine": f"Skipped ({classification})",
+                    "confidence": 0.0, "quality_score": 0.0, "lines": 0,
+                    "ocr_time": 0.0, "total_page_time": 0.0
+                }
+
+            img_path = os.path.join(tempfile.gettempdir(), f"_targeted_{uuid.uuid4().hex}.png")
+            pil_img.save(img_path, format="PNG")
             del pil_img
-            _tlog(f"[TARGETED-OCR] Page {idx+1} is {classification} — skipping expensive OCR")
+
+            lines, meta = ocr_page_with_vision(
+                page_idx=idx, total_pages=total_pages, rendered_img_path=img_path,
+                pdf_path=file_path, vision_available=vision_available, paddle_available=paddle_available,
+                track="lower_court"
+            )
+            if os.path.exists(img_path):
+                os.unlink(img_path)
+            return idx, lines, meta
+        except Exception as e:
+            logger.error(f"Page {idx + 1}: unhandled exception in targeted lower court process_page: {e}")
+            return idx, [], {
+                "page": idx + 1, "engine": "Error",
+                "confidence": 0.0, "quality_score": 0.0, "lines": 0,
+                "ocr_time": 0.0, "total_page_time": 0.0,
+                "error": str(e)
+            }
+        finally:
+            _release_memory_to_os()
+
+    with _cf.ThreadPoolExecutor(max_workers=OCR_PAGE_WORKER_POOL_SIZE) as executor:
+        futures = [executor.submit(process_page, idx) for idx in page_idxs]
+        for future in _cf.as_completed(futures):
+            try:
+                idx, page_lines, page_meta = future.result()
+            except Exception as e:
+                logger.error(f"Unexpected future failure in targeted lower court process_page: {e}")
+                continue
+            page_results[idx] = (page_lines, page_meta)
+            pages_done = len(page_results)
             if page_callback:
                 page_callback({
                     "page": idx + 1, "total_pages": total_pages,
-                    "pages_done": i + 1, "engine": f"Skipped ({classification})",
-                    "confidence": 0.0,
-                    "quality_score": 0.0,
-                    "lines": 0
+                    "pages_done": pages_done, "engine": page_meta.get("engine", ""),
+                    "confidence": page_meta.get("confidence", 0.0),
+                    "quality_score": page_meta.get("quality_score", 0.0),
+                    "lines": page_meta.get("lines", 0),
+                    "ocr_time": round(page_meta.get("ocr_time", 0.0), 2),
+                    "total_page_time": round(page_meta.get("total_page_time", 0.0), 2),
                 })
-            continue
 
-        img_path = os.path.join(tempfile.gettempdir(), f"_targeted_{uuid.uuid4().hex}.png")
-        pil_img.save(img_path, format="PNG")
-        del pil_img
+    text_lines = []
+    pages_meta = []
+    vision_escalations = 0
 
-        lines, meta = ocr_page_with_vision(
-            page_idx=idx, total_pages=total_pages, rendered_img_path=img_path,
-            pdf_path=file_path, vision_available=vision_available, paddle_available=paddle_available,
-            track="lower_court"
-        )
-        if os.path.exists(img_path):
-            os.unlink(img_path)
+    for idx in page_idxs:
+        lines, meta = page_results.get(idx, ([], {}))
+        engine = meta.get("engine", "")
+        if "qwen" in engine.lower() or "vision" in engine.lower():
+            vision_escalations += 1
 
         matched_headings = [
             k for k, v in target_pages.items()
@@ -1580,22 +1620,16 @@ def perform_targeted_ocr_lower_court(
         text_lines.append(f"--- PAGE {idx + 1} ---")
         text_lines.extend(lines)
 
-        if page_callback:
-            page_callback({
-                "page": idx + 1, "total_pages": total_pages,
-                "pages_done": i + 1, "engine": meta.get("engine", ""),
-                "confidence": meta.get("confidence", 0.0),
-                "quality_score": meta.get("quality_score", 0.0),
-                "lines": meta.get("lines", 0),
-                "ocr_time": meta.get("ocr_time", 0.0),
-                "total_page_time": meta.get("total_page_time", 0.0),
-            })
-
     avg_conf = (sum(m.get("confidence", 0.0) for m in pages_meta) / len(pages_meta)) if pages_meta else 0.0
     avg_q = (sum(m.get("quality_score", 0.0) for m in pages_meta) / len(pages_meta)) if pages_meta else 0.0
     total_time = time.time() - start_time
-    _tlog(f"[TARGETED-OCR] done: {len(page_idxs)}/{total_pages} pages OCR'd "
-          f"(skipped {total_pages - len(page_idxs)}) in {total_time:.1f}s")
+    _tlog(f"[TARGETED-OCR] {len(page_idxs)} pages, {vision_escalations} escalated to vision, total {total_time:.1f}s")
+
+    for m in pages_meta:
+        pg = m.get("page", 0)
+        eng = m.get("engine", "")
+        duration = m.get("total_page_time", 0.0)
+        logger.info(f"[TARGETED-OCR-PAGE] Page {pg}: engine={eng} time={duration:.2f}s")
 
     ocr_debug = _build_ocr_debug(
         OCR_HYBRID_LABEL, 0, avg_q, [], [p + 1 for p in page_idxs], ["rgb_convert", "clahe_contrast"],
@@ -2480,7 +2514,7 @@ async def ai_recover_fields(request: AIRecoverRequest):
             track = "lower_court" if _devanagari_ratio(full_text) >= 0.30 else "high_court"
         recovered_data = await asyncio.to_thread(ai_data_recovery, full_text, track)
         if recovered_data.get("ai_recovery_error"):
-            raise HTTPException(status_code=503, detail=f"LLM unavailable: {recovered_data['ai_recovery_error']}")
+            raise HTTPException(status_code=503, detail="AI-assisted recovery unavailable for this document — please fill remaining fields manually.")
         from backend.parser_heuristics import format_suggestions_for_calculator
         formatted = format_suggestions_for_calculator(recovered_data)
         return {"success": True, "suggestions": formatted, "raw_recovered": recovered_data}
