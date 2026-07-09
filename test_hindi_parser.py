@@ -403,5 +403,101 @@ class TestHindiParser(unittest.TestCase):
         # Verify disability percentage is None/empty (not mismatching to 1. from list markers)
         self.assertIn(res.get("disability"), ("", None))
 
+    def test_decoy_blocks_and_anchor_scoring(self):
+        text_lines = [
+            # Decoy Block 1 (placed before the real table, lacks proper heading/end-anchor)
+            "(1) इलाज खर्च : 10,000/-",
+            "(2) पौष्टिक आहार : 5,000/-",
+            "(3) आने जाने का व्यय : 2,000/-",
+            "(4) दुख दर्द व मानसिक वेदना : 15,000/-",
+            "(5) परिचारक व्यय : 3,000/-",
+            "कुल : 35,000/-",
+            
+            "",
+            # Real Block with "मुआवजे की राशि" heading variant
+            "मुआवजे की राशि :--",
+            "(1) स्थायी अपंगता का : 5,00,000/-",
+            "(2) दुख दर्द व मानसिक वेदना : 1,00,000/-",
+            "(3) पौष्टिक आहार : 25,000/-",
+            "(4) इलाज व दवाई खर्च : 3,00,000/-",
+            "(5) परिचारक व्यय : 50,000/-",
+            "कुल : 9,75,000/-",
+            # Typo'd/noisy end-anchor
+            "१९. अन्य जानकरी जो निराकर के लिए आवश्क है",
+            
+            "",
+            # Decoy Block 2 (placed after the real table, lacks proper heading/end-anchor)
+            "(1) दवाई खर्च : 20,000/-",
+            "(2) खुराक खर्च : 10,000/-",
+            "(3) यातायात : 5,000/-",
+            "(4) शारीरिक वेदना : 30,000/-",
+            "(5) अटेंडेंट : 4,00,000/-",
+            "कुल : 4,65,000/-"
+        ]
+        
+        from backend.parser_heuristics import extract_hindi_structural_block
+        res = extract_hindi_structural_block(text_lines)
+        self.assertIsNotNone(res)
+        
+        # Verify that the scorer correctly prioritized the real block
+        fields = res.get("fields", {})
+        self.assertEqual(fields.get("pain_and_suffering"), 100000.0)
+        self.assertEqual(fields.get("medical_expenses"), 300000.0)
+        self.assertEqual(fields.get("special_diet"), 25000.0)
+        self.assertEqual(fields.get("attender_charges"), 50000.0)
+
+    def test_fuzzy_matching_adversarial(self):
+        witness_statement = [
+            "गवाह ने बयान दिया कि घटना दिनांक को वह मौके पर उपस्थित था।",
+            "आरोपी ने 50000 रुपये की मांग की और गवाह से मारपीट की।",
+            "पुलिस थाना सिविल लाइन्स में अपराध क्रमांक 123/26 दर्ज किया गया।",
+            "चिकित्सक ने घायल राजेश का इलाज किया और दवाई का पर्चा दिया।"
+        ]
+        res = parse_hindi_extracted_text(witness_statement)
+        self.assertEqual(res.get("pain_and_suffering", 0.0), 0.0)
+        self.assertEqual(res.get("medical_expenses", 0.0), 0.0)
+        self.assertEqual(res.get("special_diet", 0.0), 0.0)
+        
+    def test_confidence_and_needs_manual_review(self):
+        text_high = [
+            "मुआवजे की तालिका :--",
+            "(1) इलाज व दवाई खर्च : 1,00,000/-",
+            "(2) दुख दर्द व मानसिक वेदना : 50,000/-",
+            "(3) पौष्टिक आहार : 10,000/-",
+            "(4) परिचारक व्यय : 5,000/-",
+            "(5) परिवहन व्यय : 5,000/-",
+            "कुल : 1,70,000/-",
+            "१९. अन्य जानकारी जो निराकरण के लिए आवश्यक है"
+        ]
+        res_high = parse_hindi_extracted_text(text_high)
+        conf_high = res_high.get("confidence_scores", {})
+        self.assertEqual(conf_high.get("medical_expenses", {}).get("confidence"), 0.96)
+        self.assertEqual(conf_high.get("pain_and_suffering", {}).get("confidence"), 0.96)
+        self.assertNotIn("Low anchor matching confidence for structural table block", res_high.get("needs_manual_review", []))
+
+        text_med = [
+            "(1) इलाज व दवाई खर्च : 1,00,000/-",
+            "(2) दुख दर्द व मानसिक वेदना : 50,000/-",
+            "(3) पौष्टिक आहार : 10,000/-",
+            "(4) परिचारक व्यय : 5,000/-",
+            "(5) परिवहन व्यय : 5,000/-",
+            "कुल : 1,70,000/-",
+            "१९. अन्य जानकारी जो निराकरण के लिए आवश्यक है"
+        ]
+        res_med = parse_hindi_extracted_text(text_med)
+        conf_med = res_med.get("confidence_scores", {})
+        self.assertEqual(conf_med.get("medical_expenses", {}).get("confidence"), 0.70)
+        self.assertIn("needs_manual_review", res_med)
+        self.assertTrue(any("missing heading lookback" in msg for msg in res_med["needs_manual_review"]))
+
+        text_candidate = [
+            "चिकित्सा खर्च रू 20,000/-"
+        ]
+        res_cand = parse_hindi_extracted_text(text_candidate)
+        conf_cand = res_cand.get("confidence_scores", {})
+        self.assertGreater(conf_cand.get("medical_expenses", {}).get("confidence", 0.0), 0.80)
+        self.assertLessEqual(conf_cand.get("medical_expenses", {}).get("confidence", 0.0), 1.0)
+        self.assertTrue(any("Felled back to candidate search logic" in msg for msg in res_cand.get("needs_manual_review", [])))
+
 if __name__ == "__main__":
     unittest.main()

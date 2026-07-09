@@ -1,6 +1,7 @@
 import re
 import logging
 from datetime import datetime
+from rapidfuzz import fuzz
 
 logger = logging.getLogger("ParserHeuristics")
 
@@ -4997,6 +4998,7 @@ HINDI_HEADING_KEYWORDS = {
     ],
     "compensation_table_hi": [
         "क्षतिपूर्ति राशि", "कुल प्रतिकर", "कुल क्षतिपूर्ति", "मुआवजा राशि",
+        "मुआवजे की राशि", "मुआवजा की राशि", "चाही गई मुआवजा राशि", "चाही गई मुआवजा की राशि",
         "compensation table", "compensation awarded", "awarded amount", "quantum of compensation",
     ],
     "prayer_hi": [
@@ -5016,6 +5018,14 @@ HINDI_HEADING_KEYWORDS = {
         "प्रार्थना", "याचना", "अनुतोष", "राहत की प्रार्थना", "अतः प्रार्थना है",
         "अतः सादर प्रार्थना है", "प्रार्थना पत्र",
         "relief", "prayer", "relief claimed", "prayer clause",
+    ],
+    "application_form_hi": [
+        "आवेदन पत्र", "दावा आवेदन", "दावा याचिका", "याचिका",
+        "claim petition", "application form", "petition",
+    ],
+    "case_disposal_info_hi": [
+        "निराकरण पत्रक", "निराकरण", "मामला निराकरण",
+        "case disposal", "disposal sheet", "disposal information",
     ],
     # Recognized but intentionally excluded from "pages we still need" —
     # registry/admin pages with no autofill-relevant content. Not searched
@@ -5061,6 +5071,66 @@ def _is_currency_adjacent(text_str: str, start: int, end: int) -> bool:
     currency_pattern = re.compile(r'(?:रुपये|रुपए|रू|रु|₹|Rs|Rs\.|/-)', re.IGNORECASE)
     return bool(currency_pattern.search(prefix) or currency_pattern.search(suffix))
 
+_CURRENT_MATCH_SCORES = []
+
+def _hi_normalize_text(text: str) -> str:
+    if not text:
+        return ""
+    text = text.lower()
+    text = translate_deva_digits(text)
+    
+    # Normalize known spelling clusters
+    text = text.replace("स्थाई", "स्थायी").replace("स्थाी", "स्थायी")
+    text = re.sub(r'मु[आव]ा?व[जज]े', 'मुआवजा', text)
+    text = re.sub(r'मुनाव[जज][ेा]', 'मुआवजा', text)
+    text = text.replace("मुआवजे", "मुआवजा")
+    text = text.replace("मुनावजा", "मुआवजा").replace("मुनावजे", "मुआवजा")
+    
+    text = text.replace("शारीरीक", "शारीरिक")
+    text = text.replace("सुखों", "सुख").replace("सुखमय", "सुख")
+    text = text.replace("हानी", "हानि")
+    text = text.replace("चिकितसा", "चिकित्सा")
+    text = text.replace("नुकसानी", "नुकसान")
+    
+    # Map phonetic confusions
+    text = text.replace("श", "स").replace("ष", "स")
+    text = text.replace("ी", "ि").replace("ू", "ु")
+    
+    # Collapse punctuation
+    text = re.sub(r'[|:\-—=/\\._()\[\]{}?,;!]', ' ', text)
+    text = re.sub(r'\s+', ' ', text).strip()
+    return text
+
+def _hi_fuzzy_contains_with_score(text: str, phrase: str, max_edit_ratio: float = 0.15) -> tuple:
+    norm_text = _hi_normalize_text(text)
+    norm_phrase = _hi_normalize_text(phrase)
+    
+    if not norm_phrase or not norm_text:
+        return False, 0.0
+        
+    if len(norm_phrase) <= 6:
+        matched = norm_phrase in norm_text
+        return matched, 100.0 if matched else 0.0
+
+    pr = fuzz.partial_ratio(norm_phrase, norm_text)
+    tsr = fuzz.token_set_ratio(norm_phrase, norm_text)
+    score = max(pr, tsr)
+    
+    threshold = (1.0 - max_edit_ratio) * 100.0
+    
+    if threshold - 15.0 <= score < threshold:
+        logger.info(
+            f"[FUZZY-NEAR-MISS] norm_text='{norm_text}' norm_phrase='{norm_phrase}' score={score:.2f} threshold={threshold:.2f}"
+        )
+        
+    return score >= threshold, score
+
+def _hi_fuzzy_contains(text: str, phrase: str, max_edit_ratio: float = 0.15) -> bool:
+    matched, score = _hi_fuzzy_contains_with_score(text, phrase, max_edit_ratio)
+    if matched:
+        _CURRENT_MATCH_SCORES.append(score)
+    return matched
+
 # Match helpers for structural table lines and totals
 _LBL_PAT = re.compile(r'^\s*(?:\[|\()? *(\d+|[०-९]+|[\u0900-\u097F]) *(?:\]|\)|[\.\-\):])+ +(.*)$')
 _AMT_PAT = re.compile(
@@ -5070,13 +5140,15 @@ _AMT_PAT = re.compile(
 
 def is_totals_line(line_text: str) -> bool:
     norm = line_text.strip().lower()
-    if norm.startswith('(') and (
+    totals_kws = ["कुल", "योग", "कुल योग", "कुल क्षतिपूर्ति राशि", "कुल शति", "कुल प्रतिकर", "अंकन", "total", "sum", "grand total", "aggregate"]
+    if any(kw in norm for kw in totals_kws):
+        return True
+    if norm.startswith('(') and not any(f"({i})" in norm for i in range(1, 20)) and (
         any(x in norm for x in ['रूपये', 'रुपये', 'रू', 'रु', 'rs', 'only', '/-']) or 
         any(x in norm for x in ["हजार", "लाख", "करोड़", "सौ", "मात्र", "thousand", "lakh"])
     ):
         return True
-    totals_kws = ["कुल", "योग", "कुल योग", "कुल क्षतिपूर्ति राशि", "कुल शति", "कुल प्रतिकर", "अंकन"]
-    return any(kw in norm for kw in totals_kws)
+    return False
 
 def parse_isolated_amount(amount_str: str) -> float:
     if any(kw in amount_str.lower() for kw in ["निरंक", "शून्य", "nil"]):
@@ -5095,97 +5167,103 @@ def check_amount_plausibility(value: float, field: str, line_text: str) -> bool:
     return True
 
 def match_bundle_d(norm: str) -> bool:
-    has_att = "देख-रेख" in norm or "देखरेख" in norm
-    has_diet = "आहार" in norm or "पोषण" in norm
-    has_trans = "आने-जाने" in norm or "अस्पताल जाने" in norm or bool(re.search(r'अस्पताल.*जाने', norm))
+    has_att = _hi_fuzzy_contains(norm, "देख-रेख", max_edit_ratio=0.10) or _hi_fuzzy_contains(norm, "देखरेख", max_edit_ratio=0.10)
+    has_diet = _hi_fuzzy_contains(norm, "आहार", max_edit_ratio=0.10) or _hi_fuzzy_contains(norm, "पोषण", max_edit_ratio=0.10)
+    has_trans = _hi_fuzzy_contains(norm, "आने-जाने", max_edit_ratio=0.10) or _hi_fuzzy_contains(norm, "अस्पताल जाने", max_edit_ratio=0.10) or bool(re.search(r'अस्पताल.*जाने', norm))
     return has_att and has_diet and has_trans
 
 def match_bundle_b(norm: str) -> bool:
-    has_future = "भविष्य" in norm or "भावी" in norm or "future" in norm.lower()
-    has_income = any(x in norm for x in ["आय", "क्षति", "हानि"])
-    has_med = any(x in norm for x in ["इलाज", "उपचार", "चिकित्सा"])
+    has_future = _hi_fuzzy_contains(norm, "भविष्य", max_edit_ratio=0.10) or _hi_fuzzy_contains(norm, "भावी", max_edit_ratio=0.10) or _hi_fuzzy_contains(norm, "future", max_edit_ratio=0.10)
+    has_income = any(_hi_fuzzy_contains(norm, x, max_edit_ratio=0.10) for x in ["आय", "क्षति", "हानि"])
+    has_med = any(_hi_fuzzy_contains(norm, x, max_edit_ratio=0.10) for x in ["इलाज", "उपचार", "चिकित्सा"])
     if has_future and has_income and has_med:
         return True
     # Looser fallback:
-    has_expense = any(x in norm for x in ["खर्च", "व्यय"])
-    has_loss = any(x in norm for x in ["हानि", "क्षति", "नुकसानी"])
+    has_expense = any(_hi_fuzzy_contains(norm, x, max_edit_ratio=0.10) for x in ["खर्च", "व्यय"])
+    has_loss = any(_hi_fuzzy_contains(norm, x, max_edit_ratio=0.10) for x in ["हानि", "क्षति", "नुकसानी"])
     if has_future and has_expense and has_loss:
         return True
     return False
 
 def match_bundle_c(norm: str) -> bool:
-    has_trans = any(x in norm for x in ["अस्पताल", "आने-जाने", "आवागमन"])
-    has_att = any(x in norm for x in ["रुकने वाले व्यक्ति", "साथ रहने वाले", "देख-रेख करने वाला व्यक्ति", "देखरेख करने वाला व्यक्ति", "व्यक्ति का खर्च"])
+    has_trans = any(_hi_fuzzy_contains(norm, x, max_edit_ratio=0.10) for x in ["अस्पताल", "आने-जाने", "आवागमन"])
+    has_att = any(_hi_fuzzy_contains(norm, x, max_edit_ratio=0.10) for x in ["रुकने वाले व्यक्ति", "साथ रहने वाले", "देख-रेख करने वाला व्यक्ति", "देखरेख करने वाला व्यक्ति", "व्यक्ति का खर्च"])
     return has_trans and has_att
 
 def match_bundle_a(norm: str) -> bool:
-    has_diet = any(x in norm for x in ["आहार", "पौष्टिक", "विशेष आहार", "विशेष खुराक", "पोषण", "भोजन", "खुराक"])
-    has_trans = any(x in norm for x in ["परिवहन", "आवागमन", "आने-जाने", "यात्रा", "यातायात"])
+    has_diet = any(_hi_fuzzy_contains(norm, x, max_edit_ratio=0.10) for x in ["आहार", "पौष्टिक", "विशेष आहार", "विशेष खुराक", "पोषण", "भोजन", "खुराक"])
+    has_trans = any(_hi_fuzzy_contains(norm, x, max_edit_ratio=0.10) for x in ["परिवहन", "आवागमन", "आने-जाने", "यात्रा", "यातायात"])
     return has_diet and has_trans
 
 def match_standalone_future_medical(norm: str) -> bool:
-    has_future = "भविष्य" in norm or "भावी" in norm or "future" in norm.lower()
-    has_med = any(x in norm for x in ["इलाज", "उपचार", "चिकित्सा"])
-    if any(x in norm for x in ["आय", "क्षति", "हानि"]):
+    has_future = _hi_fuzzy_contains(norm, "भविष्य", max_edit_ratio=0.10) or _hi_fuzzy_contains(norm, "भावी", max_edit_ratio=0.10) or _hi_fuzzy_contains(norm, "future", max_edit_ratio=0.10)
+    has_med = any(_hi_fuzzy_contains(norm, x, max_edit_ratio=0.10) for x in ["इलाज", "उपचार", "चिकित्सा"])
+    if any(_hi_fuzzy_contains(norm, x, max_edit_ratio=0.10) for x in ["आय", "क्षति", "हानि"]):
         return False
     return has_future and has_med
 
 def match_standalone_medical(norm: str) -> bool:
-    has_doc_fee = ("डॉ" in norm or "doctor" in norm.lower()) and ("फीस" in norm or "fee" in norm.lower())
-    has_med_term = any(x in norm for x in [
+    has_doc_fee = (_hi_fuzzy_contains(norm, "डॉ", max_edit_ratio=0.10) or _hi_fuzzy_contains(norm, "doctor", max_edit_ratio=0.10)) and (_hi_fuzzy_contains(norm, "फीस", max_edit_ratio=0.10) or _hi_fuzzy_contains(norm, "fee", max_edit_ratio=0.10))
+    has_med_term = any(_hi_fuzzy_contains(norm, x, max_edit_ratio=0.10) for x in [
         "इलाज", "चिकित्सा", "उपचार", "दवाई", "दवा", "आपरेशन", "ऑपरेशन", "अस्पताल",
         "treatment", "medical", "medicine", "hospital", "operation"
     ])
     if not (has_doc_fee or has_med_term):
         return False
-    if any(x in norm for x in ["भविष्य", "भावी", "future"]):
+    if any(_hi_fuzzy_contains(norm, x, max_edit_ratio=0.10) for x in ["भविष्य", "भावी", "future"]):
         return False
-    has_diet = any(x in norm for x in ["आहार", "पौष्टिक", "विशेष आहार", "पोषण", "खुराक", "भोजन"])
-    has_trans = any(x in norm for x in ["परिवहन", "आवागमन", "आने-जाने", "यात्रा", "यातायात"])
+    has_diet = any(_hi_fuzzy_contains(norm, x, max_edit_ratio=0.10) for x in ["आहार", "पौष्टिक", "विशेष आहार", "पोषण", "खुराक", "भोजन"])
+    has_trans = any(_hi_fuzzy_contains(norm, x, max_edit_ratio=0.10) for x in ["परिवहन", "आवागमन", "आने-जाने", "यात्रा", "यातायात"])
     return not (has_diet or has_trans)
 
 def match_standalone_diet(norm: str) -> bool:
-    has_diet = any(x in norm for x in ["विशेष आहार", "पौष्टिक आहार", "विशेष खुराक", "पौष्टिक खुराक", "आहार व्यय", "खुराक व्यय", "विशेष भोजन", "nutrition", "diet"])
+    has_diet = any(_hi_fuzzy_contains(norm, x, max_edit_ratio=0.10) for x in ["विशेष आहार", "पौष्टिक आहार", "विशेष खुराक", "पौष्टिक खुराक", "आहार व्यय", "खुराक व्यय", "विशेष भोजन", "nutrition", "diet"])
     return has_diet and not match_bundle_a(norm) and not match_bundle_d(norm)
 
 def match_standalone_transport(norm: str) -> bool:
-    has_trans = any(x in norm for x in ["परिवहन व्यय", "परिवहन खर्च", "यातायात व्यय", "यातायात खर्च", "यात्रा व्यय", "आने-जाने", "आवागमन व्यय", "conveyance", "transportation", "transport"])
+    has_trans = any(_hi_fuzzy_contains(norm, x, max_edit_ratio=0.10) for x in ["परिवहन व्यय", "परिवहन खर्च", "यातायात व्यय", "यातायात खर्च", "यात्रा व्यय", "आने-जाने", "आवागमन व्यय", "conveyance", "transportation", "transport"])
     return has_trans and not match_bundle_a(norm) and not match_bundle_c(norm) and not match_bundle_d(norm)
 
 def match_standalone_attender(norm: str) -> bool:
-    has_att = any(x in norm for x in ["परिचारक", "परिचर", "अटेंडेंट", "देखभाल", "सेवक", "सहायक", "सहायता", "attendant", "attender"])
-    has_exp = any(x in norm for x in ["व्यय", "खर्च", "charges", "expenses"])
+    has_att = any(_hi_fuzzy_contains(norm, x, max_edit_ratio=0.10) for x in ["परिचारक", "परिचर", "अटेंडेंट", "देखभाल", "सेवक", "सहायक", "सहायता", "attendant", "attender"])
+    has_exp = any(_hi_fuzzy_contains(norm, x, max_edit_ratio=0.10) for x in ["व्यय", "खर्च", "charges", "expenses"])
     return has_att and has_exp and not match_bundle_c(norm) and not match_bundle_d(norm)
 
+HINDI_LOSS_OF_INCOME_KEYWORDS = [
+    "आवेदक के कार्य की नुकसानी",
+    "आय की हानि",
+    "भविष्य में होने वाली आय की हानि",
+    "भविष्य आय की हानि",
+    "विकलांगता के कारण आय की हानि",
+    "वेतन की हानि", "वेतन हानि", "मजदूरी की हानि", "कमाई का नुकसान", "रोजगार हानि", "उपार्जन",
+    "loss of income", "loss of earnings", "loss of wages"
+]
+
+def is_loss_of_income_line(norm: str) -> bool:
+    return any(_hi_fuzzy_contains(norm, x, max_edit_ratio=0.10) for x in HINDI_LOSS_OF_INCOME_KEYWORDS) or (
+        any(_hi_fuzzy_contains(norm, x, max_edit_ratio=0.10) for x in ["आय", "वेतन", "मजदूरी", "कमाई", "रोजगार"]) and any(_hi_fuzzy_contains(norm, x, max_edit_ratio=0.10) for x in ["हानि", "नुकसान", "अवधि", "क्षति", "नुकसानी"])
+    )
+
 def match_rule_1(norm: str):
-    has_g1 = any(x in norm for x in ["स्थायी अपंगता", "स्थायी विकलांगता", "स्थायी निःशक्तता", "स्थाई अपंगता", "स्थाई विकलांगता", "स्थाई निःशक्तता"])
-    has_g2 = any(x in norm for x in ["क्षतिपूर्ति", "पूर्ति राशि", "प्रतिकर", "मुनावजा", "मुआवजा", "हर्जाना"])
+    has_g1 = any(_hi_fuzzy_contains(norm, x, max_edit_ratio=0.10) for x in ["स्थायी अपंगता", "स्थायी विकलांगता", "स्थायी निःशक्तता", "स्थाई अपंगता", "स्थाई विकलांगता", "स्थाई निःशक्तता"])
+    has_g2 = any(_hi_fuzzy_contains(norm, x, max_edit_ratio=0.10) for x in ["क्षतिपूर्ति", "पूर्ति राशि", "प्रतिकर", "मुनावजा", "मुआवजा", "हर्जाना"])
     if has_g1 and has_g2:
         return True, "1A"
-    has_b = any(x in norm for x in ["पीड़ा", "कष्ट", "वेदना", "दर्द", "pain", "suffering"])
+    has_b = any(_hi_fuzzy_contains(norm, x, max_edit_ratio=0.10) for x in ["पीड़ा", "कष्ट", "वेदना", "दर्द", "pain", "suffering"])
     if has_b:
         return True, "1B"
     return False, None
 
 def match_rule_2(norm: str):
-    has_g1 = any(x in norm for x in ["प्रगति", "उन्नति", "अधिक आय", "विकास", "संभावनाओं"])
+    has_g1 = any(_hi_fuzzy_contains(norm, x, max_edit_ratio=0.10) for x in ["प्रगति", "उन्नति", "अधिक आय", "विकास", "संभावनाओं"])
     has_g2 = ("आय" in norm and "वंचित" in norm) or "हानि" in norm or "प्रतिकर" in norm
+    has_g2 = (_hi_fuzzy_contains(norm, "आय", max_edit_ratio=0.10) and _hi_fuzzy_contains(norm, "वंचित", max_edit_ratio=0.10)) or _hi_fuzzy_contains(norm, "हानि", max_edit_ratio=0.10) or _hi_fuzzy_contains(norm, "प्रतिकर", max_edit_ratio=0.10)
     if has_g1 and has_g2:
         return True, "2A"
-    has_b = any(x in norm for x in ["आनंदपूर्ण जीवन", "जीवन जीने", "जीवन के सुख", "आनंद", "सुख", "amenities", "enjoyment"]) and any(x in norm for x in ["वंचित", "हानि"])
+    has_b = any(_hi_fuzzy_contains(norm, x, max_edit_ratio=0.10) for x in ["आनंदपूर्ण जीवन", "जीवन जीने", "जीवन के सुख", "आनंद", "सुख", "amenities", "enjoyment"]) and any(_hi_fuzzy_contains(norm, x, max_edit_ratio=0.10) for x in ["वंचित", "हानि"])
     if has_b:
         return True, "2B"
-    has_c = any(x in norm for x in [
-        "आवेदक के कार्य की नुकसानी",
-        "आय की हानि",
-        "भविष्य में होने वाली आय की हानि",
-        "भविष्य आय की हानि",
-        "विकलांगता के कारण आय की हानि",
-        "वेतन की हानि", "वेतन हानि", "मजदूरी की हानि", "कमाई का नुकसान", "रोजगार हानि", "उपार्जन",
-        "loss of income", "loss of earnings", "loss of wages"
-    ]) or (
-        any(x in norm for x in ["आय", "वेतन", "मजदूरी", "कमाई", "रोजगार"]) and any(x in norm for x in ["हानि", "नुकसान", "अवधि", "क्षति", "नुकसानी"])
-    )
+    has_c = is_loss_of_income_line(norm)
     if has_c:
         return True, "2C"
     return False, None
@@ -5270,6 +5348,10 @@ def get_damage_head_keyword(desc: str) -> str:
     # Check attender
     if any(x in norm for x in ["परिचारक", "परिचर", "अटेंडेंट", "देखभाल", "सेवक", "सहायक", "सहायता", "attendant", "attender", "nursing"]):
         return "attender"
+        
+    # Check loss of income
+    if is_loss_of_income_line(norm):
+        return "loss_of_income"
         
     return None
 
@@ -5399,6 +5481,52 @@ def extract_hindi_biographical_list(text_lines: list) -> dict:
         return res
     return None
 
+def _score_hindi_table_block(block: list, text_lines: list) -> tuple:
+    score = 0.0
+    if not block:
+        return 0.0, False, False
+    start_idx = block[0]["line_idx"]
+    end_idx = block[-1]["line_idx"]
+    
+    # 1. Lookback for compensation heading keywords (up to 10 lines)
+    lookback = 10
+    start_lookback = max(0, start_idx - lookback)
+    has_heading = False
+    comp_kws = ["मुआवजा", "मुआवजे", "क्षतिपूर्ति", "प्रतिकर", "दावा", "compensation", "quantum"]
+    for idx in range(start_lookback, start_idx):
+        line = text_lines[idx].strip().lower()
+        line_no_space = re.sub(r'\s+', '', line)
+        if any(kw in line_no_space for kw in comp_kws):
+            has_heading = True
+            break
+    if has_heading:
+        score += 10.0
+        
+    # 2. Lookahead for end-anchor keywords (up to 10 lines)
+    lookahead = 10
+    end_lookahead = min(len(text_lines), end_idx + lookahead + 1)
+    has_anchor = False
+    
+    for idx in range(end_idx + 1, end_lookahead):
+        line = text_lines[idx].strip().lower()
+        line_no_space = re.sub(r'\s+', '', line)
+        
+        # Look for "अन्य" along with an info keyword and a disposal/required keyword,
+        # using fuzzed prefixes to resist OCR typos/character insertions
+        has_any = any(x in line_no_space for x in ["अन्य", "anyother", "other"])
+        has_info = any(x in line_no_space for x in ["जानक", "विवर", "सूचन", "detail", "info"])
+        has_disp = any(x in line_no_space for x in ["निराक", "आवश्य", "अवश्य", "आवश्क", "निपटार", "required", "disposal", "necessary"])
+        
+        if (has_any and has_info and has_disp) or ("अन्यजानकारी" in line_no_space and "निराकरण" in line_no_space):
+            has_anchor = True
+            break
+            
+    if has_anchor:
+        score += 10.0
+        
+    return score, has_heading, has_anchor
+
+
 def extract_hindi_structural_block(text_lines: list) -> dict:
     """
     Detects a structural Hindi compensation block: a sequence of 5-9 consecutive short lines,
@@ -5463,7 +5591,16 @@ def extract_hindi_structural_block(text_lines: list) -> dict:
     if not blocks:
         return None
         
-    chosen_block = blocks[-1]
+    # Score all blocks and select the highest scoring block.
+    # We sort by score. Python's Timsort is stable, maintaining stability for tie-breakers (last wins).
+    scored = []
+    for b in blocks:
+        s, hh, ha = _score_hindi_table_block(b, lines_norm)
+        scored.append((s, hh, ha, b))
+    scored.sort(key=lambda x: x[0])
+    chosen_block = scored[-1][3]
+    chosen_has_heading = scored[-1][1]
+    chosen_has_anchor = scored[-1][2]
     
     block_pain_and_suffering = []
     block_loss_of_income = []
@@ -5658,7 +5795,9 @@ def extract_hindi_structural_block(text_lines: list) -> dict:
         "sources": block_sources,
         "needs_manual_review": needs_manual_review,
         "explicit_zeros": explicit_zeros,
-        "rejected_fields": rejected_fields
+        "rejected_fields": rejected_fields,
+        "has_heading": chosen_has_heading,
+        "has_anchor": chosen_has_anchor
     }
 
 
@@ -6094,6 +6233,22 @@ def parse_hindi_extracted_text(text_lines: list, case_type: str = None) -> dict:
         if "rejected_fields" in struct_res:
             rejected_fields.update(struct_res["rejected_fields"])
         
+        has_heading = struct_res.get("has_heading", False)
+        has_anchor = struct_res.get("has_anchor", False)
+        
+        if has_heading and has_anchor:
+            block_conf = 0.96
+        else:
+            block_conf = 0.70
+            if "needs_manual_review" not in out:
+                out["needs_manual_review"] = []
+            msg = "Low anchor matching confidence for structural table block: "
+            if not has_heading:
+                msg += "missing heading lookback. "
+            if not has_anchor:
+                msg += "missing end-anchor lookahead. "
+            out["needs_manual_review"].append(msg.strip())
+            
         # Override the 7 fields
         for field in [
             "pain_and_suffering", "loss_of_income", "medical_expenses",
@@ -6102,17 +6257,23 @@ def parse_hindi_extracted_text(text_lines: list, case_type: str = None) -> dict:
             val = fields_map.get(field, 0.0)
             if field in explicit_zeros:
                 out[field] = 0.0
-                conf[field] = 0.99
+                conf[field] = block_conf
             else:
                 out[field] = val
-                conf[field] = 0.99
+                conf[field] = block_conf
                 
             log_msg = f"[FIELD] {field} = {out[field]}, matched_by=Hindi Structural Table Override, source_line='{sources_map.get(field, '')}'"
             logger.info(log_msg)
             extraction_audit_logs.append(log_msg)
             
         if struct_res.get("needs_manual_review"):
-            out["needs_manual_review"] = struct_res["needs_manual_review"]
+            if "needs_manual_review" not in out:
+                out["needs_manual_review"] = []
+            raw_review = struct_res["needs_manual_review"]
+            if isinstance(raw_review, list):
+                out["needs_manual_review"].extend(raw_review)
+            else:
+                out["needs_manual_review"].append(str(raw_review))
             
         out["loss_of_future_prospects"] = 0.0
         out["loss_of_amenities"] = 0.0
@@ -6145,10 +6306,20 @@ def parse_hindi_extracted_text(text_lines: list, case_type: str = None) -> dict:
         bundled_sources = []
         attender_charges_sources = []
 
+        # Define lists to hold line-specific match confidences
+        ps_confs = []
+        loi_confs = []
+        med_confs = []
+        diet_confs = []
+        trans_confs = []
+        att_confs = []
+        fut_med_confs = []
+
         for idx in range(total_lines):
             line = lines_norm[idx]
             is_nil = any(kw in line.lower() for kw in ["निरंक", "शून्य", "nil"])
             
+            _CURRENT_MATCH_SCORES.clear()
             matches = get_matched_rules(line)
             if len(matches) > 1:
                 logger.warning(f"[HINDI PARSER] Ambiguous line: '{line}' matched multiple rules: {matches}")
@@ -6166,6 +6337,10 @@ def parse_hindi_extracted_text(text_lines: list, case_type: str = None) -> dict:
                 
                 if amount is not None or is_nil:
                     amt = 0.0 if is_nil else amount
+                    
+                    # Calculate candidate confidence based on fuzzed ratios
+                    line_score = sum(_CURRENT_MATCH_SCORES) / len(_CURRENT_MATCH_SCORES) if _CURRENT_MATCH_SCORES else 100.0
+                    line_conf = round(line_score / 100.0, 3)
                     
                     field_name = None
                     if rule_num == 1:
@@ -6197,50 +6372,66 @@ def parse_hindi_extracted_text(text_lines: list, case_type: str = None) -> dict:
                     if rule_num == 1:
                         pain_and_suffering_parts[sub_type].append(amt)
                         pain_and_suffering_sources.append(f"Rule 1{sub_type}: '{line}' -> {amt}")
+                        ps_confs.append(line_conf)
                         if is_nil:
                             explicit_zeros.add("pain_and_suffering")
                     elif rule_num == 2:
                         loss_of_income_parts[sub_type].append(amt)
                         loss_of_income_sources.append(f"Rule 2{sub_type}: '{line}' -> {amt}")
+                        loi_confs.append(line_conf)
                         if is_nil:
                             explicit_zeros.add("loss_of_income")
                     elif rule_num == 3:
                         medical_expenses_vals.append(amt)
                         medical_expenses_sources.append(f"Rule 3: '{line}' -> {amt}")
+                        med_confs.append(line_conf)
                         if is_nil:
                             explicit_zeros.add("medical_expenses")
                     elif rule_num == 4:
                         bundled_vals.append(amt)
                         bundled_sources.append(f"Rule 4 (Bundled A): '{line}' -> {amt}")
+                        diet_confs.append(line_conf)
+                        trans_confs.append(line_conf)
                         if is_nil:
                             explicit_zeros.update(["special_diet", "transportation"])
                     elif rule_num == 5:
                         attender_charges_vals.append(amt)
                         attender_charges_sources.append(f"Rule 5: '{line}' -> {amt}")
+                        att_confs.append(line_conf)
                         if is_nil:
                             explicit_zeros.add("attender_charges")
                     elif rule_num == 6:
                         bundle_b_vals.append(amt)
+                        fut_med_confs.append(line_conf)
+                        loi_confs.append(line_conf)
                         if is_nil:
                             explicit_zeros.update(["future_medical_expenses", "loss_of_income"])
                     elif rule_num == 7:
                         bundle_c_vals.append(amt)
+                        trans_confs.append(line_conf)
+                        att_confs.append(line_conf)
                         if is_nil:
                             explicit_zeros.update(["attender_charges", "transportation"])
                     elif rule_num == 8:
                         bundle_d_vals.append(amt)
+                        att_confs.append(line_conf)
+                        diet_confs.append(line_conf)
+                        trans_confs.append(line_conf)
                         if is_nil:
                             explicit_zeros.update(["attender_charges", "special_diet", "transportation"])
                     elif rule_num == 9:
                         standalone_diet_vals.append(amt)
+                        diet_confs.append(line_conf)
                         if is_nil:
                             explicit_zeros.add("special_diet")
                     elif rule_num == 10:
                         standalone_transport_vals.append(amt)
+                        trans_confs.append(line_conf)
                         if is_nil:
                             explicit_zeros.add("transportation")
                     elif rule_num == 11:
                         standalone_future_medical_vals.append(amt)
+                        fut_med_confs.append(line_conf)
                         if is_nil:
                             explicit_zeros.add("future_medical_expenses")
 
@@ -6329,7 +6520,7 @@ def parse_hindi_extracted_text(text_lines: list, case_type: str = None) -> dict:
             conf["pain_and_suffering"] = 0.99
         else:
             out["pain_and_suffering"] = pain_and_suffering_sum
-            conf["pain_and_suffering"] = 0.90 if pain_and_suffering_sum > 0 else 0.0
+            conf["pain_and_suffering"] = sum(ps_confs) / len(ps_confs) if ps_confs else 0.0
             if pain_and_suffering_sum > 0:
                 log_msg = f"[FIELD] pain_and_suffering = {out['pain_and_suffering']}, matched_by=parse_hindi_extracted_text (candidate fallback), source_line='{'; '.join(pain_and_suffering_sources)}'"
                 logger.info(log_msg)
@@ -6346,7 +6537,7 @@ def parse_hindi_extracted_text(text_lines: list, case_type: str = None) -> dict:
             conf["loss_of_amenities"] = 0.99
         else:
             out["loss_of_income"] = loss_of_income_sum
-            conf["loss_of_income"] = 0.90 if loss_of_income_sum > 0 else 0.0
+            conf["loss_of_income"] = sum(loi_confs) / len(loi_confs) if loi_confs else 0.0
             if loss_of_income_sum > 0:
                 log_msg = f"[FIELD] loss_of_income = {out['loss_of_income']}, matched_by=parse_hindi_extracted_text (candidate fallback), source_line='{'; '.join(loss_of_income_sources)}'"
                 logger.info(log_msg)
@@ -6354,14 +6545,14 @@ def parse_hindi_extracted_text(text_lines: list, case_type: str = None) -> dict:
             
             if loss_of_income_parts["2A"]:
                 out["loss_of_future_prospects"] = sum(loss_of_income_parts["2A"])
-                conf["loss_of_future_prospects"] = 0.90
+                conf["loss_of_future_prospects"] = sum(loi_confs) / len(loi_confs) if loi_confs else 0.0
             else:
                 out["loss_of_future_prospects"] = 0.0
                 conf["loss_of_future_prospects"] = 0.0
                 
             if loss_of_income_parts["2B"]:
                 out["loss_of_amenities"] = sum(loss_of_income_parts["2B"])
-                conf["loss_of_amenities"] = 0.90
+                conf["loss_of_amenities"] = sum(loi_confs) / len(loi_confs) if loi_confs else 0.0
             else:
                 out["loss_of_amenities"] = 0.0
                 conf["loss_of_amenities"] = 0.0
@@ -6373,7 +6564,7 @@ def parse_hindi_extracted_text(text_lines: list, case_type: str = None) -> dict:
             conf["medical_expenses"] = 0.99
         else:
             out["medical_expenses"] = med_sum
-            conf["medical_expenses"] = 0.90 if med_sum > 0 else 0.0
+            conf["medical_expenses"] = sum(med_confs) / len(med_confs) if med_confs else 0.0
             if med_sum > 0:
                 log_msg = f"[FIELD] medical_expenses = {out['medical_expenses']}, matched_by=parse_hindi_extracted_text (candidate fallback), source_line='{'; '.join(medical_expenses_sources)}'"
                 logger.info(log_msg)
@@ -6386,7 +6577,7 @@ def parse_hindi_extracted_text(text_lines: list, case_type: str = None) -> dict:
             conf["special_diet"] = 0.99
         elif diet_sum > 0:
             out["special_diet"] = diet_sum
-            conf["special_diet"] = 0.90
+            conf["special_diet"] = sum(diet_confs) / len(diet_confs) if diet_confs else 0.0
         else:
             if "special_diet" not in out:
                 out["special_diet"] = 0.0
@@ -6399,7 +6590,7 @@ def parse_hindi_extracted_text(text_lines: list, case_type: str = None) -> dict:
             conf["transportation"] = 0.99
         elif trans_sum > 0:
             out["transportation"] = trans_sum
-            conf["transportation"] = 0.90
+            conf["transportation"] = sum(trans_confs) / len(trans_confs) if trans_confs else 0.0
         else:
             if "transportation" not in out:
                 out["transportation"] = 0.0
@@ -6412,7 +6603,7 @@ def parse_hindi_extracted_text(text_lines: list, case_type: str = None) -> dict:
             conf["attender_charges"] = 0.99
         elif att_sum > 0:
             out["attender_charges"] = att_sum
-            conf["attender_charges"] = 0.90
+            conf["attender_charges"] = sum(att_confs) / len(att_confs) if att_confs else 0.0
         else:
             if "attender_charges" not in out:
                 out["attender_charges"] = 0.0
@@ -6425,14 +6616,17 @@ def parse_hindi_extracted_text(text_lines: list, case_type: str = None) -> dict:
             conf["future_medical_expenses"] = 0.99
         elif future_med_sum > 0:
             out["future_medical_expenses"] = future_med_sum
-            conf["future_medical_expenses"] = 0.90
+            conf["future_medical_expenses"] = sum(fut_med_confs) / len(fut_med_confs) if fut_med_confs else 0.0
         else:
             if "future_medical_expenses" not in out:
                 out["future_medical_expenses"] = 0.0
                 conf["future_medical_expenses"] = 0.0
 
+        if "needs_manual_review" not in out:
+            out["needs_manual_review"] = []
+        out["needs_manual_review"].append("Felled back to candidate search logic: no structural table block detected.")
         if needs_manual_review_lines:
-            out["needs_manual_review"] = needs_manual_review_lines
+            out["needs_manual_review"].extend(needs_manual_review_lines)
             
         out["explicit_zeros"] = explicit_zeros
 

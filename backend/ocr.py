@@ -23,7 +23,7 @@ from fastapi.responses import StreamingResponse
 from pypdf import PdfReader
 import pypdfium2 as pdfium
 
-from backend.parser_heuristics import parse_extracted_text, HINDI_HEADING_KEYWORDS, parse_hindi_extracted_text
+from backend.parser_heuristics import parse_extracted_text, HINDI_HEADING_KEYWORDS, parse_hindi_extracted_text, _hi_fuzzy_contains
 from backend.track_detection import detect_case_track
 
 # ======================================================
@@ -1458,7 +1458,7 @@ def find_relevant_pages_by_heading(
                     matched_pages = found.setdefault(key, [])
                     if len(matched_pages) >= 3 or idx in matched_pages:
                         continue
-                    if any(kw.lower() in text for kw in kws):
+                    if any(_hi_fuzzy_contains(text, kw, max_edit_ratio=0.18) for kw in kws):
                         matched_pages.append(idx)
                         _tlog(f"[HEADING-SCAN] '{key}' matched on page {idx+1} (of {total_pages})")
 

@@ -226,6 +226,19 @@ document.addEventListener("DOMContentLoaded", () => {
                             <span class="value" id="audit-val-overwrite-blocked" style="font-weight: 700;">—</span>
                         </div>
                     </div>
+                    <div style="display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 5px; border-top: 1px solid rgba(255,255,255,0.05); padding-top: 10px;">
+                        <span style="font-size: 0.8rem; color: #94a3b8;"><i class="fa-solid fa-sliders"></i> Flag Fields Below:</span>
+                        <select id="autofill-threshold-select" style="background: var(--bg-panel); color: var(--text-primary); border: 1px solid var(--border-color); border-radius: var(--radius-sm); padding: 2px 6px; font-size: 0.8rem;">
+                            <option value="0.50">50%</option>
+                            <option value="0.60">60%</option>
+                            <option value="0.70">70%</option>
+                            <option value="0.75" selected>75%</option>
+                            <option value="0.80">80%</option>
+                            <option value="0.85">85%</option>
+                            <option value="0.90">90%</option>
+                            <option value="0.95">95%</option>
+                        </select>
+                    </div>
                     <div style="background: rgba(10, 15, 30, 0.6); border: 1px solid var(--border-glass); border-radius: var(--radius-sm); padding: 12px; font-family: monospace; font-size: 0.8rem; max-height: 150px; overflow-y: auto; line-height: 1.4; color: #94a3b8;" id="audit-log-terminal">
                         <span style="color: #64748b;">[SYSTEM] Ready. Awaiting document upload or LLM extraction...</span>
                     </div>
@@ -236,6 +249,19 @@ document.addEventListener("DOMContentLoaded", () => {
                 ocrQualityTab.insertBefore(auditCard, rawCard);
             } else {
                 ocrQualityTab.appendChild(auditCard);
+            }
+
+            const thresholdSelect = document.getElementById("autofill-threshold-select");
+            if (thresholdSelect) {
+                const storedVal = localStorage.getItem("autofill_confidence_threshold");
+                if (storedVal) {
+                    thresholdSelect.value = storedVal;
+                }
+                thresholdSelect.addEventListener("change", (e) => {
+                    localStorage.setItem("autofill_confidence_threshold", e.target.value);
+                    populateFieldsForActiveCaseType();
+                    showToast(`Autofill visual warning threshold updated to ${Math.round(parseFloat(e.target.value) * 100)}%`, "info");
+                });
             }
         }
     }
@@ -1953,6 +1979,26 @@ This cannot be undone.`)) return;
             }
             el.dispatchEvent(new Event("input"));
             el.dispatchEvent(new Event("change"));
+
+            // Check confidence score
+            const conf = lastExtractedConfidences[cacheKey];
+            const threshold = parseFloat(localStorage.getItem("autofill_confidence_threshold") || "0.75");
+            if (conf !== undefined && conf !== null && conf < threshold) {
+                el.classList.add("low-confidence-input");
+                
+                const parent = el.closest(".form-group");
+                if (parent && !parent.querySelector(".verification-warning")) {
+                    const warning = document.createElement("span");
+                    warning.className = "verification-warning";
+                    warning.style.color = "#f59e0b";
+                    warning.style.fontSize = "0.75rem";
+                    warning.style.fontWeight = "600";
+                    warning.style.marginTop = "4px";
+                    warning.style.display = "block";
+                    warning.innerHTML = `<i class="fa-solid fa-triangle-exclamation"></i> Low confidence (${Math.round(conf * 100)}%)`;
+                    parent.appendChild(warning);
+                }
+            }
         }
         // Run population for all common fields
         Object.keys(commonMapping).forEach(cacheKey => {
