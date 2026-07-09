@@ -5384,101 +5384,445 @@ def check_structural_block_validity(block_lines: list) -> bool:
     return False
 
 
+HI_APPLICATION_FORM_FIELDS = {
+    "injured_name":        ["आवेदक का नाम", "आवेदक का नाम व पिता का नाम"],
+    "father_name":         ["पिता का नाम"],
+    "address":             ["आवेदक का पूरा पता", "आवेदक का पता"],
+    "age":                 ["आवेदक की उम्र", "आवेदक की आयु"],
+    "occupation":          ["आवेदक का व्यवसाय"],
+    "monthly_income":      ["आवेदक की मासिक आय"],
+    "date_of_accident":    ["घटना दिनांक", "घटना का दिनांक व समय"],
+    "place_of_accident":   ["दुर्घटना स्थल का पूर्ण पता", "घटना स्थल"],
+    "injury_description":  ["आवेदक को आई चोटों का विवरण"],
+    "vehicle_number":      ["दुर्घटना में लिप्त वाहन का विवरण", "वाहन क्रमांक"],
+    "hospital_name":       ["अस्पताल का नाम"],
+    "driver_name_address": ["वाहन के चालक का नाम व पता"],
+    "owner_name_address":  ["वाहन के मालिक का नाम व पता"],
+    "policy_number":       ["वाहन का बीमा क्रमांक"],
+    "insurance_company":   ["वाहन की बीमा कंपनी"],
+    "is_income_tax_payer": ["क्या आवेदक आयकरदाता है"],
+    "was_traveling":       ["क्या आवेदक वाहन में यात्रा कर रहा था"],
+    "compensation_claimed":["चाही गई मुआवजा राशि", "क्षतिपूर्ति की राशि"],
+    "other_case_info":     ["अन्य जानकारी जो प्रकरण के निराकरण के लिए आवश्यक है"],
+    "fir_number":          ["घटना की रिपोर्ट", "थाना", "रिपोर्ट", "थाने में अपराध"],
+}
+
+def split_label_value(text: str) -> tuple:
+    # Split by standard separators
+    m = re.search(r'\s*[:=—–]\s*|\s+-\s+', text)
+    if m:
+        label = text[:m.start()].strip()
+        val = text[m.end():].strip()
+        return label, val
+    return text, ""
+
+def is_usable_value(val: str) -> bool:
+    if not val:
+        return False
+    clean = re.sub(r'[\s|:\-—=/\\._()\[\]{}?,;!]', '', val)
+    return len(clean) > 0
+
+def is_section_break(line_text: str) -> bool:
+    norm = line_text.strip().lower()
+    break_kws = [
+        "हस्ताक्षर", "signature", "प्रस्तुतकर्ता", "आवेदकगण", "वकील", "अधिवक्ता",
+        "न्यायालय", "न्यायाधीश", "सदस्य", "claims tribunal", "court", "judge"
+    ]
+    if any(kw in norm for kw in break_kws):
+        return True
+    heading_kws = ["आदेश", "न्याय निर्णय", "वाद प्रश्न", "मुद्दे", "वाद-प्रश्न", "order", "issues", "judgment"]
+    if any(kw in norm for kw in heading_kws):
+        return True
+    return False
+
+def is_expected_index(field: str, val_num: int) -> bool:
+    expected = {
+        "injured_name": [1],
+        "father_name": [1, 2],
+        "address": [2],
+        "age": [3],
+        "occupation": [4],
+        "monthly_income": [5],
+        "date_of_accident": [6],
+        "place_of_accident": [6, 7],
+        "fir_number": [7, 8],
+    }
+    return val_num in expected.get(field, [])
+
+def split_relational_name(text: str) -> str:
+    if not text:
+        return ""
+    m_rel = re.search(r'(.+?)\s+(?:पुत्र|पुत्री|son of|daughter of|s/o|d/o|w/o|पत्नी|पिता|पति)\s+(?:श्री\s+|late\s+|स्व\.\s+)?(.+)', text, re.IGNORECASE)
+    if m_rel:
+        return m_rel.group(1).strip()
+    return text.strip()
+
+def split_name_address(text: str) -> tuple:
+    if not text:
+        return "", ""
+    m = re.search(r'(.+?)\s+(?:निवासी|पता|निवास|नि\.|ग्राम|स्थान)\s*(.*)', text, re.IGNORECASE)
+    if m:
+        name = m.group(1).strip()
+        address = m.group(2).strip()
+        name = re.sub(r'[:\-—–]+$', '', name).strip()
+        return name, address
+    else:
+        parts = re.split(r'[:\-—–]+', text)
+        if len(parts) >= 2:
+            return parts[0].strip(), parts[1].strip()
+        return text.strip(), ""
+
+def parse_yes_no(text: str) -> str:
+    if not text:
+        return ""
+    text_clean = text.strip()
+    if re.search(r'\b(?:नहीं|नही|न|no|not)\b', text_clean, re.IGNORECASE):
+        return "नहीं"
+    if re.search(r'\b(?:हाँ|हा|हाँ|yes|y|स्वयं)\b', text_clean, re.IGNORECASE):
+        return "हाँ"
+    return text_clean
+
+def parse_amount_from_line(text: str) -> float:
+    m_amt = _AMT_PAT.search(text)
+    if m_amt:
+        val_str = m_amt.group(1).strip()
+        if any(x in val_str.lower() for x in ["निरंक", "शून्य", "nil", "shunya"]):
+            return 0.0
+        amt = _hi_clean_amount(val_str)
+        if amt is not None:
+            return amt
+    text_trans = translate_deva_digits(text)
+    text_trans = text_trans.replace(",", "")
+    m = re.search(r'\d+(?:\.\d+)?', text_trans)
+    if m:
+        return float(m.group(0))
+    return None
+
+def extract_date(text: str) -> str:
+    m_dt = re.search(r'(\d{1,2}[./-]\d{1,2}[./-]\d{4})', translate_deva_digits(text))
+    if m_dt:
+        return m_dt.group(1).replace("/", ".")
+    return ""
+
+def extract_place(text: str) -> str:
+    place = None
+    m_pl = re.search(r'(?:स्थान|को|स्थल)\s*[:\-]*\s*(.+)', text)
+    if m_pl:
+        place_cand = m_pl.group(1).strip()
+        place_cand = re.sub(r'\d{1,2}[./-]\d{1,2}[./-]\d{4}', '', place_cand)
+        place_cand = re.sub(r'\d{1,2}[:.]\d{2}', '', place_cand)
+        place_cand = re.sub(r'(?:बजे|समय|दिनांक|के\s+पास|को)', '', place_cand)
+        place_cand = re.sub(r'[ \t\.\-\–:,]+', ' ', place_cand).strip()
+        if place_cand:
+            place = place_cand
+    return place or ""
+
+def extract_hindi_narrative_petition(text_lines: list) -> dict:
+    flat_text = " ".join(text_lines)
+    flat_text = translate_deva_digits(flat_text)
+    
+    res = {}
+    
+    # 1. Date of accident
+    m_dt = re.search(r'(?:घटना\s+दिनांक|दिनांक\s+को|घटना\s+तिथि)\s*([0-9/.\-]+)', flat_text)
+    if m_dt:
+        res["date_of_accident"] = m_dt.group(1).replace("/", ".")
+        
+    # 2. Vehicle Number
+    m_veh = re.search(
+        r'(?:वाहन|मोटर|कार|ट्रक|क्रमांक|क्र\.?)\s*([A-Z]{2}[-\s]*[0-9]{1,2}[-\s]*[A-Z]{1,2}[-\s]*[0-9]{4})', 
+        flat_text, 
+        re.IGNORECASE
+    )
+    if m_veh:
+        res["vehicle_number"] = m_veh.group(1).strip()
+        
+    # 3. Police Station / FIR number
+    m_th = re.search(r'(?:थाना|थाने)\s+([^\s,।\d]+)', flat_text)
+    if m_th:
+        res["police_station"] = f"थाना {m_th.group(1).strip()}"
+    m_fir = re.search(r'(?:अपराध|क्र|क्रमांक|नं)\.?\s*[:\-]*\s*(\d+/\d{2,4})', flat_text)
+    if m_fir:
+        res["fir_number"] = m_fir.group(1).strip()
+        
+    # 4. Age
+    m_age = re.search(r'(?:आयु|उम्र)\s*(\d+)\s*(?:वर्ष|साल)', flat_text)
+    if not m_age:
+        m_age = re.search(r'(\d+)\s*(?:वर्ष|साल)\s*(?:आयु|उम्र)', flat_text)
+    if m_age:
+        res["age"] = int(m_age.group(1))
+        
+    # 5. Claimant name
+    m_name = re.search(r'(?:आवेदक|घायल|पीड़ित)\s+([^\s,।]+)\s+(?:पुत्र|पुत्री|पत्नी)\s+([^\s,।]+)', flat_text)
+    if m_name:
+        res["injured_name"] = _hi_trim_stopwords(m_name.group(1))
+        res["father_name"] = _hi_trim_stopwords(m_name.group(2))
+        
+    return res
+
 def extract_hindi_biographical_list(text_lines: list) -> dict:
     lines_norm = []
     for l in text_lines:
         line_clean = re.sub(r'[ \t]+', ' ', l).strip()
         lines_norm.append(line_clean)
         
-    bio_items = {}
-    lbl_re = re.compile(r'^\s*(?:\[|\()? *([1-7]|[१-७]) *(?:\]|\)|[\.\-\):])+ +(.*)$')
-    for line in lines_norm:
+    lbl_re = re.compile(r'^\s*(?:\[|\()? *([0-9]+|[०-९]+|[अ-ह]) *(?:\/[0-9]+|\/[०-९]+)? *(?:\]|\)|[\.\-\):])+ *(.*)$')
+    
+    extracted_fields = {}
+    field_scores = {}
+    consumed_indices = set()
+    
+    for i in range(len(lines_norm)):
+        if i in consumed_indices:
+            continue
+        line = lines_norm[i]
         m = lbl_re.match(line)
-        if m:
-            val_num = int(translate_deva_digits(m.group(1)))
-            content = m.group(2).strip()
-            is_valid = False
-            if val_num == 1 and any(x in content for x in ["नाम", "पिता"]):
-                is_valid = True
-            elif val_num == 2 and any(x in content for x in ["पता", "निवास"]):
-                is_valid = True
-            elif val_num == 3 and any(x in content for x in ["आयु", "उम्र", "वय"]):
-                is_valid = True
-            elif val_num == 4 and any(x in content for x in ["व्यवसाय", "धंधा", "कार्य", "काम"]):
-                is_valid = True
-            elif val_num == 5 and "आय" in content:
-                is_valid = True
-            elif val_num == 6 and any(x in content for x in ["घटना", "दिनांक", "समय", "स्थान"]):
-                is_valid = True
-            elif val_num == 7 and any(x in content for x in ["थाने", "थाना", "रिपोर्ट", "आरक्षी"]):
-                is_valid = True
+        if not m:
+            continue
+            
+        marker = m.group(1)
+        rest = m.group(2).strip()
+        
+        val_num = None
+        try:
+            val_num = int(translate_deva_digits(marker))
+        except ValueError:
+            pass
+            
+        label_part, value_part = split_label_value(rest)
+        
+        best_field = None
+        best_score = 0.0
+        best_ratio = 0.0
+        best_kw = None
+        
+        for field, keywords in HI_APPLICATION_FORM_FIELDS.items():
+            for kw in keywords:
+                matched, score = _hi_fuzzy_contains_with_score(label_part, kw)
+                if matched:
+                    ratio = fuzz.ratio(_hi_normalize_text(label_part), _hi_normalize_text(kw))
+                    boosted_score = score + (0.1 if (val_num is not None and is_expected_index(field, val_num)) else 0.0)
+                    
+                    if boosted_score > best_score:
+                        best_score = boosted_score
+                        best_ratio = ratio
+                        best_field = field
+                        best_kw = kw
+                    elif abs(boosted_score - best_score) < 0.01:
+                        if ratio > best_ratio:
+                            best_ratio = ratio
+                            best_field = field
+                            best_kw = kw
+                            
+        if best_field:
+            if best_field in field_scores and field_scores[best_field] >= best_score:
+                continue
+            field_scores[best_field] = best_score
+            if best_field not in ("other_case_info", "compensation_claimed"):
+                if not is_usable_value(value_part):
+                    lookahead_val = []
+                    j = i + 1
+                    while j < len(lines_norm) and j < i + 3:
+                        if j in consumed_indices:
+                            break
+                        if lbl_re.match(lines_norm[j]) or is_totals_line(lines_norm[j]) or is_section_break(lines_norm[j]):
+                            break
+                        lookahead_val.append(lines_norm[j])
+                        consumed_indices.add(j)
+                        j += 1
+                    if lookahead_val:
+                        value_part = " ".join(lookahead_val)
+                    
+            if best_field == "other_case_info":
+                block_lines = [value_part] if is_usable_value(value_part) else []
+                j = i + 1
+                while j < len(lines_norm):
+                    if j in consumed_indices:
+                        j += 1
+                        continue
+                    next_line = lines_norm[j]
+                    if lbl_re.match(next_line) or is_section_break(next_line):
+                        break
+                    block_lines.append(next_line)
+                    consumed_indices.add(j)
+                    j += 1
+                value_part = "\n".join(block_lines)
                 
-            if is_valid:
-                bio_items[val_num] = content
-
-    if len(bio_items) >= 5:
-        res = {}
-        if 1 in bio_items:
-            text = bio_items[1]
-            text = re.sub(r'^(?:आवेदक\s+)?(?:का\s+)?नाम\s*(?:व\s+पिता\s+का\s+नाम|और\s+पिता\s+का\s+नाम)?\s*[:\-]*\s*', '', text, flags=re.IGNORECASE)
-            text = text.strip()
-            m_rel = re.search(r'(.+?)\s+(?:पुत्र|पुत्री|son of|daughter of|s/o|d/o|w/o|पत्नी|पिता|पति)\s+(?:श्री\s+|late\s+|स्व\.\s+)?(.+)', text, re.IGNORECASE)
-            if m_rel:
-                res["injured_name"] = _hi_trim_stopwords(m_rel.group(1))
-                res["father_name"] = _hi_trim_stopwords(m_rel.group(2))
+            elif best_field == "compensation_claimed":
+                sub_items = []
+                j = i + 1
+                while j < len(lines_norm):
+                    if j in consumed_indices:
+                        j += 1
+                        continue
+                    next_line = lines_norm[j]
+                    if is_section_break(next_line):
+                        break
+                        
+                    m_next = lbl_re.match(next_line)
+                    if m_next:
+                        marker_next = m_next.group(1)
+                        val_num_next = None
+                        try:
+                            val_num_next = int(translate_deva_digits(marker_next))
+                        except ValueError:
+                            pass
+                            
+                        next_label_part, _ = split_label_value(m_next.group(2).strip())
+                        is_main_item = False
+                        for f, kws in HI_APPLICATION_FORM_FIELDS.items():
+                            if f == "compensation_claimed":
+                                continue
+                            for kw in kws:
+                                matched, _ = _hi_fuzzy_contains_with_score(next_label_part, kw)
+                                if matched:
+                                    is_main_item = True
+                                    break
+                            if is_main_item:
+                                break
+                                
+                        if is_main_item or (val_num_next is not None and val_num_next >= 15):
+                            break
+                            
+                    if is_totals_line(next_line) or (m_next and (m_next.group(1) in "अबसदयरलछथजझ" or val_num_next is not None)):
+                        sub_label, sub_val = "", ""
+                        if m_next:
+                            sub_label, sub_val = split_label_value(m_next.group(2).strip())
+                        else:
+                            sub_label, sub_val = split_label_value(next_line)
+                            
+                        if not sub_label:
+                            sub_label = next_line
+                        amt = parse_amount_from_line(sub_val or sub_label)
+                        sub_items.append({"label": sub_label.strip(), "amount": amt if amt is not None else 0.0})
+                        
+                    consumed_indices.add(j)
+                    j += 1
+                extracted_fields["compensation_claimed_breakdown"] = sub_items
+                
+            extracted_fields[best_field] = value_part.strip()
+            
+    res = {}
+    
+    if "injured_name" in extracted_fields:
+        name_val = extracted_fields["injured_name"]
+        name_clean, name_addr = split_name_address(name_val)
+        m_rel = re.search(r'(.+?)\s+(?:पुत्र|पुत्री|son of|daughter of|s/o|d/o|w/o|पत्नी|पिता|पति)\s+(?:श्री\s+|late\s+|स्व\.\s+)?(.+)', name_clean, re.IGNORECASE)
+        if m_rel:
+            res["injured_name"] = _hi_trim_stopwords(m_rel.group(1))
+            res["father_name"] = _hi_trim_stopwords(m_rel.group(2))
+        else:
+            parts = re.split(r'[:\-—–]+', name_clean)
+            if len(parts) >= 2:
+                res["injured_name"] = _hi_trim_stopwords(parts[0])
+                res["father_name"] = _hi_trim_stopwords(parts[1])
             else:
-                parts = re.split(r'[:\-]+', text)
-                if len(parts) >= 2:
-                    res["injured_name"] = _hi_trim_stopwords(parts[0])
-                    res["father_name"] = _hi_trim_stopwords(parts[1])
-                else:
-                    res["injured_name"] = _hi_trim_stopwords(text)
-
-        if 3 in bio_items:
-            m_age = re.search(r'(\d+)', translate_deva_digits(bio_items[3]))
-            if m_age:
-                res["age"] = int(m_age.group(1))
-
-        if 5 in bio_items:
-            text = bio_items[5]
-            text_trans = translate_deva_digits(text)
-            text_trans = re.sub(r'(?:प्रतिमाह|प्रति\s+माह|प्रतिमास|प्रति\s+मास|\/-\s*रुपये\s*प्रतिमाह|\/-\s*रूपये\s*प्रतिमाह)', '', text_trans)
-            cleaned = text_trans.replace(',', '')
-            m_num = re.search(r'(\d+(?:\.\d+)?)', cleaned)
-            if m_num:
-                try:
-                    res["monthly_income"] = float(m_num.group(1))
-                except ValueError:
-                    pass
-
-        if 6 in bio_items:
-            text = bio_items[6]
-            m_dt = re.search(r'(\d{1,2}[./-]\d{1,2}[./-]\d{4})', translate_deva_digits(text))
-            if m_dt:
-                res["date_of_accident"] = m_dt.group(1).replace("/", ".")
-            place = None
-            m_pl = re.search(r'(?:स्थान|को)\s*[:\-]*\s*(.+)', text)
-            if m_pl:
-                place_cand = m_pl.group(1).strip()
-                place_cand = re.sub(r'\d{1,2}[./-]\d{1,2}[./-]\d{4}', '', place_cand)
-                place_cand = re.sub(r'\d{1,2}[:.]\d{2}', '', place_cand)
-                place_cand = re.sub(r'(?:बजे|समय|दिनांक|के\s+पास|को)', '', place_cand)
-                place_cand = re.sub(r'[ \t\.\-\–:,]+', ' ', place_cand).strip()
-                if place_cand:
-                    place = place_cand
-            if place:
-                res["place_of_accident"] = place
-
-        if 7 in bio_items:
-            text = bio_items[7]
-            m_th = re.search(r'(थाना\s+\w+)', text)
-            if m_th:
-                res["police_station"] = m_th.group(1).strip()
-            m_fir = re.search(r'(?:अपराध|क्र|क्रमांक|नं)\.?\s*[:\-]*\s*(\d+/\d{2,4})', translate_deva_digits(text))
-            if m_fir:
-                res["fir_number"] = m_fir.group(1).strip()
-
+                res["injured_name"] = _hi_trim_stopwords(name_clean)
+                
+    if "father_name" in extracted_fields and "father_name" not in res:
+        res["father_name"] = _hi_trim_stopwords(split_name_address(extracted_fields["father_name"])[0])
+        
+    if "address" in extracted_fields:
+        res["address"] = extracted_fields["address"]
+        
+    if "age" in extracted_fields:
+        m_age = re.search(r'(\d+)', translate_deva_digits(extracted_fields["age"]))
+        if m_age:
+            res["age"] = int(m_age.group(1))
+            
+    if "occupation" in extracted_fields:
+        res["occupation"] = extracted_fields["occupation"]
+        
+    if "monthly_income" in extracted_fields:
+        text_trans = translate_deva_digits(extracted_fields["monthly_income"])
+        text_trans = re.sub(r'(?:प्रतिमाह|प्रति\s+माह|प्रतिमास|प्रति\s+मास|\/-\s*रुपये\s*प्रतिमाह|\/-\s*रूपये\s*प्रतिमाह)', '', text_trans)
+        cleaned = text_trans.replace(',', '')
+        m_num = re.search(r'(\d+(?:\.\d+)?)', cleaned)
+        if m_num:
+            try:
+                res["monthly_income"] = float(m_num.group(1))
+            except ValueError:
+                pass
+                
+    if "date_of_accident" in extracted_fields:
+        date_text = extracted_fields["date_of_accident"]
+        dt = extract_date(date_text)
+        if dt:
+            res["date_of_accident"] = dt
+        pl = extract_place(date_text)
+        if pl:
+            res["place_of_accident"] = pl
+            
+    if "place_of_accident" in extracted_fields:
+        res["place_of_accident"] = extracted_fields["place_of_accident"]
+        
+    if "injury_description" in extracted_fields:
+        res["injury_description"] = extracted_fields["injury_description"]
+        
+    if "vehicle_number" in extracted_fields:
+        veh_val = extracted_fields["vehicle_number"]
+        veh_val = re.sub(r'^(?:क\.-|क\-)', '', veh_val, flags=re.IGNORECASE).strip()
+        veh_val = re.sub(r'\(.*?\)', '', veh_val).strip()
+        res["vehicle_number"] = veh_val
+        
+    if "hospital_name" in extracted_fields:
+        res["hospital_name"] = extracted_fields["hospital_name"]
+        
+    if "driver_name_address" in extracted_fields:
+        d_name, d_addr = split_name_address(extracted_fields["driver_name_address"])
+        if d_name:
+            res["driver_name"] = _hi_trim_stopwords(split_relational_name(d_name))
+        if d_addr:
+            res["driver_address"] = d_addr
+            
+    if "owner_name_address" in extracted_fields:
+        o_name, o_addr = split_name_address(extracted_fields["owner_name_address"])
+        if o_name:
+            res["owner_name"] = _hi_trim_stopwords(split_relational_name(o_name))
+        if o_addr:
+            res["owner_address"] = o_addr
+            
+    if "policy_number" in extracted_fields:
+        res["policy_number"] = extracted_fields["policy_number"]
+        
+    if "insurance_company" in extracted_fields:
+        res["insurance_company"] = extracted_fields["insurance_company"]
+        
+    if "is_income_tax_payer" in extracted_fields:
+        res["is_income_tax_payer"] = parse_yes_no(extracted_fields["is_income_tax_payer"])
+    if "was_traveling" in extracted_fields:
+        res["was_traveling_in_vehicle"] = parse_yes_no(extracted_fields["was_traveling"])
+        
+    if "compensation_claimed_breakdown" in extracted_fields:
+        res["compensation_claimed_breakdown"] = extracted_fields["compensation_claimed_breakdown"]
+    if "other_case_info" in extracted_fields:
+        res["other_case_info"] = extracted_fields["other_case_info"]
+        
+    if "fir_number" in extracted_fields:
+        text = extracted_fields["fir_number"]
+        m_fir = re.search(r'(?:अपराध|क्र|क्रमांक|नं)\.?\s*[:\-]*\s*(\d+/\d{2,4})', translate_deva_digits(text))
+        if m_fir:
+            res["fir_number"] = m_fir.group(1).strip()
+        m_th = re.search(r'(थाना\s+[^\s,।\d]+)', text)
+        if m_th:
+            res["police_station"] = m_th.group(1).strip()
+            
+    if len(res) >= 1:
+        if "other_case_info" in res:
+            if "fir_number" not in res:
+                m_fir = re.search(r'(?:अपराध|क्र|क्रमांक|नं)\.?\s*[:\-]*\s*(\d+/\d{2,4})', translate_deva_digits(res["other_case_info"]))
+                if m_fir:
+                    res["fir_number"] = m_fir.group(1).strip()
+            if "police_station" not in res:
+                m_th = re.search(r'(थाना\s+[^\s,।\d]+)', res["other_case_info"])
+                if m_th:
+                    res["police_station"] = m_th.group(1).strip()
         return res
+        
+    fallback_res = extract_hindi_narrative_petition(text_lines)
+    if fallback_res:
+        return fallback_res
+        
     return None
 
 def _score_hindi_table_block(block: list, text_lines: list) -> tuple:
@@ -6734,32 +7078,14 @@ def parse_hindi_extracted_text(text_lines: list, case_type: str = None) -> dict:
     if bio_res:
         logger.info("[HINDI PARSER] Biographical list format detected! Applying updates to biographical fields.")
         for k, val in bio_res.items():
-            if k == "injured_name":
-                out["injured_name"] = val
-                conf["injured_name"] = 0.95
-            elif k == "father_name":
-                out["father_name"] = val
-                conf["father_name"] = 0.95
-            elif k == "age":
-                out["age"] = val
-                conf["age"] = 0.95
-            elif k == "monthly_income":
-                out["monthly_income"] = val
-                conf["monthly_income"] = 0.95
-            elif k == "date_of_accident":
-                out["date_of_accident"] = val
-                conf["date_of_accident"] = 0.95
-            elif k == "place_of_accident":
-                out["place_of_accident"] = val
-                conf["place_of_accident"] = 0.95
-            elif k == "fir_number":
-                out["fir_number"] = val
-                conf["fir_number"] = 0.95
-            elif k == "police_station":
-                logger.info(f"Follow-up field addition: police_station field does not exist, logged for future addition. Value: {val}")
-                if not out.get("fir_number"):
-                    out["fir_number"] = val
-                    conf["fir_number"] = 0.70
+            if val is not None and val != "":
+                if k == "police_station":
+                    logger.info(f"Follow-up field addition: police_station field does not exist, logged for future addition. Value: {val}")
+                    if not out.get("fir_number"):
+                        out["fir_number"] = val
+                        conf["fir_number"] = 0.70
+                out[k] = val
+                conf[k] = 0.95
 
     # ---- case type: death vs injury ----------------------------------------------
     if case_type is not None:

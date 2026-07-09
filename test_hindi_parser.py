@@ -208,7 +208,7 @@ class TestHindiParser(unittest.TestCase):
         self.assertTrue(os.path.exists(fixtures_dir), f"Fixtures directory not found: {fixtures_dir}")
         
         files = [f for f in os.listdir(fixtures_dir) if f.endswith(".txt")]
-        self.assertEqual(len(files), 8, f"Expected 8 fixture files, found {len(files)}")
+        self.assertEqual(len(files), 10, f"Expected 10 fixture files, found {len(files)}")
         
         for f in files:
             name = os.path.splitext(f)[0]
@@ -229,6 +229,64 @@ class TestHindiParser(unittest.TestCase):
                     actual_val, expected_val,
                     f"Fixture {name}: Field '{field}' expected {expected_val}, got {actual_val}"
                 )
+
+    def test_new_hindi_biographical_fields(self):
+        import os
+        import json
+        
+        fixtures_dir = os.path.join(os.path.dirname(__file__), "tests", "fixtures", "lower_court")
+        
+        # 1. Test full MP-04 Style Form
+        txt_path = os.path.join(fixtures_dir, "mp04_style_form.txt")
+        with open(txt_path, "r", encoding="utf-8") as file:
+            lines = [line.strip() for line in file.readlines() if line.strip()]
+            
+        res = parse_hindi_extracted_text(lines)
+        
+        self.assertEqual(res.get("injured_name"), "राजेश")
+        self.assertEqual(res.get("father_name"), "रमेश")
+        self.assertEqual(res.get("address"), "ग्राम चोरहटा, तहसील हुजूर, जिला रीवा, मध्य प्रदेश")
+        self.assertEqual(res.get("age"), 35)
+        self.assertEqual(res.get("occupation"), "निजी नौकरी")
+        self.assertEqual(res.get("monthly_income"), 10000.0)
+        self.assertEqual(res.get("date_of_accident"), "12.05.2025")
+        self.assertEqual(res.get("place_of_accident"), "रीवा बाईपास, थाना चोरहटा, रीवा")
+        self.assertEqual(res.get("injury_description"), "दाहिने पैर में फ्रैक्चर एवं सिर में गंभीर चोटें")
+        self.assertEqual(res.get("vehicle_number"), "MP 17 AB 1234")
+        self.assertEqual(res.get("hospital_name"), "संजय गांधी अस्पताल रीवा")
+        self.assertEqual(res.get("driver_name"), "मोहन लाल")
+        self.assertEqual(res.get("driver_address"), "ग्राम चोरहटा रीवा")
+        self.assertEqual(res.get("owner_name"), "श्याम लाल")
+        self.assertEqual(res.get("owner_address"), "विंध्य नगर रीवा")
+        self.assertEqual(res.get("policy_number"), "1234567890/POL")
+        self.assertEqual(res.get("insurance_company"), "न्यू इंडिया एश्योरेंस कंपनी लिमिटेड")
+        self.assertEqual(res.get("is_income_tax_payer"), "नहीं")
+        self.assertEqual(res.get("was_traveling_in_vehicle"), "नहीं")
+        
+        expected_breakdown = [
+            {"label": "आर्थिक विकलांगता का प्रतिकर", "amount": 300000.0},
+            {"label": "दुख दर्द व मानसिक परेशानी का प्रतिकर", "amount": 50000.0},
+            {"label": "पथ्य आहार व आयागमन का व्यय", "amount": 40000.0},
+            {"label": "ऑपरेशन एवं दवाई का खर्च", "amount": 100000.0},
+            {"label": "कपड़ों की नुकसानी", "amount": 30000.0},
+            {"label": "सहायक एवं अन्य व्यय", "amount": 20000.0},
+            {"label": "भविष्य में होने वाली शारीरिक/इलाज खर्च", "amount": 200000.0},
+            {"label": "कुल योग", "amount": 740000.0}
+        ]
+        self.assertEqual(res.get("compensation_claimed_breakdown"), expected_breakdown)
+        
+        expected_info = "दुर्घटना के समय वाहन चालक के पास वैध लायसेंस था।\nथाना चोरहटा में अपराध क्रमांक 111/2025 दर्ज है।\nवाहन का बीमा दुर्घटना दिनांक को वैध था।"
+        self.assertEqual(res.get("other_case_info"), expected_info)
+        self.assertEqual(res.get("fir_number"), "111/2025")
+        self.assertEqual(res.get("police_station"), "थाना चोरहटा")
+        
+        # 2. Test Excerpt Form for Lookahead and other info Block Capture
+        txt_path_excerpt = os.path.join(fixtures_dir, "other_info_excerpt.txt")
+        with open(txt_path_excerpt, "r", encoding="utf-8") as file:
+            lines_excerpt = [line.strip() for line in file.readlines() if line.strip()]
+            
+        res_excerpt = parse_hindi_extracted_text(lines_excerpt)
+        self.assertEqual(res_excerpt.get("other_case_info"), expected_info)
 
     def test_document_a_lettered(self):
         text_lines = [
