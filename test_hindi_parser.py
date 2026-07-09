@@ -335,5 +335,73 @@ class TestHindiParser(unittest.TestCase):
         self.assertEqual(res.get("insurance_company"), "स्वयं")
         self.assertEqual(res.get("vehicle_number"), "MP-20-BA-0911")
 
+    def test_disability_proximity_guard_spacing_variants(self):
+        # 39  प्रतिशत (double space)
+        res1 = parse_hindi_extracted_text(["स्थायी अपंगता 39  प्रतिशत"], case_type="injury")
+        self.assertEqual(res1.get("disability"), 39.0)
+        
+        # 39/प्रतिशत (slash separator)
+        res2 = parse_hindi_extracted_text(["स्थायी अपंगता 39/प्रतिशत"], case_type="injury")
+        self.assertEqual(res2.get("disability"), 39.0)
+        
+        # 39 % (space percent)
+        res3 = parse_hindi_extracted_text(["स्थायी अपंगता 39 %"], case_type="injury")
+        self.assertEqual(res3.get("disability"), 39.0)
+        
+        # List marker rejection (1. स्थायी अपंगता) - must be rejected and not trigger percentage
+        res4 = parse_hindi_extracted_text(["1. स्थायी अपंगता", "2. मासिक आय 15000"], case_type="injury")
+        self.assertIn(res4.get("disability"), ("", None))
+
+    def test_plausibility_bound_rejection(self):
+        from backend.parser_heuristics import check_amount_plausibility
+        
+        # Use assertLogs to verify that logger warning containing [SANITY-REJECT] is logged
+        with self.assertLogs("ParserHeuristics", level="WARNING") as log_capture:
+            # 1. Literal bad medical expenses value (11 digits)
+            res1 = check_amount_plausibility(10023410743.0, "medical_expenses", "फ़ोन नंबर 10023410743")
+            self.assertFalse(res1)
+            
+            # 2. Literal bad pain_and_suffering value (policy number matched as amount)
+            res2 = check_amount_plausibility(45800311814000.0, "pain_and_suffering", "पालिसी नंबर 45800311814000")
+            self.assertFalse(res2)
+            
+            # 3. An acceptable normal value
+            res3 = check_amount_plausibility(50000.0, "special_diet", "विशेष खुराक व्यय 50,000")
+            self.assertTrue(res3)
+            
+        self.assertEqual(len(log_capture.output), 2)
+        self.assertIn("[SANITY-REJECT] field=medical_expenses rejected_value=10023410743.0 reason=exceeds_max_digits source_line='फ़ोन नंबर 10023410743'", log_capture.output[0])
+        self.assertIn("[SANITY-REJECT] field=pain_and_suffering rejected_value=45800311814000.0 reason=exceeds_max_digits source_line='पालिसी नंबर 45800311814000'", log_capture.output[1])
+
+    def test_document_a_lettered_real_world(self):
+        text_lines = [
+            "अ. स्थायी अपंगता हेतु क्षतिपूर्ति 5,00,000/-",
+            "ब. शारीरिक एवं मानसिक वेदना 1,00,000",
+            "स. चिकित्सा व्यय 4,00,000",
+            "द. विशेष खुराक 50,000/-",
+            "ध. परिचारक व रुकने वाले व्यक्ति का खर्च 50,000",
+            "ऊ. भविष्य में होने वाले खर्च व आघात की हानि 2,00,000",
+            "कुल योग 13,00,000/-",
+            "18. अन्य जानकारी: वाहन क.-MP-20-BA-0911",
+            "19. पालिसी नंबर 45800311814000",
+            "20. फ़ोन नंबर 10023410743",
+            "21. क्लेम नंबर 20NM/5566",
+            "22. धारा 163{A}"
+        ]
+        
+        res = parse_hindi_extracted_text(text_lines, case_type="injury")
+        
+        # Verify correct values are extracted
+        self.assertEqual(res.get("pain_and_suffering"), 600000.0)  # 500000 disability + 100000 pain per merge rule
+        self.assertEqual(res.get("medical_expenses"), 400000.0)
+        self.assertEqual(res.get("special_diet"), 50000.0)
+        self.assertEqual(res.get("attender_charges"), 50000.0)
+        self.assertEqual(res.get("transportation"), 0.0)
+        self.assertEqual(res.get("future_medical_expenses"), 200000.0)
+        self.assertEqual(res.get("loss_of_income"), 0.0)
+        
+        # Verify disability percentage is None/empty (not mismatching to 1. from list markers)
+        self.assertIn(res.get("disability"), ("", None))
+
 if __name__ == "__main__":
     unittest.main()

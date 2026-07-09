@@ -5088,6 +5088,12 @@ def parse_isolated_amount(amount_str: str) -> float:
     except ValueError:
         return 0.0
 
+def check_amount_plausibility(value: float, field: str, line_text: str) -> bool:
+    if value > 99999999.0:
+        logger.warning(f"[SANITY-REJECT] field={field} rejected_value={value} reason=exceeds_max_digits source_line='{line_text}'")
+        return False
+    return True
+
 def match_bundle_d(norm: str) -> bool:
     has_att = "देख-रेख" in norm or "देखरेख" in norm
     has_diet = "आहार" in norm or "पोषण" in norm
@@ -5418,6 +5424,15 @@ def extract_hindi_structural_block(text_lines: list) -> dict:
                 j = i
                 while j < total_lines:
                     current_line = lines_norm[j]
+                    if is_totals_line(current_line):
+                        block_lines.append({
+                            "line_idx": j,
+                            "line_text": current_line,
+                            "is_totals": True
+                        })
+                        j += 1
+                        break
+                        
                     m_curr_lbl = _LBL_PAT.match(current_line)
                     if m_curr_lbl:
                         curr_label = m_curr_lbl.group(1)
@@ -5435,15 +5450,6 @@ def extract_hindi_structural_block(text_lines: list) -> dict:
                             })
                             j += 1
                             continue
-                    
-                    if is_totals_line(current_line):
-                        block_lines.append({
-                            "line_idx": j,
-                            "line_text": current_line,
-                            "is_totals": True
-                        })
-                        j += 1
-                        break
                     break
                 
                 structural_count = sum(1 for bl in block_lines if not bl.get("is_totals"))
@@ -5470,6 +5476,7 @@ def extract_hindi_structural_block(text_lines: list) -> dict:
     block_sources = {}
     needs_manual_review = []
     explicit_zeros = set()
+    rejected_fields = set()
     
     for item in chosen_block:
         if item.get("is_totals"):
@@ -5492,6 +5499,35 @@ def extract_hindi_structural_block(text_lines: list) -> dict:
             continue
             
         class_name, subtype = classification
+        
+        # Plausibility Bounds Check
+        field_name = None
+        if class_name == "BUNDLE_D":
+            field_name = BUNDLED_TRIPLE_TARGET_FIELD or "attender_charges"
+        elif class_name == "BUNDLE_B":
+            field_name = BUNDLED_FUTURE_TARGET_FIELD or "future_medical_expenses"
+        elif class_name == "BUNDLE_C":
+            field_name = BUNDLED_TRANSPORT_ATTENDER_TARGET_FIELD or "attender_charges"
+        elif class_name == "BUNDLE_A":
+            field_name = BUNDLED_DIET_TRANSPORT_TARGET_FIELD or "special_diet"
+        elif class_name == "PAIN_AND_SUFFERING":
+            field_name = "pain_and_suffering"
+        elif class_name == "LOSS_OF_INCOME":
+            field_name = "loss_of_income"
+        elif class_name == "STANDALONE_FUTURE_MEDICAL":
+            field_name = "future_medical_expenses"
+        elif class_name == "STANDALONE_MEDICAL":
+            field_name = "medical_expenses"
+        elif class_name == "STANDALONE_DIET":
+            field_name = "special_diet"
+        elif class_name == "STANDALONE_TRANSPORT":
+            field_name = "transportation"
+        elif class_name == "STANDALONE_ATTENDER":
+            field_name = "attender_charges"
+            
+        if field_name and not check_amount_plausibility(amt_val, field_name, line_text):
+            rejected_fields.add(field_name)
+            amt_val = 0.0
         
         if class_name == "BUNDLE_D":
             target = BUNDLED_TRIPLE_TARGET_FIELD
@@ -5621,7 +5657,8 @@ def extract_hindi_structural_block(text_lines: list) -> dict:
         "fields": res,
         "sources": block_sources,
         "needs_manual_review": needs_manual_review,
-        "explicit_zeros": explicit_zeros
+        "explicit_zeros": explicit_zeros,
+        "rejected_fields": rejected_fields
     }
 
 
@@ -5636,6 +5673,7 @@ def parse_hindi_extracted_text(text_lines: list, case_type: str = None) -> dict:
     logger.info("Starting advanced Hindi Lower Court MACT extraction pipeline...")
     
     out, conf = {}, {}
+    rejected_fields = set()
     
     # 1. Clean and normalize lines
     lines_norm = []
@@ -5680,12 +5718,9 @@ def parse_hindi_extracted_text(text_lines: list, case_type: str = None) -> dict:
             return None
             
         if field == "disability":
-            m = re.search(r'(\d{1,3})\s*(?:%|प्रतिशत|percent)', s_clean, re.IGNORECASE)
+            m = re.search(r'(\d{1,3})\s*[/:\-–]*\s*(?:%|प्रतिशत|percent)', s_clean, re.IGNORECASE)
             if m:
-                return int(m.group(1))
-            m_nums = re.findall(r'(?<![\d,])\d{1,3}(?![\d,])', s_clean)
-            for num_str in m_nums:
-                val = int(num_str)
+                val = int(m.group(1))
                 if 1 <= val <= 100:
                     return val
             return None
@@ -5948,6 +5983,33 @@ def parse_hindi_extracted_text(text_lines: list, case_type: str = None) -> dict:
             return [(rule_num, subtype)]
         return []
 
+    def is_valid_disability_percentage(matched_num_str: str, match_start: int, full_text: str) -> bool:
+        try:
+            val = float(matched_num_str)
+            if not (1.0 <= val <= 100.0):
+                return False
+        except ValueError:
+            return False
+
+        pre_text = full_text[:match_start]
+        post_text = full_text[match_start + len(matched_num_str):]
+        
+        is_line_start = (len(pre_text.strip()) == 0) or (pre_text.endswith('\n') or re.search(r'\n\s*$', pre_text))
+        is_followed_by_dot = post_text.startswith('.')
+        
+        if is_line_start and is_followed_by_dot:
+            near_span = full_text[max(0, match_start - 15) : match_start + len(matched_num_str) + 15]
+            if not ('%' in near_span or 'प्रतिशत' in near_span or 'percent' in near_span.lower()):
+                logger.warning(f"[DISABILITY-REJECT] Rejected potential percentage value '{matched_num_str}' as list marker: context '{near_span.strip()}'")
+                return False
+
+        adjacent_span = full_text[max(0, match_start - 12) : match_start + len(matched_num_str) + 12]
+        if not ('%' in adjacent_span or 'प्रतिशत' in adjacent_span or 'percent' in adjacent_span.lower()):
+            logger.warning(f"[DISABILITY-REJECT] Rejected percentage value '{matched_num_str}': not adjacent to '%' or 'प्रतिशत' (adjacent span: '{adjacent_span.strip()}')")
+            return False
+
+        return True
+
     def get_number_from_text(text: str) -> float:
         text_trans = translate_deva_digits(text)
         cleaned = text_trans.replace(',', '')
@@ -6008,13 +6070,19 @@ def parse_hindi_extracted_text(text_lines: list, case_type: str = None) -> dict:
     # Narrative Disability Percentage
     narrative_disability = None
     flat_norm = flat.replace("स्थाई", "स्थायी").replace("निर्योग्यता", "अपंगता").replace("विकलांगता", "अपंगता")
-    m_dis = re.search(r'स्थायी\s+अपंगता.{0,100}?(\d{1,3})\s*(?:प्रतिशत|%)', flat_norm, re.DOTALL)
-    if m_dis:
-        narrative_disability = float(m_dis.group(1))
-    else:
-        m_dis2 = re.search(r'(\d{1,3})\s*(?:प्रतिशत|%).{0,100}?स्थायी\s+अपंगता', flat_norm, re.DOTALL)
-        if m_dis2:
-            narrative_disability = float(m_dis2.group(1))
+    
+    for m in re.finditer(r'स्थायी\s+अपंगता.{0,100}?(\d{1,3})\s*[/:\-–]*\s*(?:प्रतिशत|%)', flat_norm, re.DOTALL):
+        num_str = m.group(1)
+        if is_valid_disability_percentage(num_str, m.start(1), flat_norm):
+            narrative_disability = float(num_str)
+            break
+            
+    if narrative_disability is None:
+        for m2 in re.finditer(r'(\d{1,3})\s*[/:\-–]*\s*(?:प्रतिशत|%).{0,100}?स्थायी\s+अपंगता', flat_norm, re.DOTALL):
+            num_str = m2.group(1)
+            if is_valid_disability_percentage(num_str, m2.start(1), flat_norm):
+                narrative_disability = float(num_str)
+                break
 
     # Apply structural block detection first
     struct_res = extract_hindi_structural_block(text_lines)
@@ -6023,6 +6091,8 @@ def parse_hindi_extracted_text(text_lines: list, case_type: str = None) -> dict:
         fields_map = struct_res["fields"]
         sources_map = struct_res["sources"]
         explicit_zeros = struct_res["explicit_zeros"]
+        if "rejected_fields" in struct_res:
+            rejected_fields.update(struct_res["rejected_fields"])
         
         # Override the 7 fields
         for field in [
@@ -6096,6 +6166,34 @@ def parse_hindi_extracted_text(text_lines: list, case_type: str = None) -> dict:
                 
                 if amount is not None or is_nil:
                     amt = 0.0 if is_nil else amount
+                    
+                    field_name = None
+                    if rule_num == 1:
+                        field_name = "pain_and_suffering"
+                    elif rule_num == 2:
+                        field_name = "loss_of_income"
+                    elif rule_num == 3:
+                        field_name = "medical_expenses"
+                    elif rule_num == 4:
+                        field_name = BUNDLED_DIET_TRANSPORT_TARGET_FIELD or "special_diet"
+                    elif rule_num == 5:
+                        field_name = "attender_charges"
+                    elif rule_num == 6:
+                        field_name = BUNDLED_FUTURE_TARGET_FIELD or "future_medical_expenses"
+                    elif rule_num == 7:
+                        field_name = BUNDLED_TRANSPORT_ATTENDER_TARGET_FIELD or "attender_charges"
+                    elif rule_num == 8:
+                        field_name = BUNDLED_TRIPLE_TARGET_FIELD or "attender_charges"
+                    elif rule_num == 9:
+                        field_name = "special_diet"
+                    elif rule_num == 10:
+                        field_name = "transportation"
+                    elif rule_num == 11:
+                        field_name = "future_medical_expenses"
+
+                    if field_name and not check_amount_plausibility(amt, field_name, line):
+                        rejected_fields.add(field_name)
+                        amt = 0.0
                     if rule_num == 1:
                         pain_and_suffering_parts[sub_type].append(amt)
                         pain_and_suffering_sources.append(f"Rule 1{sub_type}: '{line}' -> {amt}")
@@ -6500,6 +6598,10 @@ def parse_hindi_extracted_text(text_lines: list, case_type: str = None) -> dict:
     )
     if m:
         out["case_number"] = m.group(1).replace(" ", "")
+
+    for field in rejected_fields:
+        out[field] = None
+        conf[field] = 0.0
 
     out["confidence_scores"] = {k: {"confidence": v} for k, v in conf.items()}
     out["ai_recovery_triggered"] = False
