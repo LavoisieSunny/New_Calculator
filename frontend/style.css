@@ -334,6 +334,11 @@ body {
         height: auto !important;
     }
 
+    .form-grid,
+    .form-grid.show {
+        grid-template-columns: 1fr !important;
+    }
+
     .panel {
         height: auto !important;
         max-height: none !important;
@@ -404,6 +409,10 @@ body {
     gap: 16px 20px;
 }
 
+.form-grid.show {
+    display: grid !important;
+}
+
 .form-group {
     display: flex;
     flex-direction: column;
@@ -413,6 +422,16 @@ body {
 
 .form-group.full-width {
     grid-column: 1 / -1;
+}
+
+.form-group.has-error input,
+.form-group.has-error select {
+    border-color: #ef4444 !important;
+    box-shadow: 0 0 0 3px rgba(239, 68, 68, 0.15) !important;
+}
+
+.form-group.has-error label {
+    color: #ef4444 !important;
 }
 
 .main-label {
@@ -2631,7 +2650,7 @@ select.low-confidence-input {
 
 /* Slide-over Widescreen drawer expander classes */
 .slideover-panel.expanded {
-    width: 800px !important;
+    width: 100vw !important;
 }
 
 .slideover-expand-btn {
@@ -2749,6 +2768,7 @@ select.low-confidence-input {
     border: 3px solid rgba(11, 58, 114, 0.1);
     border-top: 3px solid var(--color-primary);
     border-radius: 50%;
+}
 
     .pane-tab-btn {
         background: transparent;
@@ -2838,29 +2858,7 @@ select.low-confidence-input {
         }
     }
 
-    /* Slide-over Widescreen drawer expander classes */
-    .slideover-panel.expanded {
-        width: 800px !important;
-    }
 
-    .slideover-expand-btn {
-        background: transparent;
-        border: none;
-        color: var(--text-muted);
-        cursor: pointer;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        font-size: 1rem;
-        padding: 4px;
-        border-radius: 4px;
-        transition: all var(--transition-fast);
-    }
-
-    .slideover-expand-btn:hover {
-        color: var(--color-primary);
-        background: rgba(255, 255, 255, 0.05);
-    }
 
     /* Chat bubble zooming & hover effects */
     .chat-bubble .chat-text {

@@ -211,7 +211,7 @@
                                 </div>
 
                                 <!-- Accident Location Place -->
-                                <div class="form-group">
+                                <div class="form-group full-width">
                                     <label for="place-of-accident">Place of Accident</label>
                                     <div class="input-icon-wrapper">
                                         <i class="fa-solid fa-location-dot field-icon"></i>
@@ -243,7 +243,7 @@
                                     <label for="dependents" id="label-dependents">Number of Dependents <span class="req">*</span></label>
                                     <div class="input-icon-wrapper">
                                         <i class="fa-solid fa-people-roof field-icon"></i>
-                                        <input type="number" id="dependents" name="dependents" min="2" placeholder="e.g. 3">
+                                        <input type="number" id="dependents" name="dependents" min="0" placeholder="e.g. 3">
                                     </div>
                                 </div>
                             </div>
@@ -807,7 +807,10 @@
                 <div style="display: flex; align-items: center; gap: 10px;">
                     <h3 id="slideover-title">🤖 AI Legal Assistant</h3>
                 </div>
-                <button type="button" id="close-slideover" class="slideover-close-btn">&times;</button>
+                <div style="display: flex; align-items: center; gap: 16px;">
+                    <button type="button" id="expand-slideover-btn" class="slideover-expand-btn" title="Toggle Wide View"><i class="fa-solid fa-expand"></i></button>
+                    <button type="button" id="close-slideover" class="slideover-close-btn">&times;</button>
+                </div>
             </div>
             <div class="slideover-body" style="height: calc(100% - 70px); padding: 20px; display: flex; flex-direction: column; gap: 15px; overflow-y: auto;">
                 

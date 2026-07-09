@@ -2699,7 +2699,19 @@ This cannot be undone.`)) return;
         }
 
         // Validate all required inputs are filled prior to calculations
+        compensationForm.querySelectorAll(".form-group").forEach(grp => {
+            grp.classList.remove("has-error");
+        });
+
         if (!compensationForm.reportValidity()) {
+            const invalidFields = compensationForm.querySelectorAll("input:invalid, select:invalid");
+            invalidFields.forEach(field => {
+                const grp = field.closest(".form-group");
+                if (grp) {
+                    grp.classList.add("has-error");
+                }
+            });
+            clearCalculatedOutputs();
             showToast("Please fill all mandatory case fields before calculating.", "warning");
             return;
         }
@@ -2790,6 +2802,19 @@ This cannot be undone.`)) return;
             renderResultsDashboard(localResults, payload);
             openModal();
             if (triggerEvalBtn) triggerEvalBtn.disabled = false;
+        }
+    });
+
+    // Clear validation error styling on input change
+    compensationForm.addEventListener("input", (e) => {
+        const target = e.target;
+        if (target && (target.tagName === "INPUT" || target.tagName === "SELECT")) {
+            const grp = target.closest(".form-group");
+            if (grp && grp.classList.contains("has-error")) {
+                if (target.checkValidity()) {
+                    grp.classList.remove("has-error");
+                }
+            }
         }
     });
 
@@ -2896,6 +2921,24 @@ This cannot be undone.`)) return;
                 document.getElementById("live-calc-total").textContent = formatCurrency(finalComp);
             }
         }
+    }
+
+    function clearCalculatedOutputs() {
+        const lossDepInput = document.getElementById("loss-of-dependency");
+        if (lossDepInput) lossDepInput.value = "";
+
+        const finalDeathCompInput = document.getElementById("death-final-compensation");
+        if (finalDeathCompInput) finalDeathCompInput.value = "";
+
+        const liveCalcIds = [
+            "live-calc-annual", "live-calc-future", "live-calc-deduct-pct", 
+            "live-calc-deduct-amt", "live-calc-multiplier", "live-calc-dependency", 
+            "live-calc-total"
+        ];
+        liveCalcIds.forEach(id => {
+            const el = document.getElementById(id);
+            if (el) el.textContent = "—";
+        });
     }
 
 
