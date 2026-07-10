@@ -4119,6 +4119,32 @@ This cannot be undone.`)) return;
         printBtn.addEventListener("click", () => { window.print(); });
     }
 
+    // Keep this list in sync with commonMapping/injuryMapping/deathMapping inside applyAllOcrSuggestions().
+    const AUTOFILL_TARGET_FIELD_IDS = [
+        "name", "father-name", "date-of-birth", "age", "monthly-income",
+        "date-of-accident", "place-of-accident",
+        "medical-expenses", "future-medical-expenses", "pain-and-suffering",
+        "transportation", "special-diet", "attender-charges", "loss-of-income", "disability",
+        "consortium", "funeral-expenses", "loss-estate", "marital-status", "future-type",
+        "claimant-relationship-display", "claimant-relationship-type-hidden", "dependents",
+        "conspo", "conwif", "conhus", "conpar", "conchil", "conmo", "confath", "conbro", "consis", "conlum"
+    ];
+
+    function setAutofillFieldsPending(isPending) {
+        AUTOFILL_TARGET_FIELD_IDS.forEach(id => {
+            const el = document.getElementById(id);
+            if (!el) return;
+            if (isPending) {
+                el.value = "";
+                el.disabled = true;
+                el.classList.add("autofill-pending");
+            } else {
+                el.disabled = false;
+                el.classList.remove("autofill-pending");
+            }
+        });
+    }
+
     // Delegated click handler on case-type-suggestion container for the Auto-fill button
     const caseTypeSuggestion = document.getElementById("case-type-suggestion");
     if (caseTypeSuggestion) {
@@ -4138,6 +4164,7 @@ This cannot be undone.`)) return;
                 const origHTML = btn.innerHTML;
                 btn.disabled = true;
                 btn.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i> AI Legal LLM is refining extracted fields...`;
+                setAutofillFieldsPending(true);
 
                 try {
                     let success = false;
@@ -4153,6 +4180,7 @@ This cannot be undone.`)) return;
                     applyAllOcrSuggestions(data.suggestions, null, null, null, false, false);
                     showToast("AI refinement unavailable — filled from heuristic OCR extraction only. Please review all fields.", "warning");
                 } finally {
+                    setAutofillFieldsPending(false);
                     btn.disabled = false;
                     btn.innerHTML = origHTML;
                 }

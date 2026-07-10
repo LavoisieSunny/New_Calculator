@@ -553,6 +553,11 @@ select.low-confidence-input {
     animation: slideDownFade 0.25s ease-out;
 }
 
+.autofill-pending {
+    opacity: 0.35;
+    cursor: not-allowed;
+}
+
 @keyframes slideDownFade {
     from {
         opacity: 0;
