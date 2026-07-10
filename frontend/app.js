@@ -1995,7 +1995,7 @@ This cannot be undone.`)) return;
                     warning.style.fontWeight = "600";
                     warning.style.marginTop = "4px";
                     warning.style.display = "block";
-                    warning.innerHTML = `<i class="fa-solid fa-triangle-exclamation"></i> Low confidence (${Math.round(conf * 100)}%)`;
+                    warning.innerHTML = `<i class="fa-solid fa-triangle-exclamation"></i> Check Once — ${Math.round(conf * 100)}% confidence`;
                     parent.appendChild(warning);
                 }
             }
@@ -2351,7 +2351,7 @@ This cannot be undone.`)) return;
                 const detail = errData.detail || "";
                 console.warn("Automatic AI extraction unavailable:", detail || response.status);
                 showToast("AI field refinement unavailable — heuristic OCR extraction is already applied.", "warning");
-                return;
+                return false;
             }
             const data = await response.json();
 
@@ -2360,13 +2360,16 @@ This cannot be undone.`)) return;
                 const ocrEvidence = data.raw_recovered ? data.raw_recovered.ocr_evidence_case : null;
                 applyAllOcrSuggestions(data.suggestions, confidenceScores, ocrEvidence, data.raw_recovered, true);
                 showToast("Case analyzed — fields auto-filled and refined by AI.", "success");
+                return true;
             } else {
                 showToast("AI extraction could not recover additional fields.", "warning");
+                return false;
             }
         } catch (error) {
             loader.remove();
             console.error("Automatic AI recovery failed:", error);
             showToast("AI field refinement failed — heuristic OCR extraction is already applied.", "warning");
+            return false;
         }
     }
 
@@ -4119,7 +4122,7 @@ This cannot be undone.`)) return;
     // Delegated click handler on case-type-suggestion container for the Auto-fill button
     const caseTypeSuggestion = document.getElementById("case-type-suggestion");
     if (caseTypeSuggestion) {
-        caseTypeSuggestion.addEventListener("click", (e) => {
+        caseTypeSuggestion.addEventListener("click", async (e) => {
             const btn = e.target.closest("#btn-trigger-autofill");
             if (btn) {
                 e.preventDefault();
@@ -4134,20 +4137,25 @@ This cannot be undone.`)) return;
                 // Show loading spinner on button
                 const origHTML = btn.innerHTML;
                 btn.disabled = true;
-                btn.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i> Auto-filling...`;
+                btn.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i> AI Legal LLM is refining extracted fields...`;
 
-                setTimeout(() => {
-                    // Trigger actual autofill
-                    applyAllOcrSuggestions(data.suggestions, null, null, null, false, false);
-
-                    if (currentOcrRawText.length > 0) {
-                        runAiRecovery(currentOcrRawText, window.detectedTrack);
+                try {
+                    let success = false;
+                    if (currentOcrRawText && currentOcrRawText.length > 0) {
+                        success = await runAiRecovery(currentOcrRawText, window.detectedTrack);
                     }
-
+                    if (!success) {
+                        applyAllOcrSuggestions(data.suggestions, null, null, null, false, false);
+                        showToast("AI refinement unavailable — filled from heuristic OCR extraction only. Please review all fields.", "warning");
+                    }
+                } catch (err) {
+                    console.error("Autofill click handler error:", err);
+                    applyAllOcrSuggestions(data.suggestions, null, null, null, false, false);
+                    showToast("AI refinement unavailable — filled from heuristic OCR extraction only. Please review all fields.", "warning");
+                } finally {
                     btn.disabled = false;
                     btn.innerHTML = origHTML;
-                    showToast("Workstation form successfully auto-filled focusing on Previous Judgment, Petition, and Prayer details.", "success");
-                }, 300);
+                }
             }
         });
     }
