@@ -652,6 +652,7 @@ async def chat_with_pdf_stream(request: PDFChatRequest):
     RAG PDF Assistant: retrieves semantic chunks from Qdrant,
     constructs the prompt, and returns a SSE-compatible NDJSON response stream.
     """
+    import json
     try:
         user_prompt, system_instruction, precedents, recalc_response = await prepare_pdf_chat_prompt(request)
         
@@ -671,7 +672,6 @@ async def chat_with_pdf_stream(request: PDFChatRequest):
         from fastapi.responses import StreamingResponse
         import queue
         import threading
-        import json
 
         q = queue.Queue()
         
