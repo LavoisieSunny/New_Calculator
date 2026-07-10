@@ -1330,6 +1330,7 @@ def _score_enhancement_reduction(text):
 _NON_BOUNDARY_ABBREVIATIONS = [
     "rs", "no", "nos", "ms", "mr", "mrs", "dr", "smt", "shri",
     "sec", "art", "regn", "vol", "p", "pp", "co", "ltd", "u/s", "u/r",
+    "vs", "versus", "ors", "etc",
     "i", "ii", "iii", "iv", "v", "vi", "vii", "viii", "ix", "x",
     "a", "b", "c", "d", "e", "f", "g", "h",
 ]
