@@ -2893,7 +2893,7 @@ def parse_extracted_text(text_lines, case_type=None):
 
     # Deceased Block Extraction (Page 8 - High Court Factual Details)
     deceased_block_match = re.search(
-        r'\b(?:deceased\s+person|description\s+of\s+deceased|name\s+and\s+description\s+of\s+the\s+deceased)\b.*?\b(?:name)\s*[:\-;]\s*([A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,3})',
+        r'\b(?:deceased\s+person|description\s+of\s+deceased|name\s+and\s+description\s+of\s+the\s+deceased)\b.*?\b(?:name)\s*[|\s]*[:\-;\u2022][|\s]*([A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,3})',
         full_text,
         re.IGNORECASE | re.DOTALL
     )
