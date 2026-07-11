@@ -13,8 +13,8 @@ logger = logging.getLogger("VectorDB")
 # Centralized collection name for all legal precedents
 COLLECTION_NAME = "legal_documents"
 
-# Qdrant server connection URL (configured to run on server port 3108)
-QDRANT_URL = os.getenv("QDRANT_URL", "http://localhost:3108")
+# Qdrant server connection URL (configured to run on server port 7204)
+QDRANT_URL = os.getenv("QDRANT_URL", "http://localhost:7204")
 
 # Global lazy-initialized clients to prevent loading models during module imports
 _qdrant_client = None
@@ -26,7 +26,7 @@ def get_qdrant_client():
         try:
             logger.info(f"Initializing Qdrant client at URL: {QDRANT_URL}")
             
-            # Connect to external Qdrant server (running on port 3108)
+            # Connect to external Qdrant server (running on port 7204)
             _qdrant_client = QdrantClient(url=QDRANT_URL)
             
             # Create centralized legal_documents collection if it doesn't exist yet
