@@ -7361,3 +7361,97 @@ def parse_hindi_extracted_text(text_lines: list, case_type: str = None) -> dict:
 
     return out
 
+
+def extract_age_from_text(raw_text: str, claimant_name: str = None, deceased_name: str = None, case_type: str = None) -> tuple:
+    """
+    Scans raw text to extract age based on proximity to claimant/deceased name,
+    falling back to global regex scans.
+    Returns: (age: int | None, context_snippet: str | None)
+    """
+    if not raw_text:
+        return None, None
+        
+    # Lightweight English age regexes
+    patterns = [
+        r'\baged?\s+(?:about\s+)?(\d{1,3})\s*years?\b',
+        r'\b(\d{1,3})\s*years?\s+old\b',
+        r'\b(?:age|aged)\s*(?:about|is|was)?\s*[:\-;]?\s*(\d{1,3})\b',
+        r'\b(\d{1,3})\s*(?:years|yrs)\b'
+    ]
+    
+    # 1. Proximity scan based on target name
+    target_names = []
+    if case_type == "death":
+        if deceased_name:
+            target_names.append((deceased_name, "deceased"))
+        if claimant_name:
+            target_names.append((claimant_name, "claimant"))
+    else:
+        # injury or default
+        if claimant_name:
+            target_names.append((claimant_name, "claimant/injured"))
+        if deceased_name:
+            target_names.append((deceased_name, "deceased"))
+            
+    for name_val, role_label in target_names:
+        # Tokenize name and take first long token to scan
+        tokens = [t for t in name_val.split() if len(t) > 2]
+        if not tokens:
+            continue
+        search_term = tokens[0]
+        
+        pos = 0
+        while True:
+            idx = raw_text.lower().find(search_term.lower(), pos)
+            if idx == -1:
+                break
+            
+            # Extract proximity window
+            w_start = max(0, idx - 150)
+            w_end = min(len(raw_text), idx + len(search_term) + 150)
+            window = raw_text[w_start:w_end]
+            
+            best_val = None
+            min_distance = 999999
+            term_idx_in_window = idx - w_start
+            
+            for pat in patterns:
+                for m in re.finditer(pat, window, re.IGNORECASE):
+                    val = int(m.group(1))
+                    if 1 <= val <= 100:
+                        match_center = (m.start() + m.end()) / 2
+                        dist = abs(match_center - term_idx_in_window)
+                        if dist < min_distance:
+                            min_distance = dist
+                            best_val = val
+                            
+            if best_val is not None:
+                snippet = window.replace("\n", " ").strip()
+                logger.info(f"[AGE-EXTRACTOR] Extracted age {best_val} near {role_label} name '{name_val}' (dist={min_distance:.1f}) in window: '{snippet}'")
+                return best_val, snippet
+            pos = idx + len(search_term)
+
+    # 2. General role-anchored regex fallbacks
+    role_anchored_patterns = [
+        r'\b(?:deceased|injured|claimant)\s*(?:person)?\s+(?:was\s+)?aged?\s*(?:about\s+)?(\d{1,3})\b',
+        r'\b(?:age|aged)\s+of\s+the?\s*(?:deceased|injured|claimant)\s*(?:is|was|[:\-;])?\s*(\d{1,3})\b',
+    ]
+    for pat in role_anchored_patterns:
+        m = re.search(pat, raw_text, re.IGNORECASE)
+        if m:
+            val = int(m.group(1))
+            if 1 <= val <= 100:
+                logger.info(f"[AGE-EXTRACTOR] Extracted age {val} globally using role-anchored pattern '{pat}'")
+                return val, f"Global match: {m.group(0)}"
+                
+    # 3. Global scan fallback
+    for pat in patterns[:3]: # limit to slightly more specific patterns globally
+        for m in re.finditer(pat, raw_text, re.IGNORECASE):
+            val = int(m.group(1))
+            if 5 <= val <= 100: # tighter guard for general scan
+                logger.info(f"[AGE-EXTRACTOR] Extracted age {val} globally using fallback pattern '{pat}'")
+                return val, f"Global match: {m.group(0)}"
+                
+    return None, None
+
+

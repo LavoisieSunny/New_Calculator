@@ -151,5 +151,38 @@ class TestLLMClient(unittest.TestCase):
         self.assertEqual(res["claimant_name"], "Kamal Kumar")
         self.assertEqual(res["father_name"], "Jaychand Chugwani")
 
+    def test_extract_age_from_text_utility(self):
+        from backend.parser_heuristics import extract_age_from_text
+        text = "Kamal Kumar is claimant. Kamal Kumar was aged about 22 years at the time. His father is Shri Jaychand who is 53 years old."
+        
+        # Test proximity search targeting claimant (Kamal Kumar)
+        age, ctx = extract_age_from_text(text, claimant_name="Kamal Kumar", case_type="injury")
+        self.assertEqual(age, 22)
+        
+        # Test proximity search targeting father/other person
+        age, ctx = extract_age_from_text(text, claimant_name="Jaychand", case_type="injury")
+        self.assertEqual(age, 53)
+        
+        # Test global fallback search when target name has no close age match
+        age, ctx = extract_age_from_text("Deceased person was aged about 45 years. Another line.", claimant_name="John Doe", case_type="death")
+        self.assertEqual(age, 45)
+
+    @patch('backend.llm_client.generate_response')
+    @patch('backend.llm_client.classify_case_type_by_ocr_text')
+    def test_ai_data_recovery_age_override(self, mock_classify, mock_generate):
+        mock_classify.return_value = "injury"
+        
+        # LLM returns age as null
+        mock_generate.return_value = """{
+            "case_type": {"value": "injury", "confidence": 0.95},
+            "claimant_name": {"value": "Kamal Kumar", "confidence": 0.98},
+            "age": {"value": null, "confidence": 0.0}
+        }"""
+        
+        # Proximity matches 22
+        res = ai_data_recovery("Kamal Kumar is claimant. Kamal Kumar is aged about 22 years.")
+        self.assertEqual(res["age"], 22)
+        self.assertEqual(res["confidence_scores"]["age"]["confidence"], 0.85)
+
 if __name__ == "__main__":
     unittest.main()

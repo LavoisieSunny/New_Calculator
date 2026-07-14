@@ -747,6 +747,8 @@ def ai_data_recovery(raw_ocr_text: str, track: str = "high_court", case_type: st
 
             data[key] = val
             confidence_scores[key] = {"confidence": conf}
+            if is_blocked:
+                confidence_scores[key]["reason"] = f"Document stated non-answer: '{matched_phrase}'"
  
         # ── Canonicalise every date field to strict DD-MM-YYYY ─────────────
         # (see normalize_date_to_ddmmyyyy docstring for why this matters —
@@ -849,6 +851,44 @@ def ai_data_recovery(raw_ocr_text: str, track: str = "high_court", case_type: st
         except Exception as override_err:
             logger.error(f"Failed to run Hindi narrative income override: {str(override_err)}")
  
+        # ── English Age regex fallback override ──────────────────────────
+        try:
+            llm_age = data.get("age")
+            llm_age_conf = confidence_scores.get("age", {}).get("confidence", 0.0)
+            
+            if llm_age is None or llm_age == "" or llm_age_conf < 0.7:
+                from backend.parser_heuristics import extract_age_from_text
+                fallback_age, age_ctx = extract_age_from_text(
+                    raw_ocr_text,
+                    claimant_name=data.get("claimant_name"),
+                    deceased_name=data.get("deceased_name"),
+                    case_type=case_type_val
+                )
+                if fallback_age is not None:
+                    logger.info(f"[AGE OVERRIDE] Overwriting age from {llm_age} (conf: {llm_age_conf}) to {fallback_age}. Context: {age_ctx}")
+                    data["age"] = fallback_age
+                    confidence_scores["age"] = {
+                        "confidence": 0.85,
+                        "reason": "Extracted via proximity regex override"
+                    }
+                else:
+                    if llm_age is None or llm_age == "":
+                        reason_msg = confidence_scores.get("age", {}).get("reason")
+                        if not reason_msg:
+                            reason_msg = "Not explicitly stated or found near claimant/deceased name in document"
+                        confidence_scores["age"] = {
+                            "confidence": 0.0,
+                            "reason": reason_msg
+                        }
+                    else:
+                        reason_msg = f"Low confidence LLM value ({llm_age}), fallback failed"
+                        confidence_scores["age"] = {
+                            "confidence": llm_age_conf,
+                            "reason": reason_msg
+                        }
+        except Exception as age_err:
+            logger.error(f"Failed to run English age regex override: {str(age_err)}")
+
         # Actively filter out opposite case type fields to enforce strict gating
         if case_type_val == "injury":
             death_fields = [

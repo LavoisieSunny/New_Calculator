@@ -430,6 +430,12 @@ body {
     box-shadow: 0 0 0 3px rgba(239, 68, 68, 0.15) !important;
 }
 
+input.not-stated-input,
+select.not-stated-input {
+    border-color: #f59e0b !important;
+    box-shadow: 0 0 0 3px rgba(245, 158, 11, 0.15) !important;
+}
+
 .form-group.has-error label {
     color: #ef4444 !important;
 }

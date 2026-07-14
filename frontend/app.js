@@ -22,6 +22,7 @@ document.addEventListener("DOMContentLoaded", () => {
     // Global Cache for Extracted Field Population (Part 5)
     let lastExtractedFields = {};
     let lastExtractedConfidences = {};
+    let lastExtractedReasons = {};
 
     // --- OCR LIVE TIMER STATE & HELPERS ---
     let ocrTimerInterval = null;
@@ -1955,6 +1956,13 @@ This cannot be undone.`)) return;
             const el = document.getElementById(inputId);
             if (!el) return;
 
+            const parent = el.closest(".form-group");
+            if (parent) {
+                const existingReason = parent.querySelector(".custom-empty-reason");
+                if (existingReason) existingReason.remove();
+            }
+            el.classList.remove("not-stated-input");
+
             if (!isAllowed) {
                 // Reset/clear value if not allowed to avoid carrying over stale data
                 el.value = "";
@@ -1966,6 +1974,21 @@ This cannot be undone.`)) return;
             const val = lastExtractedFields[cacheKey];
 
             if (val === undefined || val === null || val === "") {
+                if (lastExtractedReasons[cacheKey]) {
+                    const reason = lastExtractedReasons[cacheKey];
+                    if (parent && !parent.querySelector(".custom-empty-reason")) {
+                        const reasonEl = document.createElement("span");
+                        reasonEl.className = "custom-empty-reason";
+                        reasonEl.style.color = "#f59e0b"; // Warning color
+                        reasonEl.style.fontSize = "0.75rem";
+                        reasonEl.style.fontWeight = "600";
+                        reasonEl.style.marginTop = "4px";
+                        reasonEl.style.display = "block";
+                        reasonEl.innerHTML = `<i class="fa-solid fa-circle-question"></i> Not Stated: ${reason}`;
+                        parent.appendChild(reasonEl);
+                    }
+                    el.classList.add("not-stated-input");
+                }
                 return;
             }
 
@@ -2105,8 +2128,11 @@ This cannot be undone.`)) return;
 
         // Clear all previous low-confidence warning labels, styles, and AI metadata badges
         document.querySelectorAll(".verification-warning").forEach(el => el.remove());
+        document.querySelectorAll(".custom-empty-reason").forEach(el => el.remove());
         document.querySelectorAll(".low-confidence-input").forEach(el => el.classList.remove("low-confidence-input"));
+        document.querySelectorAll(".not-stated-input").forEach(el => el.classList.remove("not-stated-input"));
         document.querySelectorAll(".ai-metadata-badge").forEach(el => el.remove());
+        lastExtractedReasons = {};
 
         // Extract case type (Part 1 Manual case lock)
         let suggestionsCaseType = suggestions.case_type;
@@ -2246,10 +2272,12 @@ This cannot be undone.`)) return;
                 const rawObj = rawRecovered[rawKey];
                 let val = null;
                 let conf = null;
+                let reason = null;
 
                 if (rawObj && typeof rawObj === "object" && "value" in rawObj) {
                     val = rawObj.value;
                     conf = rawObj.confidence;
+                    reason = rawObj.reason;
                 } else if (rawObj !== undefined) {
                     val = rawObj;
                 }
@@ -2259,6 +2287,9 @@ This cannot be undone.`)) return;
                     if (conf !== null && conf !== undefined) {
                         lastExtractedConfidences[cacheKey] = conf;
                     }
+                }
+                if (reason) {
+                    lastExtractedReasons[cacheKey] = reason;
                 }
             });
         }
@@ -2273,6 +2304,10 @@ This cannot be undone.`)) return;
                     ? confidenceScores[key].confidence
                     : confidenceScores[key];
                 lastExtractedConfidences[key] = typeof confVal === "number" ? confVal : parseFloat(confVal) || 1.0;
+                
+                if (confidenceScores[key] && confidenceScores[key].reason) {
+                    lastExtractedReasons[key] = confidenceScores[key].reason;
+                }
             } else if (lastExtractedConfidences[key] === undefined) {
                 lastExtractedConfidences[key] = lowConfFields.includes(key) ? 0.65 : 1.0;
             }
@@ -2716,6 +2751,22 @@ This cannot be undone.`)) return;
                 const grp = field.closest(".form-group");
                 if (grp) {
                     grp.classList.add("has-error");
+                    
+                    if (field.id === "age") {
+                        let reason = lastExtractedReasons["age"] || "No age or DOB was found in the text";
+                        let reasonSpan = grp.querySelector(".custom-empty-reason");
+                        if (!reasonSpan) {
+                            reasonSpan = document.createElement("span");
+                            reasonSpan.className = "custom-empty-reason";
+                            reasonSpan.style.fontSize = "0.75rem";
+                            reasonSpan.style.fontWeight = "600";
+                            reasonSpan.style.marginTop = "4px";
+                            reasonSpan.style.display = "block";
+                            grp.appendChild(reasonSpan);
+                        }
+                        reasonSpan.style.color = "#ef4444";
+                        reasonSpan.innerHTML = `<i class="fa-solid fa-circle-exclamation"></i> <strong>Missing from document:</strong> ${reason}`;
+                    }
                 }
             });
             clearCalculatedOutputs();
