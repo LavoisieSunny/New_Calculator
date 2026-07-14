@@ -52,7 +52,7 @@ HEADING_KEYWORDS = {
         "अतः सादर प्रार्थना है", "प्रार्थना पत्र",
         "relief", "prayer", "relief claimed", "prayer clause", "it is therefore prayed",
         "relief claimed in appeal", "relief claimed in appeal : prayer", "relief claimed in appeal/prayer",
-        "reliefclaimedinappeal", "reliefclaimed", "prayerclause"
+        "relief claims in appeal", "relief claims", "reliefclaimedinappeal", "reliefclaimed", "prayerclause", "reliefclaims"
     ],
     "grounds_section": [
         "अपील के आधार", "आधार", "चुनौती के आधार", "आपत्ति के आधार",
@@ -1236,6 +1236,8 @@ _ENHANCEMENT_PHRASES = [
     "inadequate compensation", "award is inadequate", "compensation is inadequate",
     "grossly inadequate", "on the lower side", "is too low", "meagre compensation",
     "just and proper compensation", "adequate compensation be awarded",
+    "enhance the appropriate compensation", "enhance the compensation", "enhance compensation",
+    "enhancing", "less amount", "awarded less", "modify by enhancing",
 ]
 
 _REDUCTION_PHRASES = [
@@ -1254,6 +1256,7 @@ _PAST_TENSE_GUARDS = [
     "tribunal enhanced", "tribunal correctly enhanced", "court enhanced",
     "tribunal reduced", "tribunal correctly reduced", "court reduced",
     "already enhanced", "already reduced", "had enhanced", "had reduced",
+    "should be enhanced", "shall be enhanced", "should be increased", "shall be increased",
 ]
 
 _ENHANCEMENT_PHRASES_HI = [
@@ -1290,7 +1293,7 @@ def _score_enhancement_reduction(text):
     if not text or not text.strip():
         return "unclear", 0.0, ""
 
-    lowered = text.lower()
+    lowered = text.lower().replace('é', 'e')
 
     combined_enhancement = _ENHANCEMENT_PHRASES + _ENHANCEMENT_PHRASES_HI
     combined_reduction = _REDUCTION_PHRASES + _REDUCTION_PHRASES_HI
@@ -1597,6 +1600,12 @@ def classify_enhancement_or_reduction(sections):
         grounds_text = sections.get("raw_ocr", "")
     if not relief_text.strip():
         relief_text = sections.get("raw_ocr", "")
+
+    # If the relief section was explicitly found, it contains the main prayer at the beginning.
+    # We truncate it to 4000 characters to prevent false positive matching on calculations/citations
+    # in the appended tribunal award.
+    if sections.get("relief_section") and len(relief_text) > 4000:
+        relief_text = relief_text[:4000]
 
     # Add debug logging of raw texts
     logger.info(f"[DEBUG ENHANCEMENT SECTIONS] grounds_text len: {len(grounds_text)}, relief_text len: {len(relief_text)}")

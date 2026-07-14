@@ -1,0 +1,19 @@
+{
+  "facts_section_contains": [
+    "claim of Rs. 7,50,000/-",
+    "permanent disabled and grievous injury"
+  ],
+  "grounds_section_contains": [
+    "A. That, the impugned award of the claims tribunal is quit unjust",
+    "B. That, the learned claims tribunal failed to consider that the appellant received grievous injury"
+  ],
+  "relief_section_contains": [
+    "1. Enhancement of compensation by Rs. 2,00,000/-",
+    "2. Liability of insurer : Respondent No.3",
+    "3. Award of interest at the rate of 9% p.a."
+  ],
+  "classification": {
+    "verdict": "enhancement",
+    "basis": "agreement"
+  }
+}
