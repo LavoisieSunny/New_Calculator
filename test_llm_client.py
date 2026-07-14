@@ -77,5 +77,46 @@ class TestLLMClient(unittest.TestCase):
         self.assertIn("ai_recovery_error", res)
         self.assertEqual(res["ai_recovery_error"], "AI-assisted recovery unavailable for this document — please fill remaining fields manually.")
 
+    @patch('backend.llm_client.generate_response')
+    @patch('backend.llm_client.classify_case_type_by_ocr_text')
+    def test_ai_data_recovery_sanitizer(self, mock_classify, mock_generate):
+        mock_classify.return_value = "injury"
+        # Mocking LLM returning some blocklisted string answers for various fields
+        mock_generate.return_value = """{
+            "case_type": {"value": "injury", "confidence": 0.95},
+            "claimant_name": {"value": "Jane Doe", "confidence": 0.98},
+            "father_name": {"value": "not explicitly stated", "confidence": 0.9},
+            "accident_place": {"value": "Not Stated", "confidence": 0.8},
+            "judge_name": {"value": "unclear", "confidence": 0.7},
+            "vehicle_number": {"value": "N/A", "confidence": 0.6},
+            "insurance_company": {"value": "unknown", "confidence": 0.55},
+            "fir_number": {"value": "not mentioned in document", "confidence": 0.5},
+            "case_number": {"value": "not found in text", "confidence": 0.4}
+        }"""
+
+        res = ai_data_recovery("some random ocr text")
+        
+        # Valid name is preserved
+        self.assertEqual(res["claimant_name"], "Jane Doe")
+        
+        # Blocklisted non-answer values are mapped to None
+        self.assertIsNone(res.get("father_name"))
+        self.assertIsNone(res.get("place_of_accident")) # accident_place maps to place_of_accident
+        self.assertIsNone(res.get("judge_name"))
+        self.assertIsNone(res.get("vehicle_number"))
+        self.assertIsNone(res.get("insurance_company"))
+        self.assertIsNone(res.get("fir_number"))
+        self.assertIsNone(res.get("case_number"))
+
+        # Verify that their confidence score was set to 0.0
+        scores = res.get("confidence_scores", {})
+        self.assertEqual(scores.get("father_name", {}).get("confidence"), 0.0)
+        self.assertEqual(scores.get("accident_place", {}).get("confidence"), 0.0)
+        self.assertEqual(scores.get("judge_name", {}).get("confidence"), 0.0)
+        self.assertEqual(scores.get("vehicle_number", {}).get("confidence"), 0.0)
+        self.assertEqual(scores.get("insurance_company", {}).get("confidence"), 0.0)
+        self.assertEqual(scores.get("fir_number", {}).get("confidence"), 0.0)
+        self.assertEqual(scores.get("case_number", {}).get("confidence"), 0.0)
+
 if __name__ == "__main__":
     unittest.main()

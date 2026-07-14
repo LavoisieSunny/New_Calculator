@@ -629,6 +629,7 @@ def ai_data_recovery(raw_ocr_text: str, track: str = "high_court", case_type: st
         "    Convert whatever date format appears in the text (DD/MM/YYYY, 'DD Month YYYY', etc.)\n"
         "    into DD-MM-YYYY. If a date is only partially legible or ambiguous, return null rather\n"
         "    than guessing the missing part.\n"
+        "11. Never return a sentence, explanation, or phrase like 'not stated' as a field's value — the ONLY valid non-answer is JSON null. Any string value you return will be treated as real extracted data and shown directly to the user.\n"
     )
  
     smart_text = extract_smart_context_for_llm(raw_ocr_text, track=track)
@@ -700,6 +701,40 @@ def ai_data_recovery(raw_ocr_text: str, track: str = "high_court", case_type: st
             else:
                 val = field_obj
                 conf = 1.0 if val is not None else 0.0
+            
+            if isinstance(val, str):
+                val_stripped = val.strip()
+                val_lower = val_stripped.lower()
+                blocklist = [
+                    "not explicitly stated",
+                    "not stated",
+                    "not mentioned",
+                    "not specified",
+                    "not available",
+                    "n/a",
+                    "unknown",
+                    "unclear",
+                    "not found in text",
+                ]
+                is_blocked = False
+                matched_phrase = None
+                for phrase in blocklist:
+                    if phrase == "n/a":
+                        import re
+                        if val_lower == "n/a" or re.search(r'\bn/a\b', val_lower):
+                            is_blocked = True
+                            matched_phrase = phrase
+                            break
+                    elif phrase in val_lower:
+                        is_blocked = True
+                        matched_phrase = phrase
+                        break
+                
+                if is_blocked:
+                    logger.info(f"[AI-RECOVERY-SANITIZER] Field '{key}' had non-answer value '{val}' matching blocklist phrase '{matched_phrase}'. Converting to None.")
+                    val = None
+                    conf = 0.0
+
             data[key] = val
             confidence_scores[key] = {"confidence": conf}
  
