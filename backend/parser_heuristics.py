@@ -516,6 +516,67 @@ def extract_section_block(merged_lines, start_keywords, stop_keywords):
     return "\n".join(block_lines) if block_lines else ""
 
 
+def clean_person_name(raw: str) -> str:
+    """
+    Cleans a person name by:
+    - Removing relationship fragments (S/o, W/o, D/o, C/o, son of, wife of, daughter of) followed by anything.
+    - Stripping leading/trailing honorifics (Shri, Shrimati, Smt, Km, Kumari, Late, Late Shri, Mr, Mrs)
+      with optional trailing commas/dots/spaces.
+    - Stripping any residual leading/trailing punctuation and double spaces.
+    """
+    if not raw or not isinstance(raw, str):
+        return ""
+        
+    name_str = raw.strip()
+    
+    # 1. Strip relationship fragments (S/o, W/o, D/o, C/o, son/daughter/wife of, husband of, care of) followed by anything.
+    rel_pattern = r'[\s,\-\(\/]+(?:s/o|d/o|w/o|c/o|son of|daughter of|wife of|husband of|care of)\b.*$'
+    name_str = re.sub(rel_pattern, '', name_str, flags=re.IGNORECASE)
+    
+    # Also handle cases where there is a direct S/o or W/o without preceding separators
+    name_str = re.sub(r'\b(?:s/o|d/o|w/o|c/o|son of|daughter of|wife of|husband of|care of)\b.*$', '', name_str, flags=re.IGNORECASE)
+
+    # 2. Loop to strip leading/trailing honorifics cleanly (e.g. "Late Shri," -> we strip both)
+    # We do a while loop since they can be nested or sequential
+    changed = True
+    honorifics = [
+        r'\blate\s+shri\b', r'\blate\b', r'\bshri\b', r'\bshrimati\b', r'\bsmt\b',
+        r'\bkm\b', r'\bkumari\b', r'\bmr\b', r'\bmrs\b', r'\bsh\.?\b'
+    ]
+    
+    while changed:
+        before = name_str
+        
+        # Strip leading punctuation/spaces
+        name_str = re.sub(r'^[\"\’\‘\“\”\s\.\,\-\/\|]+', '', name_str)
+        # Strip trailing punctuation/spaces
+        name_str = re.sub(r'[\"\’\‘\“\”\s\.\,\-\/\|]+$', '', name_str)
+        
+        # Strip leading honorifics
+        for hon in honorifics:
+            # Match word starting at beginning
+            new_str = re.sub(r'^' + hon + r'\b\.?\s*,?\s*', '', name_str, flags=re.IGNORECASE)
+            if new_str != name_str:
+                name_str = new_str
+                break
+                
+        # Strip trailing honorifics
+        for hon in honorifics:
+            new_str = re.sub(hon + r'\b\.?\s*,?\s*$', '', name_str, flags=re.IGNORECASE)
+            if new_str != name_str:
+                name_str = new_str
+                break
+                
+        if name_str == before:
+            changed = False
+
+    # 3. Final punctuation strip and whitespace normalization
+    name_str = re.sub(r'^[\"\’\‘\“\”\s\.\,\-\/\|]+|[\"\’\‘\“\”\s\.\,\-\/\|]+$', '', name_str)
+    name_str = re.sub(r'\s+', ' ', name_str).strip()
+    
+    return name_str
+
+
 def clean_legal_name(name_str):
     """
     Step 3 — Name Cleaning:

@@ -118,5 +118,38 @@ class TestLLMClient(unittest.TestCase):
         self.assertEqual(scores.get("fir_number", {}).get("confidence"), 0.0)
         self.assertEqual(scores.get("case_number", {}).get("confidence"), 0.0)
 
+    def test_clean_person_name_utility(self):
+        from backend.parser_heuristics import clean_person_name
+        # Test honorific stripping
+        self.assertEqual(clean_person_name("Shri, Jaychand Chugwani"), "Jaychand Chugwani")
+        self.assertEqual(clean_person_name("Late Shri Jaychand"), "Jaychand")
+        self.assertEqual(clean_person_name("Smt. Jane Doe"), "Jane Doe")
+        self.assertEqual(clean_person_name("Km. Kumari Sneha"), "Sneha")
+        self.assertEqual(clean_person_name("Late Robert"), "Robert")
+        
+        # Test relationship fragment stripping
+        self.assertEqual(clean_person_name("Kamal Kumar S/o Shri, Jaychand C..."), "Kamal Kumar")
+        self.assertEqual(clean_person_name("Jane Doe W/o John Doe"), "Jane Doe")
+        self.assertEqual(clean_person_name("Baby D/o Mary"), "Baby")
+        self.assertEqual(clean_person_name("John C/o Uncle"), "John")
+        self.assertEqual(clean_person_name("Kamal Kumar s/o Jaychand"), "Kamal Kumar")
+        
+        # Test strip of trailing/leading commas/dots/spaces
+        self.assertEqual(clean_person_name(" ,. Shri, Jaychand. ,"), "Jaychand")
+
+    @patch('backend.llm_client.generate_response')
+    @patch('backend.llm_client.classify_case_type_by_ocr_text')
+    def test_ai_data_recovery_name_cleaning(self, mock_classify, mock_generate):
+        mock_classify.return_value = "injury"
+        mock_generate.return_value = """{
+            "case_type": {"value": "injury", "confidence": 0.95},
+            "claimant_name": {"value": "Kamal Kumar S/o Shri, Jaychand C...", "confidence": 0.98},
+            "father_name": {"value": "Shri, Jaychand Chugwani", "confidence": 0.9}
+        }"""
+
+        res = ai_data_recovery("some random ocr text")
+        self.assertEqual(res["claimant_name"], "Kamal Kumar")
+        self.assertEqual(res["father_name"], "Jaychand Chugwani")
+
 if __name__ == "__main__":
     unittest.main()

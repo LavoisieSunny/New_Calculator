@@ -703,6 +703,16 @@ def ai_data_recovery(raw_ocr_text: str, track: str = "high_court", case_type: st
                 conf = 1.0 if val is not None else 0.0
             
             if isinstance(val, str):
+                if key in ("claimant_name", "deceased_name", "father_name", "spouse_name"):
+                    from backend.parser_heuristics import clean_person_name
+                    cleaned_val = clean_person_name(val)
+                    if cleaned_val != val:
+                        logger.info(f"[AI-RECOVERY-CLEANER] Cleaned name field '{key}': '{val}' -> '{cleaned_val}'")
+                        val = cleaned_val if cleaned_val else None
+                        if val is None:
+                            conf = 0.0
+
+            if isinstance(val, str):
                 val_stripped = val.strip()
                 val_lower = val_stripped.lower()
                 blocklist = [
