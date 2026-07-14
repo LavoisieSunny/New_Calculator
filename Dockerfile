@@ -28,7 +28,7 @@ RUN pip install --no-cache-dir --upgrade pip && \
 COPY . .
 
 # Expose the application port
-EXPOSE 7203
+EXPOSE 3109
 
 # Run the application
 CMD ["python", "run.py"]

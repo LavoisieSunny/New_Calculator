@@ -58,6 +58,11 @@ HEADING_KEYWORDS = {
         "अपील के आधार", "आधार", "चुनौती के आधार", "आपत्ति के आधार",
         "grounds", "grounds of appeal", "grounds of objection", "grounds of challenge", "(viii) grounds of appeal", "grounds of appeal/objection",
         "groundsofappeal", "groundsofobjection", "groundsofchallenge"
+    ],
+    "facts_section": [
+        "other relevant facts", "(vii) other relevant facts", "relevant facts",
+        "अन्य सुसंगत तथ्य", "तथ्य", "प्रकरण के तथ्य",
+        "otherrelevantfacts", "relevantfacts"
     ]
 }
 
@@ -1094,6 +1099,9 @@ def classify_page_fallback(page_text, section_name):
     elif section_name == "grounds_section" or section_name == "memo_of_appeal_section":
         return any(w in text_lower for w in ["grounds of appeal", "grounds", "erred in", "failed to appreciate"])
         
+    elif section_name == "facts_section":
+        return any(w in text_lower for w in ["other relevant facts", "relevant facts", "सुसंगत तथ्य", "तथ्य", "case of", "facts of the case"])
+        
     return False
 
 
@@ -1577,13 +1585,13 @@ def classify_enhancement_or_reduction(sections):
     """
     memo_text = sections.get("memo_of_appeal_section", "")
     
-    grounds_text = sections.get("grounds_section", "") or ""
+    grounds_text = sections.get("grounds_section", "") or sections.get("facts_section", "") or ""
     if not grounds_text.strip():
         grounds_text = memo_text or ""
         
     relief_text = sections.get("relief_section", "") or ""
     if not relief_text.strip():
-        relief_text = memo_text or ""
+        relief_text = sections.get("facts_section", "") or memo_text or ""
 
     if not grounds_text.strip():
         grounds_text = sections.get("raw_ocr", "")
@@ -1984,7 +1992,11 @@ def score_page_importance(page_text, page_num):
     text_lower = page_text.lower()
     score = 0.5
     
-    heading_kws = ["index", "chronological", "appeal", "award", "vakalatnama", "claimant", "accident", "compensation", "relief", "grounds", "prayer"]
+    heading_kws = [
+        "index", "chronological", "appeal", "award", "vakalatnama", "claimant", "accident",
+        "compensation", "relief", "grounds", "prayer", "other relevant facts", "relevant facts",
+        "(vii)", "(viii)", "(ix)", "(x)"
+    ]
     if any(kw in text_lower for kw in heading_kws):
         score += 0.15
         
@@ -2723,6 +2735,7 @@ def parse_extracted_text(text_lines, case_type=None):
     petition_block = sections.get("claimant_section", "") or sections.get("chronological_events_section", "") or sections.get("accident_section", "")
     prayer_block = sections.get("relief_section", "")
     award_block = sections.get("compensation_section", "") or sections.get("award_copy_section", "")
+    facts_block = sections.get("facts_section", "")
     
     total_lines = len(merged_lines_english)
     if not petition_block:
@@ -2737,6 +2750,17 @@ def parse_extracted_text(text_lines, case_type=None):
     if not award_block:
         start_idx = int(total_lines * 0.6) if total_lines >= 50 else 0
         award_block = "\n".join(merged_lines_english[start_idx:])
+
+    if not facts_block:
+        start_idx = int(total_lines * 0.1)
+        end_idx = int(total_lines * 0.5)
+        facts_block = "\n".join(merged_lines_english[start_idx:end_idx])
+
+    # Store blocks back to sections dictionary for contextual extraction and compatibility
+    sections["petition_block"] = petition_block
+    sections["prayer_block"] = prayer_block
+    sections["award_block"] = award_block
+    sections["facts_section"] = facts_block
 
     # Helper for contextual extraction parameters
     parser_debug = {}
@@ -2866,7 +2890,7 @@ def parse_extracted_text(text_lines, case_type=None):
         method_claimant_name = "Cause Title Parser"
     else:
         claimant_name, conf_claimant_name, sec_claimant_name, page_claimant_name = contextual_extract(
-            claimant_patterns, sections, [("claimant_section", 90), ("memo_of_appeal_section", 80)], type_cast=str,
+            claimant_patterns, sections, [("claimant_section", 90), ("facts_section", 85), ("memo_of_appeal_section", 80)], type_cast=str,
             field_name="claimant_name", debug_info=parser_debug, pages=pages, sections_metadata=sections_metadata, page_importances=page_importances
         )
         method_claimant_name = "Section-Aware Contextual Regex"
@@ -2885,7 +2909,7 @@ def parse_extracted_text(text_lines, case_type=None):
         r'\b((?-i:[A-Z][a-z]+(?:\s+[A-Z][a-z]+)*))[ \t]*(?:died|expired)\b'
     ]
     deceased_name, conf_deceased_name, sec_deceased_name, page_deceased_name = contextual_extract(
-        dec_patterns, sections, [("claimant_section", 90), ("memo_of_appeal_section", 80)], type_cast=str,
+        dec_patterns, sections, [("claimant_section", 90), ("facts_section", 85), ("memo_of_appeal_section", 80)], type_cast=str,
         field_name="deceased_name", debug_info=parser_debug, pages=pages, sections_metadata=sections_metadata, page_importances=page_importances
     )
     method_deceased_name = "Section-Aware Contextual Regex"
@@ -2941,7 +2965,7 @@ def parse_extracted_text(text_lines, case_type=None):
         r'\bcare\s+of\b\s*(?:shri|smt|late)?\s*(.*)',
     ]
     father_name, conf_father_name, sec_father_name, page_father_name = contextual_extract(
-        father_patterns, sections, [("claimant_section", 90), ("memo_of_appeal_section", 80)], type_cast=str,
+        father_patterns, sections, [("claimant_section", 90), ("facts_section", 85), ("memo_of_appeal_section", 80)], type_cast=str,
         field_name="father_name", debug_info=parser_debug, pages=pages, sections_metadata=sections_metadata, page_importances=page_importances
     )
     method_father_name = "Section-Aware Contextual Regex"
@@ -3126,14 +3150,14 @@ def parse_extracted_text(text_lines, case_type=None):
                 r'\bage\s+at\s+the?\s*time\s+of\s+(?:the\s+)?accident\s*[:\-]?\s*(\d{1,2})\b',
             ]
             age, conf_age, sec_age, page_age = contextual_extract(
-                death_age_patterns, sections, [("chronological_events_section", 90), ("compensation_section", 80), ("award_copy_section", 70)], default_val="", type_cast=int,
+                death_age_patterns, sections, [("chronological_events_section", 90), ("facts_section", 85), ("compensation_section", 80), ("award_copy_section", 70)], default_val="", type_cast=int,
                 field_name="age", debug_info=parser_debug, pages=pages, sections_metadata=sections_metadata, page_importances=page_importances
             )
             if age:
                 method_age = "Section-Aware Contextual Regex"
             else:
                 age, conf_age, sec_age, page_age = contextual_extract(
-                    death_age_patterns, sections, [("grounds_section", 80), ("relief_section", 70)], default_val="", type_cast=int,
+                    death_age_patterns, sections, [("facts_section", 85), ("grounds_section", 80), ("relief_section", 70)], default_val="", type_cast=int,
                     field_name="age", debug_info=parser_debug, pages=pages, sections_metadata=sections_metadata, page_importances=page_importances
                 )
                 if age:
@@ -3197,7 +3221,7 @@ def parse_extracted_text(text_lines, case_type=None):
             r'\baged\s+(\d{1,2})\b',
         ]
         age, conf_age, sec_age, page_age = contextual_extract(
-            age_patterns, sections, [("claimant_section", 95), ("chronological_events_section", 80)], default_val="", type_cast=int,
+            age_patterns, sections, [("claimant_section", 95), ("facts_section", 85), ("chronological_events_section", 80)], default_val="", type_cast=int,
             field_name="age", debug_info=parser_debug, pages=pages, sections_metadata=sections_metadata, page_importances=page_importances
         )
         method_age = "Section-Aware Contextual Regex"
@@ -3264,7 +3288,7 @@ def parse_extracted_text(text_lines, case_type=None):
         r'\bself-employed\b\s*(.*)',
     ]
     occupation, conf_occupation, sec_occupation, page_occupation = contextual_extract(
-        occ_patterns, sections, [("claimant_section", 90), ("memo_of_appeal_section", 80)], default_val="", type_cast=str,
+        occ_patterns, sections, [("claimant_section", 90), ("facts_section", 85), ("memo_of_appeal_section", 80)], default_val="", type_cast=str,
         field_name="occupation", debug_info=parser_debug, pages=pages, sections_metadata=sections_metadata, page_importances=page_importances
     )
     method_occupation = "Section-Aware Contextual Regex"
@@ -3316,7 +3340,7 @@ def parse_extracted_text(text_lines, case_type=None):
         r'\bspot\s+of\s+accident\s*[:\-]\s*(.*)',
     ]
     place_of_accident, conf_place_of_accident, sec_place_of_accident, page_place_of_accident = contextual_extract(
-        place_regexes, sections, [("accident_section", 95), ("chronological_events_section", 90)], default_val="", type_cast=str,
+        place_regexes, sections, [("accident_section", 95), ("facts_section", 85), ("chronological_events_section", 90)], default_val="", type_cast=str,
         field_name="place_of_accident", debug_info=parser_debug, pages=pages, sections_metadata=sections_metadata, page_importances=page_importances
     )
     method_place_of_accident = "Section-Aware Contextual Regex"
@@ -3337,7 +3361,7 @@ def parse_extracted_text(text_lines, case_type=None):
         r'\bnumber\s*of\s*dependents?\s*(?:is|:)?\s*(\d{1,2})\b'
     ]
     dependents, conf_dependents, sec_dependents, page_dependents = contextual_extract(
-        dependents_patterns, sections, [("claimant_section", 95), ("memo_of_appeal_section", 80)], default_val="", type_cast=int,
+        dependents_patterns, sections, [("claimant_section", 95), ("facts_section", 85), ("memo_of_appeal_section", 80)], default_val="", type_cast=int,
         field_name="dependents", debug_info=parser_debug, pages=pages, sections_metadata=sections_metadata, page_importances=page_importances
     )
     method_dependents = "Section-Aware Contextual Regex"
@@ -3427,7 +3451,7 @@ def parse_extracted_text(text_lines, case_type=None):
             r'\b(?:rs\.?|inr)?\s*([\d,\.\s]+)\s*p\.m\.\b'
         ]
         monthly_income, conf_monthly_income, sec_monthly_income, page_monthly_income = contextual_extract(
-            income_patterns, sections, [("compensation_section", 95), ("award_copy_section", 90)], default_val="", type_cast=float,
+            income_patterns, sections, [("compensation_section", 95), ("award_copy_section", 90), ("facts_section", 85)], default_val="", type_cast=float,
             field_name="monthly_income", debug_info=parser_debug, pages=pages, sections_metadata=sections_metadata, page_importances=page_importances
         )
         method_monthly_income = "Section-Aware Contextual Regex"
@@ -3447,7 +3471,7 @@ def parse_extracted_text(text_lines, case_type=None):
             r'\b(\d{1,2})\s*multiplier\b'
         ]
         multiplier, conf_multiplier, sec_multiplier, page_multiplier = contextual_extract(
-            multiplier_patterns, sections, [("compensation_section", 95), ("award_copy_section", 90)], default_val="", type_cast=int,
+            multiplier_patterns, sections, [("compensation_section", 95), ("award_copy_section", 90), ("facts_section", 85)], default_val="", type_cast=int,
             field_name="multiplier", debug_info=parser_debug, pages=pages, sections_metadata=sections_metadata, page_importances=page_importances
         )
         method_multiplier = "Section-Aware Contextual Regex"
@@ -3466,7 +3490,7 @@ def parse_extracted_text(text_lines, case_type=None):
             r'addition\s+of\s*(\d{1,2})\s*%\s*(?:towards)?\s*future\s+prospects'
         ]
         future_prospect, conf_future_prospect, sec_future_prospect, page_future_prospect = contextual_extract(
-            prospects_patterns, sections, [("compensation_section", 95), ("award_copy_section", 90)], default_val="", type_cast=float,
+            prospects_patterns, sections, [("compensation_section", 95), ("award_copy_section", 90), ("facts_section", 85)], default_val="", type_cast=float,
             field_name="future_prospect", debug_info=parser_debug, pages=pages, sections_metadata=sections_metadata, page_importances=page_importances
         )
         method_future_prospect = "Section-Aware Contextual Regex"
@@ -4389,7 +4413,8 @@ def parse_extracted_text(text_lines, case_type=None):
         "section_confidence": {
             "petition_block": round(len(petition_block) / max(len(full_text), 1), 3),
             "prayer_block": round(len(prayer_block) / max(len(full_text), 1), 3),
-            "award_block": round(len(award_block) / max(len(full_text), 1), 3)
+            "award_block": round(len(award_block) / max(len(full_text), 1), 3),
+            "facts_block": round(len(facts_block) / max(len(full_text), 1), 3)
         },
         "is_tamil_nadu": is_tamil_nadu,
         "tn_signals": {"mcop": tn_mcop_signal, "city": tn_city_signal} if is_tamil_nadu else {"mcop": tn_mcop_signal, "city": tn_city_signal}

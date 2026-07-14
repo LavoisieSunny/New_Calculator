@@ -64,8 +64,41 @@ def detect_case_track(pdf_path: str, sample_pages: int = 3) -> dict:
     from backend.ocr import (
         call_paddle_ocr, guard_and_downscale_image, is_vision_model_available,
         call_vision_model, image_to_base64, preprocess_for_vision, classify_scanned_page,
+        extract_digital_pdf_text, extract_alternate_pdf_text, detect_page_language_from_probe
     )
 
+    # 1. Try digital text-layer extraction first (no OCR at all)
+    digital_lines = extract_digital_pdf_text(pdf_path)
+    if not digital_lines or len(" ".join(digital_lines).strip()) < 100:
+        digital_lines = extract_alternate_pdf_text(pdf_path)
+
+    if digital_lines and len(" ".join(digital_lines).strip()) >= 100:
+        combined = " ".join(digital_lines)
+        combined_lower = combined.lower()
+        deva_ratio = _devanagari_ratio(combined)
+        hc_hits = sum(1 for m in _HC_MARKERS if m in combined_lower)
+        lc_hits = sum(1 for m in _LC_MARKERS if m.lower() in combined_lower)
+
+        if hc_hits >= 1 and deva_ratio < 0.15:
+            track = "high_court"
+        elif lc_hits >= 1 or deva_ratio >= 0.30:
+            track = "lower_court"
+        else:
+            track = "high_court" if hc_hits >= lc_hits else "lower_court"
+
+        logger.info(
+            f"[TRACK DETECTED via Digital Text] track={track}, deva_ratio={deva_ratio:.2f}, "
+            f"hc_hits={hc_hits}, lc_hits={lc_hits}, text_len={len(combined)}"
+        )
+        return {
+            "track": track,
+            "hc_hits": hc_hits,
+            "lc_hits": lc_hits,
+            "devanagari_ratio": round(deva_ratio, 3),
+            "sampled_pages": len(digital_lines),
+        }
+
+    # 2. Fall back to rendered-image OCR probe if no usable text layer exists
     texts = []
     try:
         with pdfium.PdfDocument(pdf_path) as doc:
@@ -85,9 +118,14 @@ def detect_case_track(pdf_path: str, sample_pages: int = 3) -> dict:
                     del pil_img
                     continue
 
+                # Run dynamic lang probe to determine language
+                lang = detect_page_language_from_probe(pil_img, page_num=i + 1)
+
                 tmp_path = os.path.join(tempfile.gettempdir(), f"_track_probe_{uuid.uuid4().hex}.png")
                 pil_img.save(tmp_path, format="PNG")
-                lines, conf, _ = call_paddle_ocr(tmp_path, page_num=i + 1)
+                
+                # Call Paddle OCR using detected language
+                lines, conf, _ = call_paddle_ocr(tmp_path, page_num=i + 1, lang=lang)
 
                 if not lines and is_vision_model_available():
                     try:
@@ -100,7 +138,10 @@ def detect_case_track(pdf_path: str, sample_pages: int = 3) -> dict:
 
                 del pil_img
                 if os.path.exists(tmp_path):
-                    os.unlink(tmp_path)
+                    try:
+                        os.unlink(tmp_path)
+                    except Exception:
+                        pass
 
                 texts.append(" ".join(lines))
     except Exception as e:
@@ -125,6 +166,10 @@ def detect_case_track(pdf_path: str, sample_pages: int = 3) -> dict:
     else:
         track = "high_court" if hc_hits >= lc_hits else "lower_court"
 
+    logger.info(
+        f"[TRACK DETECTED via OCR Probe] track={track}, deva_ratio={deva_ratio:.2f}, "
+        f"hc_hits={hc_hits}, lc_hits={lc_hits}"
+    )
     return {
         "track": track,
         "hc_hits": hc_hits,

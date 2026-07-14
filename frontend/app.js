@@ -1609,6 +1609,7 @@ This cannot be undone.`)) return;
             } else {
                 if (data.suggestions) {
                     data.suggestions.case_type = type;
+                    applyAllOcrSuggestions(data.suggestions, null, null, null, false, false);
                     updateEnhancementCheck(data);
                 }
                 showToast(`Form updated for ${type === "injury" ? "Injury" : "Death"} Case!`, "success");
@@ -2157,6 +2158,9 @@ This cannot be undone.`)) return;
             if (suggestionsCaseType) {
                 caseTypeSelect.value = suggestionsCaseType;
                 caseTypeSelect.dispatchEvent(new Event("change"));
+            } else {
+                console.warn("[WARN] case_type is null or undefined. Prompting user for manual selection.");
+                showCaseTypeConfirmationPrompt({ suggestions: suggestions }, null, false);
             }
         }
 

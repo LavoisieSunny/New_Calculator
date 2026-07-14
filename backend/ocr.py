@@ -347,36 +347,44 @@ def _init_paddle_engine(engine_cls, **kwargs):
         raise
 
 
-_PADDLE_INSTANCE = None
+_PADDLE_INSTANCES = {"hi": None, "en": None}
 _PADDLE_AVAILABLE = None
 
 
-def get_ocr_instance():
+def get_ocr_instance(lang: str = None):
     """
-    Lazily creates and returns the singleton PaddleOCR engine.
+    Lazily creates and returns the singleton PaddleOCR engine for the specified language.
 
-    Loaded ONCE per process and reused for every page/request. Re-instantiating
+    Loaded ONCE per process/language and reused for every page/request. Re-instantiating
     PaddleOCR per call is one of the easiest ways to slowly choke a server
     (repeated model loads = repeated big memory allocations); the singleton
     pattern here, combined with main.py's startup warm-up, avoids that.
     """
-    global _PADDLE_INSTANCE
-    if _PADDLE_INSTANCE is not None:
-        return _PADDLE_INSTANCE
+    global _PADDLE_INSTANCES
+    if lang is None:
+        lang = OCR_PADDLE_LANG  # Default is "hi"
+
+    # Defensive check for dynamically added languages
+    if lang not in _PADDLE_INSTANCES:
+        _PADDLE_INSTANCES[lang] = None
+
+    if _PADDLE_INSTANCES[lang] is not None:
+        return _PADDLE_INSTANCES[lang]
+
     with _PADDLE_INIT_LOCK:
-        if _PADDLE_INSTANCE is None:
+        if _PADDLE_INSTANCES[lang] is None:
             from paddleocr import PaddleOCR
-            _tlog(f"Loading PaddleOCR singleton (PP-OCRv5, lang={OCR_PADDLE_LANG})...")
+            _tlog(f"Loading PaddleOCR singleton (PP-OCRv5, lang={lang})...")
             t0 = time.time()
-            _PADDLE_INSTANCE = _init_paddle_engine(
+            _PADDLE_INSTANCES[lang] = _init_paddle_engine(
                 PaddleOCR,
-                lang=OCR_PADDLE_LANG,
+                lang=lang,
                 use_doc_orientation_classify=False,
                 use_doc_unwarping=False,
                 use_textline_orientation=False,
             )
-            _tlog(f"PaddleOCR singleton ready in {time.time() - t0:.1f}s.")
-    return _PADDLE_INSTANCE
+            _tlog(f"PaddleOCR singleton ({lang}) ready in {time.time() - t0:.1f}s.")
+    return _PADDLE_INSTANCES[lang]
 
 
 def is_paddle_available() -> bool:
@@ -636,19 +644,23 @@ _PADDLE_CONSECUTIVE_FAILURES = 0
 _PADDLE_FAILURE_RESET_THRESHOLD = 8
 
 
-def _reset_paddle_singleton(reason: str = ""):
-    """Tears down the PaddleOCR singleton so the next call re-initializes it
+def _reset_paddle_singleton(reason: str = "", lang: str = None):
+    """Tears down the PaddleOCR singleton(s) so the next call re-initializes it
     from scratch. Used when repeated failures suggest the engine has crashed
     or entered a bad state, rather than that pages are individually unreadable."""
-    global _PADDLE_INSTANCE, _PADDLE_AVAILABLE, _PADDLE_CONSECUTIVE_FAILURES
+    global _PADDLE_INSTANCES, _PADDLE_AVAILABLE, _PADDLE_CONSECUTIVE_FAILURES
     logger.error(f"PaddleOCR singleton reset triggered: {reason}")
     with _PADDLE_INIT_LOCK:
-        _PADDLE_INSTANCE = None
+        if lang is not None:
+            _PADDLE_INSTANCES[lang] = None
+        else:
+            for k in list(_PADDLE_INSTANCES.keys()):
+                _PADDLE_INSTANCES[k] = None
         _PADDLE_AVAILABLE = None
     _PADDLE_CONSECUTIVE_FAILURES = 0
 
 
-def call_paddle_ocr(image_path: str, page_num: int = 0) -> tuple:
+def call_paddle_ocr(image_path: str, page_num: int = 0, lang: str = None) -> tuple:
     """
     Runs the PaddleOCR singleton on a rendered page image.
     The actual predict() call is serialized through _PADDLE_INFER_LOCK.
@@ -665,22 +677,26 @@ def call_paddle_ocr(image_path: str, page_num: int = 0) -> tuple:
     """
     global _PADDLE_CONSECUTIVE_FAILURES
 
+    if lang is None:
+        lang = OCR_PADDLE_LANG
+
     try:
-        engine = get_ocr_instance()
+        engine = get_ocr_instance(lang=lang)
     except Exception as e:
-        logger.error(f"Page {page_num}: PaddleOCR init failed: {e}")
+        logger.error(f"Page {page_num}: PaddleOCR init failed for lang={lang}: {e}")
         return [], 0.0, False
 
     with _PADDLE_INFER_LOCK:
         try:
             results = engine.predict(image_path)
         except Exception as e:
-            logger.error(f"Page {page_num}: PaddleOCR predict failed: {e}")
+            logger.error(f"Page {page_num}: PaddleOCR predict failed for lang={lang}: {e}")
             _PADDLE_CONSECUTIVE_FAILURES += 1
             if _PADDLE_CONSECUTIVE_FAILURES >= _PADDLE_FAILURE_RESET_THRESHOLD:
                 _reset_paddle_singleton(
                     f"{_PADDLE_CONSECUTIVE_FAILURES} consecutive predict() exceptions "
-                    f"(last at page {page_num})"
+                    f"(last at page {page_num}, lang={lang})",
+                    lang=lang
                 )
             return [], 0.0, False
 
@@ -689,7 +705,8 @@ def call_paddle_ocr(image_path: str, page_num: int = 0) -> tuple:
         if _PADDLE_CONSECUTIVE_FAILURES >= _PADDLE_FAILURE_RESET_THRESHOLD:
             _reset_paddle_singleton(
                 f"{_PADDLE_CONSECUTIVE_FAILURES} consecutive empty predict() results "
-                f"(last at page {page_num}) — engine likely crashed/corrupted"
+                f"(last at page {page_num}, lang={lang}) — engine likely crashed/corrupted",
+                lang=lang
             )
         return [], 0.0, False
 
@@ -706,7 +723,8 @@ def call_paddle_ocr(image_path: str, page_num: int = 0) -> tuple:
         if _PADDLE_CONSECUTIVE_FAILURES >= _PADDLE_FAILURE_RESET_THRESHOLD:
             _reset_paddle_singleton(
                 f"{_PADDLE_CONSECUTIVE_FAILURES} consecutive zero-text results "
-                f"(last at page {page_num}) — engine likely crashed/corrupted"
+                f"(last at page {page_num}, lang={lang}) — engine likely crashed/corrupted",
+                lang=lang
             )
         return [], 0.0, False
 
@@ -1136,6 +1154,20 @@ def ocr_page_with_vision(
     ocr_start = time.time()
     confidence = 0.0
 
+    # Determine language for this page
+    page_lang = "hi" if track == "lower_court" else "en"
+    if track == "high_court" and paddle_available:
+        if fitz_text and len(fitz_text.strip()) > 10:
+            dev_ratio = _devanagari_ratio(fitz_text)
+            if dev_ratio >= 0.15:
+                page_lang = "hi"
+                _tlog(f"Page {page_num}: Detected Hindi language via sparse digital text (deva_ratio={dev_ratio:.2f})")
+            else:
+                page_lang = "en"
+        else:
+            page_lang = detect_page_language_from_probe(pil_img, page_num=page_num)
+            _tlog(f"Page {page_num}: Dynamic language probe result: {page_lang}")
+
     force_vision = (
         track == "lower_court" and
         page_idx in (0, 1) and
@@ -1158,8 +1190,8 @@ def ocr_page_with_vision(
     elif classification == "low-content":
         paddle_lines, paddle_conf, paddle_q = [], 0.0, 0.0
         if paddle_available:
-            logger.info(f"Page {page_num}: low-content -> PaddleOCR")
-            paddle_lines, paddle_conf, _ = call_paddle_ocr(rendered_img_path, page_num=page_num)
+            logger.info(f"Page {page_num}: low-content -> PaddleOCR ({page_lang})")
+            paddle_lines, paddle_conf, _ = call_paddle_ocr(rendered_img_path, page_num=page_num, lang=page_lang)
             paddle_q = score_ocr_page_quality(paddle_lines)
 
         if _paddle_result_is_trustworthy(paddle_lines, paddle_conf, paddle_q):
@@ -1191,8 +1223,8 @@ def ocr_page_with_vision(
     else:
         paddle_is_tabular = False
         if paddle_available:
-            logger.info(f"Page {page_num}: {classification} -> PaddleOCR")
-            paddle_lines, paddle_conf, paddle_is_tabular = call_paddle_ocr(rendered_img_path, page_num=page_num)
+            logger.info(f"Page {page_num}: {classification} -> PaddleOCR ({page_lang})")
+            paddle_lines, paddle_conf, paddle_is_tabular = call_paddle_ocr(rendered_img_path, page_num=page_num, lang=page_lang)
             paddle_q = score_ocr_page_quality(paddle_lines)
             paddle_good = _paddle_result_is_trustworthy(paddle_lines, paddle_conf, paddle_q)
             if paddle_good:
@@ -1283,7 +1315,7 @@ def ocr_page_with_vision(
             retry_proc = preprocess_for_vision(Image.open(retry_img_path).convert("RGB"))
             retry_lines_best = []
             if paddle_available:
-                retry_lines_best, retry_paddle_conf, _ = call_paddle_ocr(retry_img_path, page_num=page_num)
+                retry_lines_best, retry_paddle_conf, _ = call_paddle_ocr(retry_img_path, page_num=page_num, lang=page_lang)
                 if retry_lines_best and len(retry_lines_best) > len(lines):
                     lines = retry_lines_best
                     engine_used = "PaddleOCR-retry"
@@ -1357,6 +1389,65 @@ def _looks_like_devanagari_mojibake(lines: list) -> bool:
     if total == 0:
         return False
     return suspect >= 2 or (suspect / total) > 0.40
+
+
+_DEVANAGARI_RE = re.compile(r"[\u0900-\u097F]")
+
+def _devanagari_ratio(text: str) -> float:
+    """Fraction of alphabetic characters that are Devanagari script."""
+    alpha = [c for c in text if c.isalpha()]
+    if not alpha:
+        return 0.0
+    deva = sum(1 for c in alpha if _DEVANAGARI_RE.match(c))
+    return deva / len(alpha)
+
+
+def detect_page_language_from_probe(pil_img, page_num: int = 1) -> str:
+    """
+    Crops a small slice of the page image, runs both English and Hindi PaddleOCR,
+    and returns "hi" or "en" based on confidence and Devanagari content.
+    """
+    width, height = pil_img.size
+    # Crop the middle 20% height of the page to avoid headers/footers
+    crop_box = (0, int(height * 0.4), width, int(height * 0.6))
+    probe_img = pil_img.crop(crop_box)
+    
+    tmp_path = os.path.join(tempfile.gettempdir(), f"_lang_probe_{uuid.uuid4().hex}.png")
+    try:
+        probe_img.save(tmp_path, format="PNG")
+        
+        # Run English probe
+        lines_en, conf_en, _ = call_paddle_ocr(tmp_path, page_num=page_num, lang="en")
+        
+        # Run Hindi probe
+        lines_hi, conf_hi, _ = call_paddle_ocr(tmp_path, page_num=page_num, lang="hi")
+        
+        text_en = " ".join(lines_en)
+        text_hi = " ".join(lines_hi)
+        
+        ratio_hi = _devanagari_ratio(text_hi)
+        
+        # If Hindi model detected Devanagari characters, and confidence is decent, it's Hindi
+        if ratio_hi >= 0.15 and conf_hi > 0.4:
+            chosen = "hi"
+        else:
+            chosen = "en"
+            
+        _tlog(
+            f"Page {page_num} lang probe: EN_conf={conf_en:.2f} (lines={len(lines_en)}), "
+            f"HI_conf={conf_hi:.2f} (lines={len(lines_hi)}, deva_ratio={ratio_hi:.2f}). "
+            f"Chosen: {chosen}"
+        )
+        return chosen
+    except Exception as e:
+        logger.warning(f"Language probe failed on page {page_num}: {e}")
+        return "hi"  # Default to "hi" (the project default)
+    finally:
+        if os.path.exists(tmp_path):
+            try:
+                os.unlink(tmp_path)
+            except Exception:
+                pass
 
 
 # ======================================================
@@ -1983,6 +2074,12 @@ def perform_ocr_on_image(file_path: str) -> tuple:
             del processed
             gc.collect()
         else:
+            # Determine language for this single image
+            image_lang = "hi"
+            if paddle_available:
+                image_lang = detect_page_language_from_probe(processed, page_num=1)
+                _tlog(f"Single image lang probe result: {image_lang}")
+
             # PaddleOCR needs a file path, so persist the preprocessed image once
             # and reuse it for both Paddle and (if needed) the retry/Tesseract path.
             with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp:
@@ -1991,7 +2088,7 @@ def perform_ocr_on_image(file_path: str) -> tuple:
 
             if classification == "low-content":
                 if paddle_available:
-                    lines, confidence, _ = call_paddle_ocr(temp_img_path, page_num=1)
+                    lines, confidence, _ = call_paddle_ocr(temp_img_path, page_num=1, lang=image_lang)
                     if lines:
                         engine_used = "PaddleOCR"
                 if not lines and vision_available and OCR_ENABLE_VISION_ESCALATION:
@@ -2008,7 +2105,7 @@ def perform_ocr_on_image(file_path: str) -> tuple:
             else:
                 img_is_tabular = False
                 if paddle_available:
-                    paddle_lines, paddle_conf, img_is_tabular = call_paddle_ocr(temp_img_path, page_num=1)
+                    paddle_lines, paddle_conf, img_is_tabular = call_paddle_ocr(temp_img_path, page_num=1, lang=image_lang)
                     paddle_q = score_ocr_page_quality(paddle_lines)
                     paddle_good = bool(paddle_lines) and paddle_conf >= OCR_PADDLE_CONF_THRESHOLD and paddle_q >= OCR_PADDLE_QUALITY_THRESHOLD
                     if paddle_good:

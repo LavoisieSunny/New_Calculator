@@ -326,9 +326,34 @@ def generate_response_stream(prompt: str, system_instruction: str = None):
         yield f"Error communicating with LLM stream: {str(e)}"
  
 def classify_case_type_by_ocr_text(ocr_text: str) -> str:
+    import re
     text_lower = ocr_text.lower()
+    
+    # 1. Subject Heading Code / Scrutiny Report Category Check
+    # Match strings like "15202/03-DEATH CLAIMS" or "15202/07-INJURY CLAIMS"
+    subject_match = re.search(r'\b15202/(\d{2})-([a-zA-Z\s\(\)]+)', ocr_text)
+    if subject_match:
+        category_desc = subject_match.group(2).lower()
+        if "death" in category_desc:
+            logger.info(f"Classified case type via Scrutiny Category: death (matched: '{subject_match.group(0)}')")
+            return "death"
+        elif "injury" in category_desc:
+            logger.info(f"Classified case type via Scrutiny Category: injury (matched: '{subject_match.group(0)}')")
+            return "injury"
+            
+    # Also search for lines containing both category codes (15200/15202) and "death"/"injury"
+    for line in ocr_text.splitlines():
+        line_lower = line.lower()
+        if "1520" in line_lower or "15202" in line_lower:
+            if "death" in line_lower:
+                logger.info(f"Classified case type via subject heading line match (death): '{line}'")
+                return "death"
+            elif "injury" in line_lower:
+                logger.info(f"Classified case type via subject heading line match (injury): '{line}'")
+                return "injury"
+
     injury_keywords = [
-        "injury", "disability", "permanent disability", "partial disability", "bodily injury", "enhancement", "claimant injury",
+        "injury", "disability", "permanent disability", "partial disability", "bodily injury", "claimant injury",
         "स्थायी अपंगता", "स्थायी विकलांगता", "स्थायी निःशक्तता", "अंगहानि", "स्थायी निर्योग्यता", "चोट", "उपहति", "विकलांगता", "प्रतिशत निःशक्तता"
     ]
     death_keywords = [
