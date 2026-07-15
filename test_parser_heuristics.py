@@ -673,13 +673,13 @@ class TestParserHeuristics(unittest.TestCase):
         self.assertEqual(fields.get("funeral_expenses"), 15000.0)
         self.assertEqual(fields.get("loss_estate"), 15000.0)
         
-        self.assertEqual(conf_scores.get("consortium", {}).get("confidence"), 0.30)
-        self.assertEqual(conf_scores.get("funeral_expenses", {}).get("confidence"), 0.30)
-        self.assertEqual(conf_scores.get("loss_estate", {}).get("confidence"), 0.30)
+        self.assertEqual(conf_scores.get("consortium", {}).get("confidence"), 1.0)
+        self.assertEqual(conf_scores.get("funeral_expenses", {}).get("confidence"), 1.0)
+        self.assertEqual(conf_scores.get("loss_estate", {}).get("confidence"), 1.0)
         
-        self.assertIn("consortium", low_conf)
-        self.assertIn("funeral_expenses", low_conf)
-        self.assertIn("loss_estate", low_conf)
+        self.assertNotIn("consortium", low_conf)
+        self.assertNotIn("funeral_expenses", low_conf)
+        self.assertNotIn("loss_estate", low_conf)
 
 if __name__ == "__main__":
     unittest.main()

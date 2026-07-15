@@ -1829,31 +1829,31 @@ def format_suggestions_for_calculator(suggestions):
             suggestions["confidence_scores"] = {}
         
         # Consortium
-        if raw_cons not in ["", None, 0.0, 0]:
+        if raw_cons not in ["", None, 0.0, 0] and raw_cons != 40000.0:
             cons_val = raw_cons
         else:
             cons_val = 40000.0
-            suggestions["confidence_scores"]["consortium"] = {"confidence": 0.30, "reason": "Standard Pranay Sethi baseline default (not found in text)"}
-            if "consortium" not in low_conf_fields:
-                low_conf_fields.append("consortium")
+            suggestions["confidence_scores"]["consortium"] = {"confidence": 1.0, "reason": "Standard Pranay Sethi baseline default (known constant)"}
+            if "consortium" in low_conf_fields:
+                low_conf_fields.remove("consortium")
                 
         # Funeral expenses
-        if raw_funeral not in ["", None, 0.0, 0]:
+        if raw_funeral not in ["", None, 0.0, 0] and raw_funeral != 15000.0:
             funeral_val = raw_funeral
         else:
             funeral_val = 15000.0
-            suggestions["confidence_scores"]["funeral_expenses"] = {"confidence": 0.30, "reason": "Standard Pranay Sethi baseline default (not found in text)"}
-            if "funeral_expenses" not in low_conf_fields:
-                low_conf_fields.append("funeral_expenses")
+            suggestions["confidence_scores"]["funeral_expenses"] = {"confidence": 1.0, "reason": "Standard Pranay Sethi baseline default (known constant)"}
+            if "funeral_expenses" in low_conf_fields:
+                low_conf_fields.remove("funeral_expenses")
                 
         # Loss of estate
-        if raw_estate not in ["", None, 0.0, 0]:
+        if raw_estate not in ["", None, 0.0, 0] and raw_estate != 15000.0:
             estate_val = raw_estate
         else:
             estate_val = 15000.0
-            suggestions["confidence_scores"]["loss_estate"] = {"confidence": 0.30, "reason": "Standard Pranay Sethi baseline default (not found in text)"}
-            if "loss_estate" not in low_conf_fields:
-                low_conf_fields.append("loss_estate")
+            suggestions["confidence_scores"]["loss_estate"] = {"confidence": 1.0, "reason": "Standard Pranay Sethi baseline default (known constant)"}
+            if "loss_estate" in low_conf_fields:
+                low_conf_fields.remove("loss_estate")
 
     fields = {}
     if case_type == "death":

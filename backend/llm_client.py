@@ -891,6 +891,131 @@ def ai_data_recovery(raw_ocr_text: str, track: str = "high_court", case_type: st
         except Exception as age_err:
             logger.error(f"Failed to run English age regex override: {str(age_err)}")
 
+        # ── Claimant Relationship & Marital Status post-processing guard ──
+        try:
+            if case_type_val == "death":
+                cname = data.get("claimant_name")
+                dname = data.get("deceased_name")
+                rel_type = data.get("claimant_relationship_type") or data.get("claimant_relationship_to_deceased") or ""
+                
+                # Check for "W/o" or "Wife of" relation to claimant name in the text
+                if cname and dname:
+                    clean_cname = cname.lower().strip()
+                    escaped_cname = re.escape(clean_cname)
+                    wo_patterns = [
+                        (rf'\bw/o\b[\s,:\(\)-]*(?:smt\.?|mrs\.?)?\s*{escaped_cname}', "prefix"),
+                        (rf'\bwife\s+of\s+[\s,:\(\)-]*(?:smt\.?|mrs\.?)?\s*{escaped_cname}', "prefix"),
+                        (rf'{escaped_cname}[\s,:\(\)-]*(?:is\s+)?\bw/o\b', "suffix"),
+                        (rf'{escaped_cname}[\s,:\(\)-]*(?:is\s+)?\bwife\s+of\b', "suffix")
+                    ]
+                    
+                    is_husband_deceased = False
+                    found_wo = False
+                    raw_ocr_lower = raw_ocr_text.lower()
+                    
+                    for pat, pat_type in wo_patterns:
+                        for line in raw_ocr_lower.split('\n'):
+                            m = re.search(pat, line)
+                            if m:
+                                found_wo = True
+                                husband_candidate = ""
+                                if pat_type == "suffix":
+                                    suffix_match = re.search(rf'\b(?:w/o|wife\s+of)\b[\s\.]*(?:shri|late)?\s*(.*?)(?:\b(?:age|aged|resident|r/o|address|occupation)\b|$)', line)
+                                    if suffix_match:
+                                        husband_candidate = suffix_match.group(1).strip()
+                                else:
+                                    prefix_match = re.search(rf'(.*?)\b(?:w/o|wife\s+of)\b', line)
+                                    if prefix_match:
+                                        husband_candidate = prefix_match.group(1).strip()
+                                
+                                husband_candidate = re.sub(r'[\s,\.\-\(\)\/\|]+$', '', husband_candidate).strip()
+                                husband_candidate = re.sub(r'^[\s,\.\-\(\)\/\|]+', '', husband_candidate).strip()
+                                
+                                if husband_candidate and dname:
+                                    def clean_name(n):
+                                        n = n.lower()
+                                        n = re.sub(r'\b(?:late|shri|smt|mr|mrs|sh\.?|deceased)\b', '', n)
+                                        n = re.sub(r'[^a-z0-9\s]', '', n)
+                                        return [t.strip() for t in n.split() if t.strip()]
+                                    t1 = clean_name(husband_candidate)
+                                    t2 = clean_name(dname)
+                                    if t1 and t2:
+                                        overlap = set(t1).intersection(set(t2))
+                                        if len(overlap) >= min(len(t1), len(t2), 2):
+                                            is_husband_deceased = True
+                                            break
+                        if is_husband_deceased:
+                            break
+                    
+                    # If the claimant has a W/o descriptor in the document, but the husband is NOT the deceased:
+                    # Then the claimant is NOT the wife of the deceased!
+                    if found_wo and not is_husband_deceased:
+                        logger.info(f"[AI-RECOVERY-GUARD] Claimant has W/o relation in text but husband is NOT the deceased. Overriding relation and marital status.")
+                        
+                        # Infer the real relationship (e.g. Mother)
+                        inferred_rel = None
+                        search_text = raw_ocr_lower
+                        
+                        # Look for "mother of deceased" or similar near claimant first name
+                        claimant_fn = ""
+                        tokens = [t for t in cname.split() if len(t) > 2]
+                        if tokens:
+                            claimant_fn = tokens[0].lower()
+                            
+                        if claimant_fn:
+                            pos = 0
+                            while True:
+                                idx = search_text.find(claimant_fn, pos)
+                                if idx == -1:
+                                    break
+                                w_start = max(0, idx - 100)
+                                w_end = min(len(search_text), idx + len(claimant_fn) + 100)
+                                window = search_text[w_start:w_end]
+                                
+                                if re.search(r'\b(?:mother\s+of\s+deceased|mother\s+of\s+the\s+deceased|mother)\b', window):
+                                    inferred_rel = "Mother"
+                                    break
+                                elif re.search(r'\b(?:father\s+of\s+deceased|father\s+of\s+the\s+deceased|father)\b', window):
+                                    inferred_rel = "Father"
+                                    break
+                                pos = idx + len(claimant_fn)
+                                
+                        if not inferred_rel:
+                            if re.search(r'\b(?:claimant\s+is\s+the\s+mother|petitioner\s+is\s+the\s+mother|mother\s+of\s+the\s+deceased|mother\s+of\s+deceased)\b', search_text):
+                                inferred_rel = "Mother"
+                            elif re.search(r'\b(?:claimant\s+is\s+the\s+father|petitioner\s+is\s+the\s+father|father\s+of\s+the\s+deceased|father\s+of\s+deceased)\b', search_text):
+                                inferred_rel = "Father"
+                        
+                        if inferred_rel:
+                            data["claimant_relationship_type"] = inferred_rel
+                            data["claimant_relationship_to_deceased"] = inferred_rel
+                            confidence_scores["claimant_relationship_type"] = {"confidence": 0.85, "reason": "Inferred from text context after mismatch guard"}
+                            confidence_scores["claimant_relationship_to_deceased"] = {"confidence": 0.85, "reason": "Inferred from text context after mismatch guard"}
+                        else:
+                            data["claimant_relationship_type"] = "Mother"
+                            data["claimant_relationship_to_deceased"] = "Mother"
+                            confidence_scores["claimant_relationship_type"] = {"confidence": 0.50, "reason": "Defaulted to Mother after mismatch guard"}
+                            confidence_scores["claimant_relationship_to_deceased"] = {"confidence": 0.50, "reason": "Defaulted to Mother after mismatch guard"}
+                        
+                        # Also override marital status if the deceased is young and no spouse is listed
+                        age_val = data.get("age")
+                        try:
+                            age_int = int(age_val) if age_val is not None and age_val != "" else 0
+                        except Exception:
+                            age_int = 0
+                            
+                        is_young = (0 < age_int <= 25)
+                        has_single_kws = any(kw in raw_ocr_lower for kw in ["unmarried", "bachelor", "single"])
+                        
+                        if is_young or has_single_kws:
+                            data["marital_status"] = "single"
+                            confidence_scores["marital_status"] = {"confidence": 0.90, "reason": "Inferred single (young/unmarried deceased with parental claimant)"}
+                        else:
+                            data["marital_status"] = "unmarried"
+                            confidence_scores["marital_status"] = {"confidence": 0.80, "reason": "Inferred unmarried after mismatch guard"}
+        except Exception as rel_guard_err:
+            logger.error(f"Failed to run relationship post-processing guard: {str(rel_guard_err)}")
+
         # Actively filter out opposite case type fields to enforce strict gating
         if case_type_val == "injury":
             death_fields = [
