@@ -208,5 +208,28 @@ class TestLLMClient(unittest.TestCase):
         self.assertEqual(res.get("claimant_relationship_type"), "Mother")
         self.assertEqual(res.get("marital_status"), "single")
 
+    @patch('backend.llm_client.generate_response')
+    @patch('backend.llm_client.classify_case_type_by_ocr_text')
+    def test_ai_data_recovery_relationship_unconfirmed_guard(self, mock_classify, mock_generate):
+        mock_classify.return_value = "death"
+        mock_generate.return_value = """{
+            "case_type": {"value": "death", "confidence": 0.95},
+            "claimant_name": {"value": "Parvati Singh", "confidence": 0.98},
+            "deceased_name": {"value": "Anjani Singh", "confidence": 0.99},
+            "claimant_relationship_type": {"value": "Wife of deceased", "confidence": 0.9},
+            "claimant_relationship_to_deceased": {"value": "Wife of deceased", "confidence": 0.9},
+            "marital_status": {"value": "married", "confidence": 0.9},
+            "age": {"value": 22, "confidence": 0.9}
+        }"""
+        
+        # Text has W/o but husband doesn't match and there is no mother/father keywords in text
+        ocr_text = "Parvati Singh W/o Vishnudev Singh\nDeceased was Anjani Singh aged about 22 years."
+        
+        res = ai_data_recovery(ocr_text)
+        
+        # Guard overrides relationship to empty and marital status to single
+        self.assertEqual(res.get("claimant_relationship_type"), "")
+        self.assertEqual(res.get("marital_status"), "single")
+
 if __name__ == "__main__":
     unittest.main()

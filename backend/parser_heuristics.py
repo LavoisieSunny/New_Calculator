@@ -1801,9 +1801,16 @@ def format_suggestions_for_calculator(suggestions):
 
     claimant_name = suggestions.get("claimant_name") or ""
     rel_type = suggestions.get("claimant_relationship_type") or suggestions.get("claimant_relationship_to_deceased") or ""
-    if claimant_name and rel_type:
+    
+    valid_relation_keywords = [
+        "mother", "father", "wife", "widow", "husband", "son", "daughter",
+        "brother", "sister", "parent", "sibling", "child", "spouse", "dependent"
+    ]
+    rel_lower = rel_type.lower()
+    has_valid_rel = any(kw in rel_lower for kw in valid_relation_keywords)
+    
+    if claimant_name and has_valid_rel:
         rel_display = rel_type
-        rel_lower = rel_type.lower()
         if "of" in rel_lower:
             if "deceased" not in rel_lower:
                 rel_display = f"{rel_type} deceased"
@@ -1811,7 +1818,7 @@ def format_suggestions_for_calculator(suggestions):
             rel_display = f"{rel_type} of deceased"
         claimant_rel_val = f"{claimant_name} — {rel_display}"
     elif claimant_name:
-        claimant_rel_val = claimant_name
+        claimant_rel_val = f"{claimant_name} — (No relationship to deceased found)"
     else:
         claimant_rel_val = ""
 
@@ -3180,8 +3187,8 @@ def parse_extracted_text(text_lines, case_type=None):
                     claimant_relationship_to_deceased = inferred_rel
                     conf_claimant_relationship = 0.85
                 else:
-                    claimant_relationship_to_deceased = "Claimant (relationship to deceased unconfirmed)"
-                    conf_claimant_relationship = 0.40
+                    claimant_relationship_to_deceased = ""
+                    conf_claimant_relationship = 0.0
         if c_split:
             claimant_name = c_split.title()
             conf_claimant_name = max(conf_claimant_name, 0.95)

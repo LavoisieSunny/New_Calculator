@@ -992,10 +992,10 @@ def ai_data_recovery(raw_ocr_text: str, track: str = "high_court", case_type: st
                             confidence_scores["claimant_relationship_type"] = {"confidence": 0.85, "reason": "Inferred from text context after mismatch guard"}
                             confidence_scores["claimant_relationship_to_deceased"] = {"confidence": 0.85, "reason": "Inferred from text context after mismatch guard"}
                         else:
-                            data["claimant_relationship_type"] = "Mother"
-                            data["claimant_relationship_to_deceased"] = "Mother"
-                            confidence_scores["claimant_relationship_type"] = {"confidence": 0.50, "reason": "Defaulted to Mother after mismatch guard"}
-                            confidence_scores["claimant_relationship_to_deceased"] = {"confidence": 0.50, "reason": "Defaulted to Mother after mismatch guard"}
+                            data["claimant_relationship_type"] = ""
+                            data["claimant_relationship_to_deceased"] = ""
+                            confidence_scores["claimant_relationship_type"] = {"confidence": 0.0, "reason": "No relationship to deceased found after mismatch guard"}
+                            confidence_scores["claimant_relationship_to_deceased"] = {"confidence": 0.0, "reason": "No relationship to deceased found after mismatch guard"}
                         
                         # Also override marital status if the deceased is young and no spouse is listed
                         age_val = data.get("age")
