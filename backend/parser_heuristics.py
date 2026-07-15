@@ -1815,6 +1815,10 @@ def format_suggestions_for_calculator(suggestions):
     else:
         claimant_rel_val = ""
 
+    raw_cons = clean_numeric_to_float_or_int(get_field_val("consortium", "consortium"), "consortium")
+    raw_funeral = clean_numeric_to_float_or_int(get_field_val("funeral_expenses", "funeral_expenses"), "funeral_expenses")
+    raw_estate = clean_numeric_to_float_or_int(get_field_val("loss_estate", "loss_estate"), "loss_estate")
+
     fields = {}
     if case_type == "death":
         fields = {
@@ -1835,9 +1839,9 @@ def format_suggestions_for_calculator(suggestions):
             "vehicle_number": get_field_val("vehicle_number", "vehicle_number"),
             "insurance_company": get_field_val("insurance_company", "insurance_company"),
             "dependents": clean_numeric_to_float_or_int(get_field_val("dependents", "dependents"), "dependents"),
-            "consortium": clean_numeric_to_float_or_int(get_field_val("consortium", "consortium"), "consortium"),
-            "funeral_expenses": clean_numeric_to_float_or_int(get_field_val("funeral_expenses", "funeral_expenses"), "funeral_expenses"),
-            "loss_estate": clean_numeric_to_float_or_int(get_field_val("loss_estate", "loss_estate"), "loss_estate"),
+            "consortium": raw_cons if raw_cons not in ["", None, 0.0, 0] else 40000.0,
+            "funeral_expenses": raw_funeral if raw_funeral not in ["", None, 0.0, 0] else 15000.0,
+            "loss_estate": raw_estate if raw_estate not in ["", None, 0.0, 0] else 15000.0,
         }
     elif case_type == "injury":
         fields = {
@@ -3457,7 +3461,7 @@ def parse_extracted_text(text_lines, case_type=None):
         # Check married/single keywords first
         for status, keywords in marital_patterns.items():
             for kw in keywords:
-                if kw in sec_text_lower:
+                if re.search(rf'\b{re.escape(kw)}\b', sec_text_lower):
                     marital_status = status
                     conf_marital_status = 0.90
                     sec_marital_status = sec_name
@@ -3472,24 +3476,58 @@ def parse_extracted_text(text_lines, case_type=None):
             break
             
         # Check "W/o" or "Wife of" relation to claimant name
-        if claimant_name:
+        if claimant_name and deceased_name:
             clean_cname = claimant_name.lower().strip()
             escaped_cname = re.escape(clean_cname)
             wo_patterns = [
-                rf'\bw/o\b[\s,:\(\)-]*(?:smt\.?|mrs\.?)?\s*{escaped_cname}',
-                rf'\bwife\s+of\s+[\s,:\(\)-]*(?:smt\.?|mrs\.?)?\s*{escaped_cname}',
-                rf'{escaped_cname}[\s,:\(\)-]*(?:is\s+)?\bw/o\b',
-                rf'{escaped_cname}[\s,:\(\)-]*(?:is\s+)?\bwife\s+of\b'
+                (rf'\bw/o\b[\s,:\(\)-]*(?:smt\.?|mrs\.?)?\s*{escaped_cname}', "prefix"),
+                (rf'\bwife\s+of\s+[\s,:\(\)-]*(?:smt\.?|mrs\.?)?\s*{escaped_cname}', "prefix"),
+                (rf'{escaped_cname}[\s,:\(\)-]*(?:is\s+)?\bw/o\b', "suffix"),
+                (rf'{escaped_cname}[\s,:\(\)-]*(?:is\s+)?\bwife\s+of\b', "suffix")
             ]
-            for pat in wo_patterns:
-                m = re.search(pat, sec_text_lower)
-                if m:
-                    marital_status = "married"
-                    conf_marital_status = 0.90
-                    sec_marital_status = sec_name
-                    sec_meta = sections_metadata.get(sec_name, {})
-                    page_marital_status = find_exact_page(m.group(0), sec_meta.get("start_page", 1), sec_meta.get("end_page", 1), pages)
-                    method_marital_status = "Claimant Wife/Widow Relation Match"
+            for pat, pat_type in wo_patterns:
+                for line in sec_text_lower.split('\n'):
+                    m = re.search(pat, line)
+                    if m:
+                        husband_candidate = ""
+                        if pat_type == "suffix":
+                            # Extract the text after "w/o" or "wife of" on this line
+                            suffix_match = re.search(rf'\b(?:w/o|wife\s+of)\b[\s\.]*(?:shri|late)?\s*(.*?)(?:\b(?:age|aged|resident|r/o|address|occupation)\b|$)', line)
+                            if suffix_match:
+                                husband_candidate = suffix_match.group(1).strip()
+                        else:
+                            # Extract the text before "w/o" or "wife of" on this line
+                            prefix_match = re.search(rf'(.*?)\b(?:w/o|wife\s+of)\b', line)
+                            if prefix_match:
+                                husband_candidate = prefix_match.group(1).strip()
+                        
+                        # Clean up punctuation
+                        husband_candidate = re.sub(r'[\s,\.\-\(\)\/\|]+$', '', husband_candidate).strip()
+                        husband_candidate = re.sub(r'^[\s,\.\-\(\)\/\|]+', '', husband_candidate).strip()
+                        
+                        is_husband_deceased = False
+                        if husband_candidate and deceased_name:
+                            def clean_name(n):
+                                n = n.lower()
+                                n = re.sub(r'\b(?:late|shri|smt|mr|mrs|sh\.?|deceased)\b', '', n)
+                                n = re.sub(r'[^a-z0-9\s]', '', n)
+                                return [t.strip() for t in n.split() if t.strip()]
+                            t1 = clean_name(husband_candidate)
+                            t2 = clean_name(deceased_name)
+                            if t1 and t2:
+                                overlap = set(t1).intersection(set(t2))
+                                if len(overlap) >= min(len(t1), len(t2), 2):
+                                    is_husband_deceased = True
+                        
+                        if is_husband_deceased:
+                            marital_status = "married"
+                            conf_marital_status = 0.90
+                            sec_marital_status = sec_name
+                            sec_meta = sections_metadata.get(sec_name, {})
+                            page_marital_status = find_exact_page(m.group(0), sec_meta.get("start_page", 1), sec_meta.get("end_page", 1), pages)
+                            method_marital_status = "Claimant Wife/Widow Relation Match"
+                            break
+                if method_marital_status != "Default Heuristic":
                     break
                     
         if method_marital_status != "Default Heuristic":
@@ -3637,8 +3675,8 @@ def parse_extracted_text(text_lines, case_type=None):
                 logger.info(f"Section '{sec_k}' contains matching line for annual income")
 
         annual_patterns = [
-            r'\b(?:annual|yearly)\s+income(?:\s+of\s+(?:the\s+)?(?:deceased|victim|appellant|petitioner|claimant)?(?:\s+[\w\.\-]+){0,3})?(?:\s*\([^)]*\))?\s*[\s|:\-\u2022=xX]*(?:[\r\n]+[\s|:\-\u2022=xX]*)?(?:rs\.?|inr|rupees?|हैं|₹)?\s*([\d,\.\s]+lakhs?|[\d,\.\s]+lacs?|[\d,\.\s]+)\b',
-            r'\bincome(?:\s+of\s+(?:the\s+)?(?:deceased|victim|appellant|petitioner|claimant)?(?:\s+[\w\.\-]+){0,3})?\s*\(\s*(?:annual|yearly)\s*\)\s*[\s|:\-\u2022=xX]*(?:[\r\n]+[\s|:\-\u2022=xX]*)?(?:rs\.?|inr|rupees?|हैं|₹)?\s*([\d,\.\s]+lakhs?|[\d,\.\s]+lacs?|[\d,\.\s]+)\b'
+            r'\b(?:annual|yearly)\s+income(?:\s+of\s+(?:the\s+)?(?:deceased|victim|appellant|petitioner|claimant)?(?:\s+[\w\.\-]+){0,3})?(?:\s*\([^)]*\))?\s*[^a-zA-Z\d\r\n]*(?:[\r\n]+[^a-zA-Z\d\r\n]*)?(?:rs\.?|inr|rupees?|हैं|₹)?\s*([\d,\.\s]+lakhs?|[\d,\.\s]+lacs?|[\d,\.\s]+)\b',
+            r'\bincome(?:\s+of\s+(?:the\s+)?(?:deceased|victim|appellant|petitioner|claimant)?(?:\s+[\w\.\-]+){0,3})?\s*\(\s*(?:annual|yearly)\s*\)\s*[^a-zA-Z\d\r\n]*(?:[\r\n]+[^a-zA-Z\d\r\n]*)?(?:rs\.?|inr|rupees?|हैं|₹)?\s*([\d,\.\s]+lakhs?|[\d,\.\s]+lacs?|[\d,\.\s]+)\b'
         ]
         
         income_patterns = [

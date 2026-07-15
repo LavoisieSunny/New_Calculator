@@ -625,6 +625,30 @@ class TestParserHeuristics(unittest.TestCase):
         self.assertEqual(res.get("marital_status"), "single")
         self.assertEqual(res.get("confidence_scores", {}).get("marital_status", {}).get("extraction_method"), "Fallback Heuristic (Single Young Deceased with Parent/Sibling Claimants)")
 
+    def test_regression_multi_line_annual_income(self):
+        """Test multi-line annual income layout with separator characters and calculations."""
+        text_lines = [
+            "--- PAGE 1 ---",
+            "deceased name: Anjani Singh",
+            "(a) Annual Income of the deceased: ·",
+            "    Rs. 1,15,800/- and after adding 40% as future prospects Rs. 1,62,120/-."
+        ]
+        res = parse_extracted_text(text_lines, case_type="death")
+        # 115800 / 12 = 9650
+        self.assertEqual(res.get("monthly_income"), 9650.0)
+
+    def test_regression_marital_status_claimant_husband_mismatch(self):
+        """Test claimant 'X W/o Y' where Y != deceased_name, marital_status must not be married."""
+        text_lines = [
+            "--- PAGE 1 ---",
+            "deceased name: Anjani Singh S/o Late Vishnudev Singh",
+            "Age of the deceased: 22 Years",
+            "Parvati Singh W/o Vishnudev Singh",
+            "claimant relationship: mother of deceased"
+        ]
+        res = parse_extracted_text(text_lines, case_type="death")
+        self.assertEqual(res.get("marital_status"), "single")
+
 if __name__ == "__main__":
     unittest.main()
 
