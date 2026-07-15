@@ -338,7 +338,7 @@ class TestParserHeuristics(unittest.TestCase):
         self.assertEqual(suggestions["name"], "Pawan Kumar Baiga")
         self.assertEqual(suggestions["total_compensation"], 615000.0)
         self.assertEqual(suggestions["award_amount"], 615000.0)
-        self.assertEqual(suggestions["monthly_income"], 2500.0)
+        self.assertEqual(suggestions["monthly_income"], 3500.0)
         self.assertEqual(suggestions["multiplier"], 18)
         self.assertEqual(suggestions["future_prospect"], 40.0)
         self.assertEqual(suggestions["consortium"], 40000.0)
@@ -559,6 +559,71 @@ class TestParserHeuristics(unittest.TestCase):
         # Test standard married lookup for 4 dependents
         deduct_married = get_deduction(4, "married")
         self.assertEqual(deduct_married, 0.25)
+
+    def test_annual_income_standard(self):
+        """1. A death-case document containing 'Annual Income of the deceased: Rs. 1,15,800/-' -> expect monthly_income ≈ 9650."""
+        text_lines = [
+            "--- PAGE 1 ---",
+            "MEMORANDUM OF APPEAL",
+            "Annual Income of the deceased: Rs. 1,15,800/-",
+            "Age of the deceased: 25 years"
+        ]
+        res = parse_extracted_text(text_lines, case_type="death")
+        self.assertAlmostEqual(res.get("monthly_income"), 9650.0, places=2)
+        self.assertEqual(res.get("confidence_scores", {}).get("monthly_income", {}).get("extraction_method"), "Section-Aware Contextual Regex (Annual to Monthly)")
+
+    def test_annual_income_adjudged(self):
+        """2. A death-case document containing 'Annual Income of the deceased (As adjudged by the Tribunal): Rs. 73,080/-' -> expect monthly_income ≈ 6090."""
+        text_lines = [
+            "--- PAGE 1 ---",
+            "MEMORANDUM OF APPEAL",
+            "Annual Income of the deceased (As adjudged by the Tribunal): Rs. 73,080/-",
+            "Age of the deceased: 30 years"
+        ]
+        res = parse_extracted_text(text_lines, case_type="death")
+        self.assertAlmostEqual(res.get("monthly_income"), 6090.0, places=2)
+
+    def test_annual_income_priority_grounds(self):
+        """3. A document with both an adjudged annual-income line AND a Grounds-of-Appeal line -> expect the adjudged figure to win."""
+        text_lines = [
+            "--- PAGE 1 ---",
+            "MEMORANDUM OF APPEAL",
+            "Annual Income of the deceased: Rs. 73,080/-",
+            "--- PAGE 2 ---",
+            "GROUNDS OF APPEAL",
+            "the learned tribunal below has not considered that deceased earns Rs.1500/- per day and awarded less amount."
+        ]
+        res = parse_extracted_text(text_lines, case_type="death")
+        # Adjudged annual income (73080/12 = 6090) should win over grounds contention
+        self.assertAlmostEqual(res.get("monthly_income"), 6090.0, places=2)
+
+    def test_marital_status_wife_of_claimant(self):
+        """4. A document where the parties/cause-title block contains 'W/o' before a claimant's name and no explicit 'marital status' label -> expect marital_status == 'married'."""
+        text_lines = [
+            "--- PAGE 1 ---",
+            "MEMO OF PARTIES",
+            "Smt. Sunita Devi W/o Late Rajesh Kumar",
+            "claimant name: Sunita Devi",
+            "deceased name: Rajesh Kumar",
+            "Age of the deceased: 28 years"
+        ]
+        res = parse_extracted_text(text_lines, case_type="death")
+        self.assertEqual(res.get("marital_status"), "married")
+        self.assertEqual(res.get("confidence_scores", {}).get("marital_status", {}).get("extraction_method"), "Claimant Wife/Widow Relation Match")
+
+    def test_marital_status_single_fallback_rule(self):
+        """5. A document where the deceased has late father, is young, and claimants are parents/siblings -> lean to 'single' fallback."""
+        text_lines = [
+            "--- PAGE 1 ---",
+            "MEMO OF PARTIES",
+            "deceased name: Lalit Dahiya S/o Late Shri Chotelal Dahiya",
+            "Age of deceased: 25 Years",
+            "name of claimant: Siyadulari Dahiya",
+            "claimant relationship: mother of deceased"
+        ]
+        res = parse_extracted_text(text_lines, case_type="death")
+        self.assertEqual(res.get("marital_status"), "single")
+        self.assertEqual(res.get("confidence_scores", {}).get("marital_status", {}).get("extraction_method"), "Fallback Heuristic (Single Young Deceased with Parent/Sibling Claimants)")
 
 if __name__ == "__main__":
     unittest.main()

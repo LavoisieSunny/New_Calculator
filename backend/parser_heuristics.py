@@ -3436,7 +3436,7 @@ def parse_extracted_text(text_lines, case_type=None):
     )
     method_dependents = "Section-Aware Contextual Regex"
 
-    # 8. Marital Status from claimant section
+    # 8. Marital Status from claimant, facts, and memo_of_appeal sections
     marital_status = "married"
     conf_marital_status = 0.50
     sec_marital_status = "raw_ocr"
@@ -3446,16 +3446,135 @@ def parse_extracted_text(text_lines, case_type=None):
         "married": ["married", "husband", "wife", "spouse"],
         "single": ["single", "unmarried", "bachelor", "spinster", "divorced"]
     }
-    claimant_sec_text = sections.get("claimant_section", "").lower()
-    for status, keywords in marital_patterns.items():
-        if any(kw in claimant_sec_text for kw in keywords):
-            marital_status = status
-            conf_marital_status = 0.90
-            sec_marital_status = "claimant_section"
-            sec_meta = sections_metadata.get("claimant_section", {})
-            page_marital_status = find_exact_page(status, sec_meta.get("start_page", 1), sec_meta.get("end_page", 1), pages)
-            method_marital_status = "Keyword Matching"
+    
+    # Check claimant_section, facts_section, memo_of_appeal_section for keywords
+    for sec_name in ["claimant_section", "facts_section", "memo_of_appeal_section"]:
+        sec_text = sections.get(sec_name, "")
+        if not sec_text:
+            continue
+        sec_text_lower = sec_text.lower()
+        
+        # Check married/single keywords first
+        for status, keywords in marital_patterns.items():
+            for kw in keywords:
+                if kw in sec_text_lower:
+                    marital_status = status
+                    conf_marital_status = 0.90
+                    sec_marital_status = sec_name
+                    sec_meta = sections_metadata.get(sec_name, {})
+                    page_marital_status = find_exact_page(kw, sec_meta.get("start_page", 1), sec_meta.get("end_page", 1), pages)
+                    method_marital_status = f"Keyword Matching ({kw})"
+                    break
+            if method_marital_status != "Default Heuristic":
+                break
+        
+        if method_marital_status != "Default Heuristic":
             break
+            
+        # Check "W/o" or "Wife of" relation to claimant name
+        if claimant_name:
+            clean_cname = claimant_name.lower().strip()
+            escaped_cname = re.escape(clean_cname)
+            wo_patterns = [
+                rf'\bw/o\b[\s,:\(\)-]*(?:smt\.?|mrs\.?)?\s*{escaped_cname}',
+                rf'\bwife\s+of\s+[\s,:\(\)-]*(?:smt\.?|mrs\.?)?\s*{escaped_cname}',
+                rf'{escaped_cname}[\s,:\(\)-]*(?:is\s+)?\bw/o\b',
+                rf'{escaped_cname}[\s,:\(\)-]*(?:is\s+)?\bwife\s+of\b'
+            ]
+            for pat in wo_patterns:
+                m = re.search(pat, sec_text_lower)
+                if m:
+                    marital_status = "married"
+                    conf_marital_status = 0.90
+                    sec_marital_status = sec_name
+                    sec_meta = sections_metadata.get(sec_name, {})
+                    page_marital_status = find_exact_page(m.group(0), sec_meta.get("start_page", 1), sec_meta.get("end_page", 1), pages)
+                    method_marital_status = "Claimant Wife/Widow Relation Match"
+                    break
+                    
+        if method_marital_status != "Default Heuristic":
+            break
+
+    # Fallback to single if young deceased, with parents/siblings claimants, and late father
+    if method_marital_status == "Default Heuristic":
+        # Check if father is Late
+        father_name_lower = father_name.lower() if father_name else ""
+        is_father_late = "late" in father_name_lower
+        
+        combined_rel_text = (sections.get("claimant_section", "") + "\n" + 
+                             sections.get("facts_section", "") + "\n" + 
+                             sections.get("memo_of_appeal_section", "")).lower()
+                             
+        has_so_late = is_father_late
+        if not has_so_late and father_name:
+            escaped_fname = re.escape(father_name.lower().strip())
+            if re.search(rf'\blate\b[\s,:\(\)-]*(?:shri|smt)?\s*{escaped_fname}', combined_rel_text):
+                has_so_late = True
+                
+        if not has_so_late and deceased_name:
+            escaped_dname = re.escape(deceased_name.lower().strip())
+            d_so_patterns = [
+                rf'{escaped_dname}[\s,:\(\)-]*\bs/o\b[\s,:\(\)-]*(?:late|shri|sh\.?)*\s+late',
+                rf'\bs/o\b[\s,:\(\)-]*(?:late|shri|sh\.?)*\s+late[\s\w,:\(\)-]*?{escaped_dname}',
+                rf'{escaped_dname}[\s,:\(\)-]*\bson\s+of\s+[\s,:\(\)-]*(?:late|shri|sh\.?)*\s+late',
+            ]
+            for sec_name in ["claimant_section", "facts_section", "memo_of_appeal_section"]:
+                sec_text = sections.get(sec_name, "").lower()
+                if any(re.search(pat, sec_text) for pat in d_so_patterns):
+                    has_so_late = True
+                    break
+        
+        is_young = False
+        if age:
+            try:
+                val_age = float(age)
+                if val_age <= 30:
+                    is_young = True
+            except (ValueError, TypeError):
+                pass
+                
+        combined_rel_text = (sections.get("claimant_section", "") + "\n" + 
+                             sections.get("facts_section", "") + "\n" + 
+                             sections.get("memo_of_appeal_section", "")).lower()
+                             
+        parent_sibling_keywords = [
+            "mother of deceased", "father of deceased", "parents of deceased",
+            "brother of deceased", "sister of deceased", "siblings of deceased",
+            "mother of the deceased", "father of the deceased", "parents of the deceased",
+            "brother of the deceased", "sister of the deceased", "siblings of the deceased",
+            "mother of late", "father of late", "parents of late", "parents (mother",
+            "mother & father", "siblings"
+        ]
+        
+        spouse_child_keywords = [
+            "wife of deceased", "husband of deceased", "spouse of deceased",
+            "widow of deceased", "son of deceased", "daughter of deceased",
+            "children of deceased", "wife of the deceased", "husband of the deceased",
+            "spouse of the deceased", "widow of the deceased", "son of the deceased",
+            "daughter of the deceased", "children of the deceased", "wife of late",
+            "widow of late", "son of late", "daughter of late", "children of late"
+        ]
+        
+        has_parent_sibling = any(kw in combined_rel_text for kw in parent_sibling_keywords)
+        if not has_parent_sibling:
+            for word in ["mother", "father", "parents", "brother", "sister", "sibling", "siblings"]:
+                if re.search(r'\b' + re.escape(word) + r'\b', combined_rel_text):
+                    has_parent_sibling = True
+                    break
+                    
+        has_spouse_child = False
+        for kw in spouse_child_keywords:
+            if kw in combined_rel_text:
+                has_spouse_child = True
+                break
+                
+        if has_so_late and is_young and has_parent_sibling and not has_spouse_child:
+            marital_status = "single"
+            conf_marital_status = 0.75
+            sec_marital_status = "claimant_section" if sections.get("claimant_section", "") else "memo_of_appeal_section"
+            page_marital_status = 1
+            method_marital_status = "Fallback Heuristic (Single Young Deceased with Parent/Sibling Claimants)"
+
 
     # 8.2 Future Type from compensation or award section
     future_type_patterns = {
@@ -3502,7 +3621,7 @@ def parse_extracted_text(text_lines, case_type=None):
 
     comp_fields = extract_compensation_table_fields(sections.get("compensation_section", "") or sections.get("award_copy_section", ""), case_type)
     
-    # 9.1 Monthly Income
+    # 9.1 Monthly Income (with multi-pass annual/monthly extraction)
     monthly_income = comp_fields["monthly_income"]
     if monthly_income:
         conf_monthly_income = 0.98
@@ -3511,6 +3630,17 @@ def parse_extracted_text(text_lines, case_type=None):
         page_monthly_income = find_exact_page(int(monthly_income), sec_meta.get("start_page", 1), sec_meta.get("end_page", 1), pages)
         method_monthly_income = "Compensation Table Extraction"
     else:
+        # Temporary debug log of sections.keys() and sections containing 'annual income'
+        logger.info(f"Sections keys: {list(sections.keys())}")
+        for sec_k, sec_v in sections.items():
+            if re.search(r'annual\s+income', sec_v, re.IGNORECASE):
+                logger.info(f"Section '{sec_k}' contains matching line for annual income")
+
+        annual_patterns = [
+            r'\b(?:annual|yearly)\s+income(?:\s+of\s+(?:the\s+)?(?:deceased|victim|appellant|petitioner|claimant)?(?:\s+[\w\.\-]+){0,3})?(?:\s*\([^)]*\))?\s*[\s|:\-\u2022=xX]*(?:[\r\n]+[\s|:\-\u2022=xX]*)?(?:rs\.?|inr|rupees?|हैं|₹)?\s*([\d,\.\s]+lakhs?|[\d,\.\s]+lacs?|[\d,\.\s]+)\b',
+            r'\bincome(?:\s+of\s+(?:the\s+)?(?:deceased|victim|appellant|petitioner|claimant)?(?:\s+[\w\.\-]+){0,3})?\s*\(\s*(?:annual|yearly)\s*\)\s*[\s|:\-\u2022=xX]*(?:[\r\n]+[\s|:\-\u2022=xX]*)?(?:rs\.?|inr|rupees?|हैं|₹)?\s*([\d,\.\s]+lakhs?|[\d,\.\s]+lacs?|[\d,\.\s]+)\b'
+        ]
+        
         income_patterns = [
             r'(?:monthly\s+income|salary|earning|notional\s+income|coolie|wages?)\s*(?:is|was|has\s+been)?\s*(?:assessed|taken|fixed|determined)?\s*(?:at|as|of|@)?\s*(?:rs\.?|inr)?\s*([\d,\.\s]+lakhs?|[\d,\.\s]+lacs?|[\d,\.\s]+)\b',
             r'\b(?:rs\.?|inr)?\s*([\d,\.]+)\s*(?:rs\.?|inr)?\s*(?:per\s*month|\/pm|\/-\s*pm|p\.m\.)',
@@ -3520,11 +3650,68 @@ def parse_extracted_text(text_lines, case_type=None):
             r'monthly\s+income\s+of\s+the\s+deceased\s+(?:is|was)\s*(?:assessed|taken|fixed|determined)\s*(?:at|as)?\s*(?:rs\.?|inr)?\s*([\d,\.]+)\b',
             r'\b(?:rs\.?|inr)?\s*([\d,\.\s]+)\s*p\.m\.\b'
         ]
-        monthly_income, conf_monthly_income, sec_monthly_income, page_monthly_income = contextual_extract(
-            income_patterns, sections, [("compensation_section", 95), ("award_copy_section", 90), ("facts_section", 85)], default_val="", type_cast=float,
+        
+        non_grounds_sections = [
+            ("compensation_section", 95),
+            ("award_copy_section", 90),
+            ("memo_of_appeal_section", 88),
+            ("facts_section", 85)
+        ]
+        
+        # Pass 1: Search ANNUAL-income patterns in non-grounds sections
+        annual_val, conf, sec, page = contextual_extract(
+            annual_patterns, sections, non_grounds_sections, default_val=None, type_cast=float,
             field_name="monthly_income", debug_info=parser_debug, pages=pages, sections_metadata=sections_metadata, page_importances=page_importances
         )
-        method_monthly_income = "Section-Aware Contextual Regex"
+        if annual_val is not None and annual_val > 0:
+            monthly_income = round(annual_val / 12.0, 2)
+            conf_monthly_income = conf
+            sec_monthly_income = sec
+            page_monthly_income = page
+            method_monthly_income = "Section-Aware Contextual Regex (Annual to Monthly)"
+        else:
+            # Pass 2: Search MONTHLY income_patterns in non-grounds sections
+            m_val, conf, sec, page = contextual_extract(
+                income_patterns, sections, non_grounds_sections, default_val=None, type_cast=float,
+                field_name="monthly_income", debug_info=parser_debug, pages=pages, sections_metadata=sections_metadata, page_importances=page_importances
+            )
+            if m_val is not None and m_val > 0:
+                monthly_income = m_val
+                conf_monthly_income = conf
+                sec_monthly_income = sec
+                page_monthly_income = page
+                method_monthly_income = "Section-Aware Contextual Regex"
+            else:
+                # Pass 3: Search ANNUAL-income patterns in grounds_section only (weight ~75)
+                annual_val, conf, sec, page = contextual_extract(
+                    annual_patterns, sections, [("grounds_section", 75)], default_val=None, type_cast=float,
+                    field_name="monthly_income", debug_info=parser_debug, pages=pages, sections_metadata=sections_metadata, page_importances=page_importances
+                )
+                if annual_val is not None and annual_val > 0:
+                    monthly_income = round(annual_val / 12.0, 2)
+                    conf_monthly_income = conf
+                    sec_monthly_income = sec
+                    page_monthly_income = page
+                    method_monthly_income = "Section-Aware Contextual Regex (Annual to Monthly, Grounds Fallback)"
+                else:
+                    # Pass 4: Search MONTHLY income_patterns in grounds_section only
+                    m_val, conf, sec, page = contextual_extract(
+                        income_patterns, sections, [("grounds_section", 75)], default_val=None, type_cast=float,
+                        field_name="monthly_income", debug_info=parser_debug, pages=pages, sections_metadata=sections_metadata, page_importances=page_importances
+                    )
+                    if m_val is not None and m_val > 0:
+                        monthly_income = m_val
+                        conf_monthly_income = conf
+                        sec_monthly_income = sec
+                        page_monthly_income = page
+                        method_monthly_income = "Section-Aware Contextual Regex (Grounds Fallback)"
+                    else:
+                        # Pass 5: Fallback to 0.0
+                        monthly_income = 0.0
+                        conf_monthly_income = 0.30
+                        sec_monthly_income = "raw_ocr"
+                        page_monthly_income = 1
+                        method_monthly_income = "Default Fallback"
 
     # 9.2 Multiplier
     multiplier = comp_fields["multiplier"]
