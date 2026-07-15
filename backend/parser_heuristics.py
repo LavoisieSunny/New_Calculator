@@ -1819,6 +1819,42 @@ def format_suggestions_for_calculator(suggestions):
     raw_funeral = clean_numeric_to_float_or_int(get_field_val("funeral_expenses", "funeral_expenses"), "funeral_expenses")
     raw_estate = clean_numeric_to_float_or_int(get_field_val("loss_estate", "loss_estate"), "loss_estate")
 
+    # Align values and confidences for death case conventional heads:
+    cons_val = raw_cons
+    funeral_val = raw_funeral
+    estate_val = raw_estate
+
+    if case_type == "death":
+        if "confidence_scores" not in suggestions:
+            suggestions["confidence_scores"] = {}
+        
+        # Consortium
+        if raw_cons not in ["", None, 0.0, 0]:
+            cons_val = raw_cons
+        else:
+            cons_val = 40000.0
+            suggestions["confidence_scores"]["consortium"] = {"confidence": 0.30, "reason": "Standard Pranay Sethi baseline default (not found in text)"}
+            if "consortium" not in low_conf_fields:
+                low_conf_fields.append("consortium")
+                
+        # Funeral expenses
+        if raw_funeral not in ["", None, 0.0, 0]:
+            funeral_val = raw_funeral
+        else:
+            funeral_val = 15000.0
+            suggestions["confidence_scores"]["funeral_expenses"] = {"confidence": 0.30, "reason": "Standard Pranay Sethi baseline default (not found in text)"}
+            if "funeral_expenses" not in low_conf_fields:
+                low_conf_fields.append("funeral_expenses")
+                
+        # Loss of estate
+        if raw_estate not in ["", None, 0.0, 0]:
+            estate_val = raw_estate
+        else:
+            estate_val = 15000.0
+            suggestions["confidence_scores"]["loss_estate"] = {"confidence": 0.30, "reason": "Standard Pranay Sethi baseline default (not found in text)"}
+            if "loss_estate" not in low_conf_fields:
+                low_conf_fields.append("loss_estate")
+
     fields = {}
     if case_type == "death":
         fields = {
@@ -1839,9 +1875,9 @@ def format_suggestions_for_calculator(suggestions):
             "vehicle_number": get_field_val("vehicle_number", "vehicle_number"),
             "insurance_company": get_field_val("insurance_company", "insurance_company"),
             "dependents": clean_numeric_to_float_or_int(get_field_val("dependents", "dependents"), "dependents"),
-            "consortium": raw_cons if raw_cons not in ["", None, 0.0, 0] else 40000.0,
-            "funeral_expenses": raw_funeral if raw_funeral not in ["", None, 0.0, 0] else 15000.0,
-            "loss_estate": raw_estate if raw_estate not in ["", None, 0.0, 0] else 15000.0,
+            "consortium": cons_val,
+            "funeral_expenses": funeral_val,
+            "loss_estate": estate_val,
         }
     elif case_type == "injury":
         fields = {
@@ -3675,20 +3711,20 @@ def parse_extracted_text(text_lines, case_type=None):
                 logger.info(f"Section '{sec_k}' contains matching line for annual income")
 
         annual_patterns = [
-            r'\b(?:annual|yearly)\s+income(?:\s+of\s+(?:the\s+)?(?:deceased|victim|appellant|petitioner|claimant)?(?:\s+[\w\.\-]+){0,3})?(?:\s*\([^)]*\))?\s*[^a-zA-Z\d\r\n]*(?:[\r\n]+[^a-zA-Z\d\r\n]*)?(?:rs\.?|inr|rupees?|हैं|₹)?\s*([\d,\.\s]+lakhs?|[\d,\.\s]+lacs?|[\d,\.\s]+)\b',
-            r'\bincome(?:\s+of\s+(?:the\s+)?(?:deceased|victim|appellant|petitioner|claimant)?(?:\s+[\w\.\-]+){0,3})?\s*\(\s*(?:annual|yearly)\s*\)\s*[^a-zA-Z\d\r\n]*(?:[\r\n]+[^a-zA-Z\d\r\n]*)?(?:rs\.?|inr|rupees?|हैं|₹)?\s*([\d,\.\s]+lakhs?|[\d,\.\s]+lacs?|[\d,\.\s]+)\b'
+            r'\b(?:annual|yearly)\s+income(?:\s+of\s+(?:the\s+)?(?:deceased|victim|appellant|petitioner|claimant)?(?:\s+[\w\.\-]+){0,3})?(?:\s*\([^)]*\))?\s*[^a-zA-Z\d\r\n]*(?:[\r\n]+[^a-zA-Z\d\r\n]*)?(?:rs\.?|inr|rupees?|हैं|₹|[a-zA-Z])?\s*([\d,\.\s]+lakhs?|[\d,\.\s]+lacs?|(?:\d[\d,\.\s]*\d|\d))\b',
+            r'\bincome(?:\s+of\s+(?:the\s+)?(?:deceased|victim|appellant|petitioner|claimant)?(?:\s+[\w\.\-]+){0,3})?\s*\(\s*(?:annual|yearly)\s*\)\s*[^a-zA-Z\d\r\n]*(?:[\r\n]+[^a-zA-Z\d\r\n]*)?(?:rs\.?|inr|rupees?|हैं|₹|[a-zA-Z])?\s*([\d,\.\s]+lakhs?|[\d,\.\s]+lacs?|(?:\d[\d,\.\s]*\d|\d))\b'
         ]
         
         income_patterns = [
-            r'(?:monthly\s+income|salary|earning|notional\s+income|coolie|wages?)\s*(?:is|was|has\s+been)?\s*(?:assessed|taken|fixed|determined)?\s*(?:at|as|of|@)?\s*(?:rs\.?|inr)?\s*([\d,\.\s]+lakhs?|[\d,\.\s]+lacs?|[\d,\.\s]+)\b',
+            r'(?:monthly\s+income|salary|earning|notional\s+income|coolie|wages?)\s*(?:is|was|has\s+been)?\s*(?:assessed|taken|fixed|determined)?\s*(?:at|as|of|@)?\s*(?:rs\.?|inr|rupees?|हैं|₹|[a-zA-Z])?\s*([\d,\.\s]+lakhs?|[\d,\.\s]+lacs?|(?:\d[\d,\.\s]*\d|\d))\b',
             r'\b(?:rs\.?|inr)?\s*([\d,\.]+)\s*(?:rs\.?|inr)?\s*(?:per\s*month|\/pm|\/-\s*pm|p\.m\.)',
             r'per\s*month\b.*?([\d,\.]+)\b',
             r'income\s+is\s+assessed\s+at\s+rs\.?\s*([\d,\.]+)\b',
             r'assessed\s+(?:the\s+)?monthly\s+income\s+(?:of\s+the\s+deceased\s+)?at\s*(?:rs\.?|inr)?\s*([\d,\.]+)\b',
             r'monthly\s+income\s+of\s+the\s+deceased\s+(?:is|was)\s*(?:assessed|taken|fixed|determined)\s*(?:at|as)?\s*(?:rs\.?|inr)?\s*([\d,\.]+)\b',
-            r'\b(?:rs\.?|inr)?\s*([\d,\.\s]+)\s*p\.m\.\b'
+            r'\b(?:rs\.?|inr|rupees?|हैं|₹|[a-zA-Z])?\s*(\d[\d,\.\s]*\d|\d)\s*p\.m\.\b'
         ]
-        
+
         non_grounds_sections = [
             ("compensation_section", 95),
             ("award_copy_section", 90),

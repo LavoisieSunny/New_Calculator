@@ -649,6 +649,38 @@ class TestParserHeuristics(unittest.TestCase):
         res = parse_extracted_text(text_lines, case_type="death")
         self.assertEqual(res.get("marital_status"), "single")
 
+    def test_regression_conventional_heads_alignment(self):
+        """Test that consortium, funeral expenses, and loss of estate are aligned correctly when defaulted."""
+        from backend.parser_heuristics import format_suggestions_for_calculator
+        suggestions = {
+            "case_type": "death",
+            "fields": {
+                "deceased_name": "John Doe",
+                "consortium": "",
+                "funeral_expenses": 0,
+                "loss_estate": None
+            },
+            "confidence_scores": {
+                "consortium": {"confidence": 0.95},
+            }
+        }
+        res = format_suggestions_for_calculator(suggestions)
+        fields = res.get("fields", {})
+        low_conf = res.get("low_confidence_fields", [])
+        conf_scores = suggestions.get("confidence_scores", {})
+        
+        self.assertEqual(fields.get("consortium"), 40000.0)
+        self.assertEqual(fields.get("funeral_expenses"), 15000.0)
+        self.assertEqual(fields.get("loss_estate"), 15000.0)
+        
+        self.assertEqual(conf_scores.get("consortium", {}).get("confidence"), 0.30)
+        self.assertEqual(conf_scores.get("funeral_expenses", {}).get("confidence"), 0.30)
+        self.assertEqual(conf_scores.get("loss_estate", {}).get("confidence"), 0.30)
+        
+        self.assertIn("consortium", low_conf)
+        self.assertIn("funeral_expenses", low_conf)
+        self.assertIn("loss_estate", low_conf)
+
 if __name__ == "__main__":
     unittest.main()
 

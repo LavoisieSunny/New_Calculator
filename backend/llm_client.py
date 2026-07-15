@@ -594,9 +594,9 @@ def ai_data_recovery(raw_ocr_text: str, track: str = "high_court", case_type: st
  
         "DEATH CASE HEADS (fill for death cases):\n"
         "- loss_of_dependency: float (main head — monthly income x multiplier x dependency ratio)\n"
-        "- loss_of_consortium: float (per-person standard rate per Pranay Sethi = Rs.40000. Do NOT use tribunal total award. If document shows 2,20,000 for 5 claimants, extract 40000 not 2,20,000)\n"
-        "- loss_of_estate: float (loss of estate of deceased)\n"
-        "- funeral_expenses: float (funeral/obsequies expenses)\n"
+        "- loss_of_consortium: float (per-person loss of consortium. Do NOT default or guess Rs.40000 if not explicitly mentioned in the text. Return null if not mentioned)\n"
+        "- loss_of_estate: float (loss of estate. Do NOT default or guess Rs.15000 if not explicitly mentioned in the text. Return null if not mentioned)\n"
+        "- funeral_expenses: float (funeral expenses. Do NOT default or guess Rs.15000 if not explicitly mentioned in the text. Return null if not mentioned)\n"
         "- loss_of_love_affection: float (parental/filial consortium)\n\n"
  
         "CALCULATION PARAMETERS:\n"
@@ -792,7 +792,9 @@ def ai_data_recovery(raw_ocr_text: str, track: str = "high_court", case_type: st
             ("loss_of_consortium",   "consortium"),
             ("loss_of_dependency",   "dependency"),
             ("funeral_expenses",     "funeral"),
+            ("funeral_expenses",     "funeral_expenses"),
             ("loss_of_estate",       "estate"),
+            ("loss_of_estate",       "loss_estate"),
             ("loss_of_love_affection","love_affection"),
             ("loss_of_amenities",    "amenities"),
             ("future_prospect",      "future_prospects"),
