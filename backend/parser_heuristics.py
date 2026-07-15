@@ -1809,16 +1809,19 @@ def format_suggestions_for_calculator(suggestions):
     rel_lower = rel_type.lower()
     has_valid_rel = any(kw in rel_lower for kw in valid_relation_keywords)
     
-    if claimant_name and has_valid_rel:
-        rel_display = rel_type
-        if "of" in rel_lower:
-            if "deceased" not in rel_lower:
-                rel_display = f"{rel_type} deceased"
+    is_relation_unconfirmed = False
+    if claimant_name:
+        if has_valid_rel:
+            rel_display = rel_type
+            if "of" in rel_lower:
+                if "deceased" not in rel_lower:
+                    rel_display = f"{rel_type} deceased"
+            else:
+                rel_display = f"{rel_type} of deceased"
+            claimant_rel_val = f"{claimant_name} — {rel_display}"
         else:
-            rel_display = f"{rel_type} of deceased"
-        claimant_rel_val = f"{claimant_name} — {rel_display}"
-    elif claimant_name:
-        claimant_rel_val = f"{claimant_name} — (No relationship to deceased found)"
+            claimant_rel_val = f"{claimant_name} — Relationship not found — please verify"
+            is_relation_unconfirmed = True
     else:
         claimant_rel_val = ""
 
@@ -1834,6 +1837,14 @@ def format_suggestions_for_calculator(suggestions):
     if case_type == "death":
         if "confidence_scores" not in suggestions:
             suggestions["confidence_scores"] = {}
+            
+        if is_relation_unconfirmed:
+            suggestions["confidence_scores"]["claimant_relationship_to_deceased"] = {"confidence": 0.30, "reason": "No explicit, verified relationship to deceased found in text"}
+            suggestions["confidence_scores"]["claimant_relationship_type"] = {"confidence": 0.30, "reason": "No explicit, verified relationship to deceased found in text"}
+            if "claimant_relationship_to_deceased" not in low_conf_fields:
+                low_conf_fields.append("claimant_relationship_to_deceased")
+            if "claimant_relationship_type" not in low_conf_fields:
+                low_conf_fields.append("claimant_relationship_type")
         
         # Consortium
         if raw_cons not in ["", None, 0.0, 0] and raw_cons != 40000.0:
@@ -3484,14 +3495,14 @@ def parse_extracted_text(text_lines, case_type=None):
     method_dependents = "Section-Aware Contextual Regex"
 
     # 8. Marital Status from claimant, facts, and memo_of_appeal sections
-    marital_status = "married"
-    conf_marital_status = 0.50
+    marital_status = ""
+    conf_marital_status = 0.0
     sec_marital_status = "raw_ocr"
     page_marital_status = 1
     method_marital_status = "Default Heuristic"
     marital_patterns = {
-        "married": ["married", "husband", "wife", "spouse"],
-        "single": ["single", "unmarried", "bachelor", "spinster", "divorced"]
+        "married": ["married", "wife of deceased", "wife of the deceased", "widow of deceased", "widow of the deceased", "husband of deceased", "husband of the deceased"],
+        "single": ["single", "unmarried", "bachelor", "spinster"]
     }
     
     # Check claimant_section, facts_section, memo_of_appeal_section for keywords

@@ -231,5 +231,21 @@ class TestLLMClient(unittest.TestCase):
         self.assertEqual(res.get("claimant_relationship_type"), "")
         self.assertEqual(res.get("marital_status"), "single")
 
+    @patch('backend.llm_client.generate_response')
+    @patch('backend.llm_client.classify_case_type_by_ocr_text')
+    def test_ai_data_recovery_monthly_income_division_guard(self, mock_classify, mock_generate):
+        mock_classify.return_value = "death"
+        # Mock LLM returning annual income as monthly income
+        mock_generate.return_value = """{
+            "case_type": {"value": "death", "confidence": 0.95},
+            "monthly_income": {"value": 115800.0, "confidence": 0.9}
+        }"""
+        
+        ocr_text = "The annual income of deceased is Rs. 1,15,800."
+        res = ai_data_recovery(ocr_text)
+        
+        # Guard should divide it by 12
+        self.assertEqual(res.get("monthly_income"), 9650.0)
+
 if __name__ == "__main__":
     unittest.main()

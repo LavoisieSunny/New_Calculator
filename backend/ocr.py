@@ -2612,6 +2612,35 @@ async def ai_recover_fields(request: AIRecoverRequest):
         recovered_data = await asyncio.to_thread(ai_data_recovery, full_text, track)
         if recovered_data.get("ai_recovery_error"):
             raise HTTPException(status_code=503, detail="AI-assisted recovery unavailable for this document — please fill remaining fields manually.")
+            
+        # Run heuristics parser to get baseline suggestions
+        from backend.parser_heuristics import parse_extracted_text
+        heuristics_data = parse_extracted_text(request.raw_text, case_type=recovered_data.get("case_type") or "death")
+        
+        # Merge heuristics into recovered_data if LLM missed them or returned low confidence
+        for field in ["monthly_income", "age", "deceased_name", "claimant_name", "date_of_accident", "marital_status"]:
+            heur_val = heuristics_data.get(field)
+            llm_val = recovered_data.get(field)
+            
+            # Check if LLM missed it or has very low confidence
+            llm_conf_obj = recovered_data.get("confidence_scores", {}).get(field)
+            llm_conf = 1.0
+            if isinstance(llm_conf_obj, dict):
+                llm_conf = llm_conf_obj.get("confidence", 1.0)
+            elif llm_conf_obj is not None:
+                llm_conf = float(llm_conf_obj)
+                
+            if (llm_val is None or llm_val == "" or llm_val == 0 or llm_conf < 0.6) and (heur_val is not None and heur_val != "" and heur_val != 0):
+                logger.info(f"[AI-RECOVER-MERGE] Merging heuristic value for '{field}': '{llm_val}' (conf: {llm_conf}) -> '{heur_val}'")
+                recovered_data[field] = heur_val
+                if "confidence_scores" not in recovered_data:
+                    recovered_data["confidence_scores"] = {}
+                heur_conf_obj = heuristics_data.get("confidence_scores", {}).get(field)
+                if heur_conf_obj:
+                    recovered_data["confidence_scores"][field] = heur_conf_obj
+                else:
+                    recovered_data["confidence_scores"][field] = {"confidence": 0.85, "reason": "Merged from heuristics parser"}
+
         from backend.parser_heuristics import format_suggestions_for_calculator
         formatted = format_suggestions_for_calculator(recovered_data)
         return {"success": True, "suggestions": formatted, "raw_recovered": recovered_data}

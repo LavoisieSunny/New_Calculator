@@ -1016,6 +1016,37 @@ def ai_data_recovery(raw_ocr_text: str, track: str = "high_court", case_type: st
         except Exception as rel_guard_err:
             logger.error(f"Failed to run relationship post-processing guard: {str(rel_guard_err)}")
 
+        # ── Monthly Income Division post-processing guard ──
+        try:
+            val = data.get("monthly_income")
+            if val is not None and val != "":
+                cleaned_val = str(val).replace(",", "").replace(" ", "").strip()
+                val_float = float(cleaned_val)
+                if val_float > 20000.0:
+                    is_annual = False
+                    val_str = str(int(val_float))
+                    raw_lower = raw_ocr_text.lower()
+                    
+                    pos = 0
+                    while True:
+                        idx = raw_lower.find(val_str, pos)
+                        if idx == -1:
+                            break
+                        w_start = max(0, idx - 50)
+                        w_end = min(len(raw_lower), idx + len(val_str) + 50)
+                        window = raw_lower[w_start:w_end]
+                        if any(kw in window for kw in ["annual", "annum", "p.a.", "year", "yearly"]):
+                            is_annual = True
+                            break
+                        pos = idx + len(val_str)
+                        
+                    if is_annual or val_float > 30000.0:
+                        logger.info(f"[AI-RECOVERY-INCOME-GUARD] High monthly_income value ({val_float}) confirmed as annual, dividing by 12.0 -> {val_float / 12.0}")
+                        data["monthly_income"] = val_float / 12.0
+                        confidence_scores["monthly_income"] = {"confidence": 0.85, "reason": "Converted from annual income to monthly"}
+        except Exception as income_err:
+            logger.error(f"Failed to run monthly income guard: {str(income_err)}")
+
         # Actively filter out opposite case type fields to enforce strict gating
         if case_type_val == "injury":
             death_fields = [
