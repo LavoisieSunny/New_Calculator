@@ -222,17 +222,17 @@ def get_future_prospect(age: int, future_type: int):
     if future_type == 1:  # permanent job
         if age < 40:
             return 0.50
-        elif age <= 50:
+        elif age < 50:
             return 0.30
-        elif age <= 60:
+        elif age < 60:
             return 0.15
         return 0.0
     else:  # self-employed / fixed salary / daily wage
         if age < 40:
             return 0.40
-        elif age <= 50:
+        elif age < 50:
             return 0.25
-        elif age <= 60:
+        elif age < 60:
             return 0.10
         return 0.0
 
@@ -251,16 +251,11 @@ def get_deduction(
     Business rule (matches the corrected PHP calculator):
       - Bachelor/Single: the UI never asks for "Number of Dependents" at all.
         Deduction is ALWAYS 1/2, regardless of whatever value is sent.
-      - Married: the UI requires "Number of Dependents" with a minimum of 2
-        (there is no real-world "1 dependent" married bracket in Sarla Verma -
-        the lowest bracket starts at 2-3). If an invalid/out-of-range value
-        (0, 1, blank) ever reaches this function anyway -- e.g. a direct API
-        call bypassing the UI -- we fall back to the lowest defined bracket
-        (1/3) rather than silently degrading to the bachelor 1/2 rate.
-
-        2-3 dependents -> 1/3
-        4-6 dependents -> 1/4
-        >6  dependents -> 1/5
+      - Married: counts total family size including the deceased (family_size = dependents + 1).
+        Under Sarla Verma:
+          - 2 to 3 family members (dependents <= 2) -> 1/3
+          - 4 to 6 family members (dependents <= 5) -> 1/4 (0.25)
+          - 7 or more family members (dependents >= 6) -> 1/5 (0.20)
     """
     if not marital_status:
         marital_status = "married"
@@ -271,15 +266,12 @@ def get_deduction(
     is_bachelor = marital_status.strip().upper() in ("B", "BACHELOR", "SINGLE", "UNMARRIED", "S")
 
     if is_bachelor:
-        if dependents <= 1:
-            return 0.50
-        else:
-            return 1 / 3
+        return 0.50
     else:
-        # Married
-        if dependents <= 3:
+        # Married (shifted by 1 for family size including deceased)
+        if dependents <= 2:
             return 1 / 3
-        elif dependents <= 6:
+        elif dependents <= 5:
             return 0.25
         else:
             return 0.20
@@ -305,19 +297,19 @@ def calculate_death_compensation(
         future_percent = get_future_prospect(age, future_type)
         future_prospect_percentage = round(future_percent * 100)
 
-    future_prospect_amount = monthly_income * future_prospect_percentage / 100.0
-    enhanced_monthly_income = monthly_income + future_prospect_amount
-    annual_income = enhanced_monthly_income * 12.0
+    future_prospect_amount_float = monthly_income * future_prospect_percentage / 100.0
+    enhanced_monthly_income_float = monthly_income + future_prospect_amount_float
+    annual_income_float = enhanced_monthly_income_float * 12.0
 
     deduction_ratio = get_deduction(dependents, marital_status)
     # Express as a readable fraction label matching PHP output (1/2, 1/3, 1/4, 1/5)
     _frac_map = {0.50: "1/2", round(1/3, 10): "1/3", 0.25: "1/4", 0.20: "1/5"}
     deduction_label = _frac_map.get(round(deduction_ratio, 10), str(round(deduction_ratio, 4)))
     deduction_percentage = round(deduction_ratio * 100)
-    deduction_amount = annual_income * deduction_ratio
-
-    dependency_income = annual_income - deduction_amount
-    loss_of_dependency = dependency_income * multiplier
+    
+    deduction_amount_float = annual_income_float * deduction_ratio
+    dependency_income_float = annual_income_float - deduction_amount_float
+    loss_of_dependency_float = dependency_income_float * multiplier
 
     # Determine reference date for conventional heads escalation
     ref_date = None
@@ -329,8 +321,16 @@ def calculate_death_compensation(
             except ValueError:
                 continue
 
+    if not ref_date and data.date_of_accident:
+        for fmt in ("%d-%m-%Y", "%Y-%m-%d", "%d/%m/%Y", "%Y/%m/%d"):
+            try:
+                ref_date = datetime.strptime(data.date_of_accident.strip(), fmt).date()
+                break
+            except ValueError:
+                continue
+
     if not ref_date:
-        logger.warning("No reliable award_date available. Falling back to today's date.")
+        logger.warning("No reliable award_date or date_of_accident available. Falling back to today's date.")
         ref_date = date.today()
 
     consortium_default = get_conventional_heads_enhanced(40000.0, ref_date)
@@ -359,8 +359,14 @@ def calculate_death_compensation(
         conmo + confath + conhus + conbro + consis
     )
 
+    # 1. Consortium double-counting fix:
+    # If the user enters specific breakdown fields (consortium breakdown > 0),
+    # the breakdown replaces/overrides the generic consortium amount.
+    if consortium_breakdown_total > 0.0:
+        consortium = 0.0
+
     final_compensation = (
-        loss_of_dependency +
+        loss_of_dependency_float +
         consortium +
         funeral_expenses +
         loss_estate +
@@ -371,16 +377,16 @@ def calculate_death_compensation(
         "case_type": "death",
         "monthly_income": round(monthly_income),
         "future_prospect_percentage": future_prospect_percentage,
-        "future_prospect_amount": round(future_prospect_amount),
-        "enhanced_monthly_income": round(enhanced_monthly_income),
-        "annual_income": round(annual_income),
-        "future_income": round(annual_income),
+        "future_prospect_amount": round(future_prospect_amount_float),
+        "enhanced_monthly_income": round(enhanced_monthly_income_float),
+        "annual_income": round(annual_income_float),
+        "future_income": round(annual_income_float),
         "deduction_percentage": deduction_percentage,
         "deduction_label": deduction_label,
-        "deduction_amount": round(deduction_amount),
-        "dependency_income": round(dependency_income),
+        "deduction_amount": round(deduction_amount_float),
+        "dependency_income": round(dependency_income_float),
         "multiplier": multiplier,
-        "loss_of_dependency": round(loss_of_dependency),
+        "loss_of_dependency": round(loss_of_dependency_float),
         "consortium": consortium,
         "funeral_expenses": funeral_expenses,
         "loss_estate": loss_estate,

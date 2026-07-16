@@ -15,7 +15,7 @@ class TestMPHCCalculator(unittest.TestCase):
         Verify the exact MPHC judicial example with simplified rules:
         - Monthly Income = 23,000
         - Future Prospects = 15% (Permanent job, age 55)
-        - Dependents = 3 (deduction = 1/3)
+        - Dependents = 2 (deduction = 1/3)
         - Multiplier = 11 (age 55)
         - Conventional heads: consortium = 40,000, funeral = 15,000, estate = 15,000
         """
@@ -23,7 +23,7 @@ class TestMPHCCalculator(unittest.TestCase):
             case_type="death",
             age=55,
             monthly_income=23000.0,
-            dependents=3,
+            dependents=2,
             marital_status="married",
             future_type=1,
             consortium=40000.0,
@@ -64,14 +64,14 @@ class TestMPHCCalculator(unittest.TestCase):
         - Age = 24 (Multiplier = 18)
         - Monthly Income = 23,000
         - Future Prospects Override = 50%
-        - Dependents = 3 (Deduction = 1/3)
+        - Dependents = 2 (Deduction = 1/3)
         - Loss Estate = 15,000, Consortium = 40,000, Funeral = 15,000
         """
         req = CompensationRequest(
             case_type="death",
             age=24,
             monthly_income=23000.0,
-            dependents=3,
+            dependents=2,
             marital_status="married",
             future_prospect=50.0,
             consortium=40000.0,
@@ -159,10 +159,10 @@ class TestDeductionBracketFix(unittest.TestCase):
     """
 
     def test_bachelor_always_gets_half_regardless_of_dependents(self):
-        # Bachelor gets 1/2 for 0 or 1 dependents, but large family gets 1/3
+        # Bachelor always gets 1/2 regardless of dependents count
         self.assertEqual(get_deduction(0, "single"), 0.50)
         self.assertEqual(get_deduction(1, "bachelor"), 0.50)
-        self.assertEqual(get_deduction(5, "B"), 1 / 3)   # large bachelor family -> 1/3
+        self.assertEqual(get_deduction(5, "B"), 0.50)   # bachelor always gets 1/2
         self.assertEqual(get_deduction("", "single"), 0.50)
 
     def test_married_with_one_dependent_no_longer_breaks(self):
@@ -173,11 +173,12 @@ class TestDeductionBracketFix(unittest.TestCase):
         self.assertEqual(get_deduction(0, "married"), 1 / 3)
         self.assertEqual(get_deduction("", "married"), 1 / 3)
 
-    def test_married_brackets_unchanged(self):
+    def test_married_brackets_corrected(self):
         self.assertEqual(get_deduction(2, "married"), 1 / 3)
-        self.assertEqual(get_deduction(3, "married"), 1 / 3)
+        self.assertEqual(get_deduction(3, "married"), 0.25)
         self.assertEqual(get_deduction(4, "married"), 0.25)
-        self.assertEqual(get_deduction(6, "married"), 0.25)
+        self.assertEqual(get_deduction(5, "married"), 0.25)
+        self.assertEqual(get_deduction(6, "married"), 0.20)
         self.assertEqual(get_deduction(7, "married"), 0.20)
 
     def test_death_compensation_does_not_silently_zero_out_for_one_dependent(self):
@@ -233,16 +234,16 @@ class TestDeductionBracketFix(unittest.TestCase):
             a = int(age)
             if f_type == 1:
                 if a < 40: return 50
-                if a <= 50: return 30
-                if a <= 60: return 15
+                if a < 50: return 30
+                if a < 60: return 15
                 return 0
             else:
                 if a < 40: return 40
-                if a <= 50: return 25
-                if a <= 60: return 10
+                if a < 50: return 25
+                if a < 60: return 10
                 return 0
 
-        # We will test monthly_income=10000, dependents=3 (deduction = 1/3), married
+        # We will test monthly_income=10000, dependents=2 (deduction = 1/3), married
         # Consortium = 48400, Funeral = 18150, Estate = 18150 (Conventional heads = 84.7k total)
         test_cases = [
             # age, future_type, expected_prospect_pct, expected_multiplier, expected_final_compensation
@@ -261,10 +262,10 @@ class TestDeductionBracketFix(unittest.TestCase):
             (15, 2, 40, 15, 1764700.0),
             (40, 1, 30, 15, 1644700.0),
             (40, 2, 25, 15, 1584700.0),
-            (50, 1, 30, 13, 1436700.0),
-            (50, 2, 25, 13, 1384700.0),
-            (60, 1, 15, 9, 912700.0),
-            (60, 2, 10, 9, 876700.0),
+            (50, 1, 15, 13, 1280700.0),
+            (50, 2, 10, 13, 1228700.0),
+            (60, 1, 0, 9, 804700.0),
+            (60, 2, 0, 9, 804700.0),
         ]
 
         for age, ftype, expected_pct, mult, expected_total in test_cases:
@@ -273,7 +274,7 @@ class TestDeductionBracketFix(unittest.TestCase):
                     case_type="death",
                     age=age,
                     monthly_income=10000.0,
-                    dependents=3,
+                    dependents=2,
                     marital_status="married",
                     future_type=ftype,
                     consortium=48400.0,
@@ -342,7 +343,7 @@ class TestDeductionBracketFix(unittest.TestCase):
         self.assertEqual(res_c["funeral_expenses"], 0.0)
         self.assertEqual(res_c["loss_estate"], 10000.0)
 
-        # Scenario D: Supplying only date_of_accident falls back to date.today()'s default, NOT date_of_accident
+        # Scenario D: Supplying only date_of_accident correctly falls back to date_of_accident for escalation
         req_d = CompensationRequest(
             case_type="death",
             age=30,
@@ -350,13 +351,129 @@ class TestDeductionBracketFix(unittest.TestCase):
             dependents=5,
             marital_status="married",
             future_type=2,
-            date_of_accident="2017-11-01"  # If it anchored to date_of_accident, values would be 40000/15000/15000
+            date_of_accident="2017-11-01"
         )
         res_d = calculate_death_compensation(req_d)
-        # Should fall back to today's date (which currently yields 48400/18150/18150)
-        self.assertEqual(res_d["consortium"], 48400.0)
-        self.assertEqual(res_d["funeral_expenses"], 18150.0)
-        self.assertEqual(res_d["loss_estate"], 18150.0)
+        self.assertEqual(res_d["consortium"], 40000.0)
+        self.assertEqual(res_d["funeral_expenses"], 15000.0)
+        self.assertEqual(res_d["loss_estate"], 15000.0)
+
+        # Scenario E: Supplying no date fields at all falls back to today's date
+        req_e = CompensationRequest(
+            case_type="death",
+            age=30,
+            monthly_income=20000.0,
+            dependents=5,
+            marital_status="married",
+            future_type=2
+        )
+        res_e = calculate_death_compensation(req_e)
+        self.assertEqual(res_e["consortium"], 48400.0)
+        self.assertEqual(res_e["funeral_expenses"], 18150.0)
+        self.assertEqual(res_e["loss_estate"], 18150.0)
+
+    def test_death_calculator_gaps_verification(self):
+        """
+        Verify specific death case calculator bugs are fixed:
+        1. Married with 2 dependents -> 1/3 deduction
+        2. Married with 3 dependents (family of 4) -> 1/4 deduction
+        3. Bachelor deceased (always 1/2 deduction regardless of dependents)
+        4. Above age 60 (0% future prospects)
+        5. Consortium double-counting (breakdown total overrides generic consortium)
+        6. Precise intermediate float precision carrying (tested via mincome=10001, nodep=3, age=30)
+        """
+        # 1. Married with 2 dependents -> 1/3 deduction
+        req1 = CompensationRequest(
+            case_type="death",
+            age=30,
+            monthly_income=12000.0,
+            dependents=2,
+            marital_status="married",
+            future_type=1,
+            award_date="2017-11-01"
+        )
+        res1 = calculate_death_compensation(req1)
+        self.assertEqual(res1["deduction_label"], "1/3")
+        # Income after prospects = 18000. Annual = 216000. Net = 144000. Multiplier = 17. Loss = 2448000.
+        self.assertEqual(res1["loss_of_dependency"], 2448000)
+
+        # 2. Married with 3 dependents (family of 4) -> 1/4 deduction
+        req2 = CompensationRequest(
+            case_type="death",
+            age=30,
+            monthly_income=12000.0,
+            dependents=3,
+            marital_status="married",
+            future_type=1,
+            award_date="2017-11-01"
+        )
+        res2 = calculate_death_compensation(req2)
+        self.assertEqual(res2["deduction_label"], "1/4")
+        # Net = 216000 * 0.75 = 162000. Loss = 162000 * 17 = 2754000.
+        self.assertEqual(res2["loss_of_dependency"], 2754000)
+
+        # 3. Bachelor deceased (always 1/2 deduction)
+        req3 = CompensationRequest(
+            case_type="death",
+            age=30,
+            monthly_income=12000.0,
+            dependents=3,
+            marital_status="bachelor",
+            future_type=1,
+            award_date="2017-11-01"
+        )
+        res3 = calculate_death_compensation(req3)
+        self.assertEqual(res3["deduction_label"], "1/2")
+
+        # 4. Above age 60 (0% future prospects)
+        req4 = CompensationRequest(
+            case_type="death",
+            age=61,
+            monthly_income=10000.0,
+            dependents=2,
+            marital_status="married",
+            future_type=1,
+            award_date="2017-11-01"
+        )
+        res4 = calculate_death_compensation(req4)
+        self.assertEqual(res4["future_prospect_percentage"], 0)
+
+        # 5. Consortium double-counting check (breakdown replaces/overrides generic consortium)
+        req5 = CompensationRequest(
+            case_type="death",
+            age=30,
+            monthly_income=10000.0,
+            dependents=2,
+            marital_status="married",
+            future_type=1,
+            award_date="2017-11-01",
+            conspo=40000.0, # spousal consortium
+            conpar=40000.0  # parental consortium
+        )
+        res5 = calculate_death_compensation(req5)
+        # generic consortium must be overridden and set to 0.0 because breakdown total is 80000.0
+        self.assertEqual(res5["consortium"], 0.0)
+        self.assertEqual(res5["consortium_breakdown_total"], 80000.0)
+        # Total = loss_of_dependency + funeral + loss_estate + breakdown = 2040000 + 15000 + 15000 + 80000 = 2150000
+        self.assertEqual(res5["final_compensation"], 2150000)
+
+        # 6. Precise intermediate float precision check
+        # monthly_income=10001, nodep=3, married (1/4 deduction), age=30 (17 multiplier), future_type=1 (50% prospects)
+        # Enhanced monthly = 15001.5. Annual = 180018. Deduction = 45004.5. Dependency = 135013.5.
+        # Loss of dependency = 135013.5 * 17 = 2295229.5 -> rounds to 2295230.
+        req6 = CompensationRequest(
+            case_type="death",
+            age=30,
+            monthly_income=10001.0,
+            dependents=3,
+            marital_status="married",
+            future_type=1,
+            award_date="2017-11-01"
+        )
+        res6 = calculate_death_compensation(req6)
+        self.assertEqual(res6["loss_of_dependency"], 2295230)
+        self.assertEqual(res6["deduction_amount"], 45005)
+        self.assertEqual(res6["dependency_income"], 135014)
 
 
 class TestInjuryCompensation(unittest.TestCase):
