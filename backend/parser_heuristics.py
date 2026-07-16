@@ -1299,6 +1299,7 @@ _ENHANCEMENT_PHRASES = [
     "just and proper compensation", "adequate compensation be awarded",
     "enhance the appropriate compensation", "enhance the compensation", "enhance compensation",
     "enhancing", "less amount", "awarded less", "modify by enhancing",
+    "proper compensation", "just compensation", "adequate compensation", "increase",
 ]
 
 _REDUCTION_PHRASES = [
@@ -1308,6 +1309,12 @@ _REDUCTION_PHRASES = [
     "excessive compensation", "award is excessive", "compensation is excessive",
     "on the higher side", "is too high", "liability be apportioned",
     "appeal be allowed and the award be modified", "award be modified",
+    "set aside", "be set aside", "setaside", "dismiss the claim", 
+    "not liable", "wrongly held liable", "contributory negligence", 
+    "negligent of deceased", "quashed", "quash", "apportionment of liability",
+    "liable to pay", "liability of the insurance", "liability of the appellant",
+    "exonerate the insurance", "exonerating the insurance", "exonerate the appellant",
+    "exonerated from liability", "reverse the finding", "erred in holding",
 ]
 
 # Phrases that look like enhancement/reduction keywords but describe what
@@ -1325,7 +1332,8 @@ _ENHANCEMENT_PHRASES_HI = [
     "क्षतिपूर्ति राशि बढ़ाई जाये", "राशि बढ़ाई जाये", "अपर्याप्त क्षतिपूर्ति",
     "अपर्याप्त मुआवजा", "अपर्याप्त प्रतिकर", "अत्यल्प क्षतिपूर्ति",
     "न्यायोचित एवं समुचित क्षतिपूर्ति", "उचित क्षतिपूर्ति दिलाई जाये",
-    "अवार्ड बढ़ाया जाये", "राशि अपर्याप्त एवं कम है"
+    "अवार्ड बढ़ाया जाये", "राशि अपर्याप्त एवं कम है",
+    "वृद्धि की जावे", "बढ़ाई जावे", "कम है", "अपर्याप्त है"
 ]
 
 _REDUCTION_PHRASES_HI = [
@@ -1333,7 +1341,8 @@ _REDUCTION_PHRASES_HI = [
     "अवार्ड अपास्त किया जाये", "निर्णय अपास्त किया जाये",
     "दायित्व से मुक्त किया जाये", "उन्मोचित किया जाये",
     "अत्यधिक क्षतिपूर्ति", "अत्यधिक मुआवजा", "राशि अधिक है",
-    "अवार्ड में संशोधन किया जाये", "पत्रावली वापस भेजी जाये"
+    "अवार्ड में संशोधन किया जाये", "पत्रावली वापस भेजी जाये",
+    "अपास्त किया जावे", "अपास्त किया जाये", "दायित्व से मुक्त", "अत्यधिक है"
 ]
 
 _PAST_TENSE_GUARDS_HI = [
@@ -1515,6 +1524,18 @@ def _extract_matching_points(text, verdict_type):
     
     for clause in clauses:
         clause_lower = clause.lower()
+        # Filter out court fee lines, fee structures, or trivial formatting/metadata lines
+        if any(kw in clause_lower for kw in [
+            "court fee", "court-fee", "court fees", "affidavit", "c.c. :-", "c.c. :", "cc :-", "cc :",
+            "interlocutory application", "interlocutory", "main case :-", "court fee of",
+            "valuation of appeal", "valuation of the appeal", "appeal is valued", "fixed court fee",
+            "court fee paid", "ad-valorem", "ad valorem", "court fee is paid", "power :-", "power :",
+            "document :-", "document :", "advocate", "power of attorney", "vakalatnama"
+        ]):
+            continue
+        if len(clause) <= 12:
+            continue
+
         has_hit = False
         for phrase in phrases:
             idx = clause_lower.find(phrase)
@@ -1551,6 +1572,19 @@ def _extract_all_points(text):
         # Clean leading list markers like "A. ", "1. ", "(IX) " etc.
         cleaned = re.sub(r'^(?:[A-Za-z0-9]{1,2}\.|\([A-Za-z0-9]{1,2}\)|[•\-\*])\s*', '', clause).strip()
         if cleaned:
+            cleaned_lower = cleaned.lower()
+            # Filter out court fee lines, fee structures, or trivial formatting/metadata lines
+            if any(kw in cleaned_lower for kw in [
+                "court fee", "court-fee", "court fees", "affidavit", "c.c. :-", "c.c. :", "cc :-", "cc :",
+                "interlocutory application", "interlocutory", "main case :-", "court fee of",
+                "valuation of appeal", "valuation of the appeal", "appeal is valued", "fixed court fee",
+                "court fee paid", "ad-valorem", "ad valorem", "court fee is paid", "power :-", "power :",
+                "document :-", "document :", "advocate", "power of attorney", "vakalatnama"
+            ]):
+                continue
+            # Filter out duplicate lines or very short noise lines
+            if len(cleaned) <= 12:
+                continue
             # Capitalize first letter
             cleaned = cleaned[0].upper() + cleaned[1:]
             points.append(cleaned)
