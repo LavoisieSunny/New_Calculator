@@ -289,6 +289,75 @@ class TestDeductionBracketFix(unittest.TestCase):
                 self.assertEqual(js_get_multiplier(age), mult, f"Multiplier mismatch at age {age}")
                 self.assertEqual(js_get_future_prospect_percentage(age, ftype), expected_pct, f"Prospects mismatch at age {age}, type {ftype}")
 
+    def test_conventional_heads_dynamic_enhancement(self):
+        """
+        Verify that consortium, funeral_expenses, and loss_estate default to values
+        enhanced dynamically based on the award_date, and not date_of_accident.
+        """
+        # Scenario A: award_date = 2017-11-01 (0 completed 3-year periods since 2017-10-31)
+        req_a = CompensationRequest(
+            case_type="death",
+            age=30,
+            monthly_income=20000.0,
+            dependents=5,
+            marital_status="married",
+            future_type=2,
+            award_date="2017-11-01"
+        )
+        res_a = calculate_death_compensation(req_a)
+        self.assertEqual(res_a["consortium"], 40000.0)
+        self.assertEqual(res_a["funeral_expenses"], 15000.0)
+        self.assertEqual(res_a["loss_estate"], 15000.0)
+
+        # Scenario B: award_date = 2023-11-01 (2 completed 3-year periods since 2017-10-31)
+        req_b = CompensationRequest(
+            case_type="death",
+            age=30,
+            monthly_income=20000.0,
+            dependents=5,
+            marital_status="married",
+            future_type=2,
+            award_date="2023-11-01"
+        )
+        res_b = calculate_death_compensation(req_b)
+        self.assertEqual(res_b["consortium"], 48400.0)
+        self.assertEqual(res_b["funeral_expenses"], 18150.0)
+        self.assertEqual(res_b["loss_estate"], 18150.0)
+
+        # Scenario C: explicit overrides are respected even on a later award_date
+        req_c = CompensationRequest(
+            case_type="death",
+            age=30,
+            monthly_income=20000.0,
+            dependents=5,
+            marital_status="married",
+            future_type=2,
+            award_date="2023-11-01",
+            consortium=50000.0,
+            funeral_expenses=0.0,
+            loss_estate=10000.0
+        )
+        res_c = calculate_death_compensation(req_c)
+        self.assertEqual(res_c["consortium"], 50000.0)
+        self.assertEqual(res_c["funeral_expenses"], 0.0)
+        self.assertEqual(res_c["loss_estate"], 10000.0)
+
+        # Scenario D: Supplying only date_of_accident falls back to date.today()'s default, NOT date_of_accident
+        req_d = CompensationRequest(
+            case_type="death",
+            age=30,
+            monthly_income=20000.0,
+            dependents=5,
+            marital_status="married",
+            future_type=2,
+            date_of_accident="2017-11-01"  # If it anchored to date_of_accident, values would be 40000/15000/15000
+        )
+        res_d = calculate_death_compensation(req_d)
+        # Should fall back to today's date (which currently yields 48400/18150/18150)
+        self.assertEqual(res_d["consortium"], 48400.0)
+        self.assertEqual(res_d["funeral_expenses"], 18150.0)
+        self.assertEqual(res_d["loss_estate"], 18150.0)
+
 
 class TestInjuryCompensation(unittest.TestCase):
     def test_injury_compensation_loexlife_regression(self):

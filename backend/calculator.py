@@ -1,10 +1,20 @@
 import logging
 from typing import Any, Optional
+from datetime import date, datetime
 from fastapi import APIRouter
 from pydantic import BaseModel, model_validator
 
 logger = logging.getLogger("backend.calculator")
 router = APIRouter()
+
+def get_conventional_heads_enhanced(base_amount: float, reference_date: date, anchor_date: date = date(2017, 10, 31)) -> float:
+    if reference_date <= anchor_date:
+        return float(base_amount)
+    years_elapsed = reference_date.year - anchor_date.year
+    if (reference_date.month, reference_date.day) < (anchor_date.month, anchor_date.day):
+        years_elapsed -= 1
+    periods = years_elapsed // 3
+    return float(round(base_amount * (1.10 ** periods), 2))
 
 # ======================================================
 # SAFE NUMERIC PARSING HELPERS (Task 4)
@@ -42,6 +52,9 @@ class CompensationRequest(BaseModel):
 
     monthly_income: float = 0.0
 
+    award_date: Optional[str] = None
+    date_of_accident: Optional[str] = None
+
     # ==================================================
     # DEATH CASE
     # ==================================================
@@ -54,11 +67,11 @@ class CompensationRequest(BaseModel):
 
     future_prospect: Optional[float] = None
 
-    consortium: float = 48400.0
+    consortium: Optional[float] = None
 
-    funeral_expenses: float = 18150.0
+    funeral_expenses: Optional[float] = None
 
-    loss_estate: float = 18150.0
+    loss_estate: Optional[float] = None
 
     # Consortium Breakdown Subheadings (from PHP claim calculator)
     conlum: float = 0.0
@@ -121,10 +134,8 @@ class CompensationRequest(BaseModel):
                 elif k == "future_prospect":
                     cleaned[k] = None
                 elif k in ["monthly_income", "consortium", "funeral_expenses", "loss_estate", "disability"]:
-                    if k == "consortium":
-                        cleaned[k] = 48400.0
-                    elif k in ["funeral_expenses", "loss_estate"]:
-                        cleaned[k] = 18150.0
+                    if k in ["consortium", "funeral_expenses", "loss_estate"]:
+                        cleaned[k] = None
                     else:
                         cleaned[k] = 0.0
                 else:
@@ -308,10 +319,27 @@ def calculate_death_compensation(
     dependency_income = annual_income - deduction_amount
     loss_of_dependency = dependency_income * multiplier
 
-    # Conventional heads — mirrors PHP: loc + loa + fe + conlum + conspo + ...
-    consortium    = safe_float(data.consortium, 48400.0)
-    funeral_expenses = safe_float(data.funeral_expenses, 18150.0)
-    loss_estate   = safe_float(data.loss_estate, 18150.0)
+    # Determine reference date for conventional heads escalation
+    ref_date = None
+    if data.award_date:
+        for fmt in ("%d-%m-%Y", "%Y-%m-%d", "%d/%m/%Y", "%Y/%m/%d"):
+            try:
+                ref_date = datetime.strptime(data.award_date.strip(), fmt).date()
+                break
+            except ValueError:
+                continue
+
+    if not ref_date:
+        logger.warning("No reliable award_date available. Falling back to today's date.")
+        ref_date = date.today()
+
+    consortium_default = get_conventional_heads_enhanced(40000.0, ref_date)
+    funeral_default = get_conventional_heads_enhanced(15000.0, ref_date)
+    loss_estate_default = get_conventional_heads_enhanced(15000.0, ref_date)
+
+    consortium = safe_float(data.consortium, consortium_default) if data.consortium is not None else consortium_default
+    funeral_expenses = safe_float(data.funeral_expenses, funeral_default) if data.funeral_expenses is not None else funeral_default
+    loss_estate = safe_float(data.loss_estate, loss_estate_default) if data.loss_estate is not None else loss_estate_default
 
     # Consortium breakdown sub-heads (Pranay Sethi / Nanu Ram style)
     # Each is a separate user-entered per-person value, added independently per PHP line 351

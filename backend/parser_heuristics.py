@@ -2772,7 +2772,7 @@ def extract_dates_with_context(text):
     return matches
 
 
-def deduce_notional_income(award_amount, age, marital_status, dependents, future_prospect=None, multiplier=None):
+def deduce_notional_income(award_amount, age, marital_status, dependents, future_prospect=None, multiplier=None, award_date=None):
     """
     Algebraically deduces a clean monthly notional income from the award_amount using standard legal formulas.
     Used when explicit monthly income is missing in the judgment text.
@@ -2780,8 +2780,25 @@ def deduce_notional_income(award_amount, age, marital_status, dependents, future
     if not award_amount or award_amount <= 0:
         return 5000.0 # standard fallback
         
-    # Standard conventional heads: Consortium (48.4k), Funeral (18.15k), Estate (18.15k)
-    conventional_heads = 48400.0 + 18150.0 + 18150.0
+    # Standard conventional heads: Consortium (40k base), Funeral (15k base), Estate (15k base) enhanced dynamically
+    from datetime import date
+    from backend.calculator import get_conventional_heads_enhanced
+    
+    ref_date = None
+    if award_date:
+        for fmt in ("%d-%m-%Y", "%Y-%m-%d", "%d/%m/%Y", "%Y/%m/%d"):
+            try:
+                ref_date = datetime.strptime(award_date.strip(), fmt).date()
+                break
+            except ValueError:
+                continue
+    if not ref_date:
+        ref_date = date.today()
+        
+    consortium = get_conventional_heads_enhanced(40000.0, ref_date)
+    funeral = get_conventional_heads_enhanced(15000.0, ref_date)
+    estate = get_conventional_heads_enhanced(15000.0, ref_date)
+    conventional_heads = consortium + funeral + estate
     
     # Estimate loss of dependency
     loss_of_dependency = max(0.0, award_amount - conventional_heads)
@@ -4229,6 +4246,34 @@ def parse_extracted_text(text_lines, case_type=None):
                 page_date_of_accident = find_exact_page(d_val, 1, 10, pages)
                 break
 
+    # Award Date
+    award_date = chronology["award_date"]
+    if award_date:
+        conf_award_date = 0.98
+        sec_award_date = "chronological_events_section"
+        sec_meta = sections_metadata.get("chronological_events_section", {})
+        page_award_date = find_exact_page(award_date, sec_meta.get("start_page", 1), sec_meta.get("end_page", 1), pages)
+        method_award_date = "Chronological Event Extraction"
+    else:
+        award_date = ""
+        conf_award_date = 0.40
+        sec_award_date = "raw_ocr"
+        page_award_date = 1
+        method_award_date = "Fallback Contextual Search"
+        
+        aw_dates = extract_dates_with_context(
+            sections.get("award_copy_section", "")
+            or sections.get("memo_of_appeal_section", "")
+            or full_text
+        )
+        for d_val, ctx in aw_dates:
+            if any(kw in ctx for kw in ["passed", "disposed", "decided", "judgment", "award", "decree", "order"]):
+                award_date = d_val
+                conf_award_date = 0.95
+                sec_award_date = "award_copy_section" if d_val in sections.get("award_copy_section", "") else ("memo_of_appeal_section" if d_val in sections.get("memo_of_appeal_section", "") else "raw_ocr")
+                page_award_date = find_exact_page(d_val, 1, 10, pages)
+                break
+
     # Birth Date
     date_of_birth = ""
     conf_date_of_birth = 0.40
@@ -4742,7 +4787,8 @@ def parse_extracted_text(text_lines, case_type=None):
                 marital_status, 
                 dependents, 
                 future_prospect, 
-                multiplier
+                multiplier,
+                award_date=award_date
             )
             if monthly_income > 0:
                 conf_monthly_income = 0.80
@@ -5024,6 +5070,7 @@ def parse_extracted_text(text_lines, case_type=None):
         "name": flat_name,
         "father_name": father_name,
         "date_of_accident": date_of_accident,
+        "award_date": award_date,
         "date_of_birth": date_of_birth,
         "age": age,
         "monthly_income": monthly_income,
@@ -5129,6 +5176,14 @@ def parse_extracted_text(text_lines, case_type=None):
                 "source_section": sec_date_of_accident,
                 "source_page": page_date_of_accident,
                 "extraction_method": method_date_of_accident
+            },
+            "award_date": {
+                "value": award_date,
+                "confidence": conf_award_date,
+                "source": sec_award_date,
+                "source_section": sec_award_date,
+                "source_page": page_award_date,
+                "extraction_method": method_award_date
             },
             "date_of_birth": {
                 "value": date_of_birth,

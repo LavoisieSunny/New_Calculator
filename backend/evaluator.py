@@ -17,6 +17,7 @@ def calculate_award_for_precedent(pred_meta):
     try:
         case_type = pred_meta.get("case_type", "injury")
 
+        # TODO: Add award_date to Qdrant ingestion payload so it can be retrieved from precedent metadata.
         req_data = {
             "case_type": case_type,
             "age": int(pred_meta.get("age")) if pred_meta.get("age") else 30,
@@ -24,9 +25,10 @@ def calculate_award_for_precedent(pred_meta):
             "dependents": int(pred_meta.get("dependents")) if pred_meta.get("dependents") else 3,
             "marital_status": pred_meta.get("marital_status", "married") or "married",
             "future_type": 2,
-            "consortium": 48400.0,
-            "funeral_expenses": 18150.0,
-            "loss_estate": 18150.0,
+            "award_date": pred_meta.get("award_date") or pred_meta.get("decision_date"),
+            "consortium": None,
+            "funeral_expenses": None,
+            "loss_estate": None,
             "disability": float(pred_meta.get("disability")) if pred_meta.get("disability") else 0.0,
             "medical_expenses": 50000.0,
             "future_medical_expenses": 10000.0,
