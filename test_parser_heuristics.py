@@ -681,6 +681,30 @@ class TestParserHeuristics(unittest.TestCase):
         self.assertNotIn("funeral_expenses", low_conf)
         self.assertNotIn("loss_estate", low_conf)
 
+    def test_table_extraction_annual_income(self):
+        """Verify that annual income in a compensation table is converted to monthly income and tagged with the correct method."""
+        table_text = (
+            "Assessment of quantum:\n"
+            "1. Annual income of the deceased: Rs. 1,20,000/-\n"
+            "2. Future prospects: 40%\n"
+            "3. Multiplier: 18\n"
+        )
+        fields = extract_compensation_table_fields(table_text)
+        self.assertAlmostEqual(fields["monthly_income"], 10000.0, places=2)
+        self.assertEqual(fields["monthly_income_method"], "Compensation Table Extraction (Annual->Monthly)")
+
+    def test_adjudged_vs_claimed_income_suppression(self):
+        """Verify that claimed income figures are suppressed and tribunal-adjudged figures are preferred."""
+        text_lines = [
+            "--- PAGE 1 ---",
+            "AWARD COPY",
+            "The claimant in his claim before the tribunal stated that the annual income of the deceased is Rs. 1,80,000/-",
+            "However, the annual income of the deceased is adjudged by the Tribunal at Rs. 1,20,000/-"
+        ]
+        res = parse_extracted_text(text_lines, case_type="death")
+        # Adjudged annual income (1,20,000 / 12 = 10000) should win over claimed (1,80,000 / 12 = 15000) due to claim suppression
+        self.assertAlmostEqual(res.get("monthly_income"), 10000.0, places=2)
+
 if __name__ == "__main__":
     unittest.main()
 

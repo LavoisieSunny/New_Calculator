@@ -2216,6 +2216,7 @@ def extract_compensation_table_fields(section_content, case_type=None):
     """
     fields = {
         "monthly_income": None,
+        "monthly_income_method": None,
         "future_prospect": None,
         "deduction": None,
         "annual_loss_dependency": None,
@@ -2259,8 +2260,14 @@ def extract_compensation_table_fields(section_content, case_type=None):
             fields["deduction"] = float(ded_pct_match.group(1))
             
         if val > 0:
-            if "monthly" in line_lower and any(kw in line_lower for kw in ["income", "salary", "earnings", "wage", "notional"]):
+            is_monthly = "monthly" in line_lower and any(kw in line_lower for kw in ["income", "salary", "earnings", "wage", "notional"])
+            is_annual = "annual" in line_lower and any(kw in line_lower for kw in ["income", "salary", "earnings", "wage", "notional"])
+            if is_monthly:
                 fields["monthly_income"] = val
+                fields["monthly_income_method"] = "Compensation Table Extraction"
+            elif is_annual:
+                fields["monthly_income"] = round(val / 12.0, 2)
+                fields["monthly_income_method"] = "Compensation Table Extraction (Annual->Monthly)"
             elif any(kw in line_lower for kw in ["loss of dependency", "annual loss", "dependency"]):
                 fields["annual_loss_dependency"] = val
             elif any(kw in line_lower for kw in ["funeral", "last rites", "last rituals"]):
@@ -2401,6 +2408,13 @@ def get_personal_deduction_pct(marital_status, dependents):
             return 0.20
 
 
+CLAIM_LANGUAGE_KEYWORDS = [
+    "claim", "claiming", "claimed", "sought", "demand", "demanded", 
+    "prayed", "prayer", "valuation", "valued at", "claim before the tribunal", 
+    "appeal valued at"
+]
+
+
 def contextual_extract(patterns, sections, priority_list, type_cast=str, default_val=None, field_name=None, debug_info=None, pages=None, sections_metadata=None, page_importances=None):
     """
     Upgraded Contextual Entity Extraction with dynamic section priority and page-importance tracking.
@@ -2422,7 +2436,10 @@ def contextual_extract(patterns, sections, priority_list, type_cast=str, default
     if debug_info is None:
         debug_info = {}
         
-    is_scored_field = field_name in ["consortium", "funeral_expenses", "estate_loss", "loss_estate"]
+    is_scored_field = field_name in [
+        "consortium", "funeral_expenses", "estate_loss", "loss_estate",
+        "monthly_income", "annual_loss_dependency"
+    ]
     candidates = []
 
     for sec_name, base_weight in priority_list:
@@ -2436,7 +2453,13 @@ def contextual_extract(patterns, sections, priority_list, type_cast=str, default
                     # Suppress matching claimed/prayer amounts as total compensation
                     start_pos = max(0, m.start() - 50)
                     pre_ctx = text[start_pos:m.start()].lower()
-                    if any(kw in pre_ctx for kw in ["claim", "claiming", "sought", "demand", "demanded", "prayed", "prayer", "valuation"]):
+                    if any(kw in pre_ctx for kw in CLAIM_LANGUAGE_KEYWORDS):
+                        continue
+                elif field_name in ("monthly_income", "annual_loss_dependency"):
+                    # Suppress matching claimed/prayer amounts for income fields
+                    start_pos = max(0, m.start() - 80)
+                    pre_ctx = text[start_pos:m.start()].lower()
+                    if any(kw in pre_ctx for kw in CLAIM_LANGUAGE_KEYWORDS):
                         continue
                 matched_source = m.group(0)
                 raw_val = m.group(1).strip()
@@ -2546,7 +2569,18 @@ def contextual_extract(patterns, sections, priority_list, type_cast=str, default
                         "final_extracted": final_val
                     }
                     if is_scored_field:
-                        score = _score_award_context(text, m.start())
+                        if field_name in ("monthly_income", "annual_loss_dependency"):
+                            start_ctx = max(0, m.start() - 80)
+                            end_ctx = min(len(text), m.end() + 80)
+                            context_lower = (text[start_ctx:m.start()] + " " + text[m.end():end_ctx]).lower()
+                            tribunal_keywords = [
+                                "assessed", "adjudged", "taken", "held", "fixed", "determined",
+                                "notional income", "as per the tribunal", "as awarded"
+                            ]
+                            has_positive_signal = any(kw in context_lower for kw in tribunal_keywords)
+                            score = float(base_weight) + (5.0 if has_positive_signal else 0.0)
+                        else:
+                            score = _score_award_context(text, m.start())
                         priority_idx = next((i for i, (s, _) in enumerate(priority_list) if s == sec_name), 999)
                         candidates.append({
                             "val": val_to_store,
@@ -2568,6 +2602,11 @@ def contextual_extract(patterns, sections, priority_list, type_cast=str, default
     if raw_ocr_text and not any(sec_name == "raw_ocr" for sec_name, _ in priority_list):
         for pat in patterns:
             for m in re.finditer(pat, raw_ocr_text, re.IGNORECASE):
+                if field_name in ("monthly_income", "annual_loss_dependency"):
+                    start_pos = max(0, m.start() - 80)
+                    pre_ctx = raw_ocr_text[start_pos:m.start()].lower()
+                    if any(kw in pre_ctx for kw in CLAIM_LANGUAGE_KEYWORDS):
+                        continue
                 matched_source = m.group(0)
                 raw_val = m.group(1).strip()
                 
@@ -2633,7 +2672,18 @@ def contextual_extract(patterns, sections, priority_list, type_cast=str, default
                             "final_extracted": final_val
                         }
                         if is_scored_field:
-                            score = _score_award_context(raw_ocr_text, m.start())
+                            if field_name in ("monthly_income", "annual_loss_dependency"):
+                                start_ctx = max(0, m.start() - 80)
+                                end_ctx = min(len(raw_ocr_text), m.end() + 80)
+                                context_lower = (raw_ocr_text[start_ctx:m.start()] + " " + raw_ocr_text[m.end():end_ctx]).lower()
+                                tribunal_keywords = [
+                                    "assessed", "adjudged", "taken", "held", "fixed", "determined",
+                                    "notional income", "as per the tribunal", "as awarded"
+                                ]
+                                has_positive_signal = any(kw in context_lower for kw in tribunal_keywords)
+                                score = 50.0 + (5.0 if has_positive_signal else 0.0)
+                            else:
+                                score = _score_award_context(raw_ocr_text, m.start())
                             candidates.append({
                                 "val": val_to_store,
                                 "confidence": confidence,
@@ -3720,7 +3770,7 @@ def parse_extracted_text(text_lines, case_type=None):
         sec_monthly_income = "compensation_section"
         sec_meta = sections_metadata.get("compensation_section", {}) or sections_metadata.get("award_copy_section", {})
         page_monthly_income = find_exact_page(int(monthly_income), sec_meta.get("start_page", 1), sec_meta.get("end_page", 1), pages)
-        method_monthly_income = "Compensation Table Extraction"
+        method_monthly_income = comp_fields.get("monthly_income_method") or "Compensation Table Extraction"
     else:
         # Temporary debug log of sections.keys() and sections containing 'annual income'
         logger.info(f"Sections keys: {list(sections.keys())}")
@@ -4316,7 +4366,7 @@ def parse_extracted_text(text_lines, case_type=None):
     if not compensation_table:
         compensation_table = {}
     for k, v in comp_fields.items():
-        if v and k not in ["monthly_income", "multiplier", "future_prospect", "deduction", "total_compensation"]:
+        if v and k not in ["monthly_income", "monthly_income_method", "multiplier", "future_prospect", "deduction", "total_compensation"]:
             head_title = k.replace("_", " ").title()
             compensation_table[head_title] = v
 
