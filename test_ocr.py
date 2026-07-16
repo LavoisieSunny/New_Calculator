@@ -162,9 +162,10 @@ def test_vision_cross_check_trigger():
             mock_vision.reset_mock()
             
             # 2. Test lower_court track: should NOT trigger vision cross-check when paddle_good is True
+            # We use page_idx=2 to bypass the page 0/1 direct vision override
             lines_lc, meta_lc = ocr_page_with_vision(
-                page_idx=0,
-                total_pages=1,
+                page_idx=2,
+                total_pages=3,
                 rendered_img_path="dummy_path.png",
                 pdf_path=None,
                 vision_available=True,
