@@ -163,6 +163,7 @@ class PDFChatRequest(BaseModel):
     parsed_fields: dict | None = None
     calculator_result: dict | None = None
     is_justify: bool = False
+    history: list[dict] | None = None
 
 async def prepare_pdf_chat_prompt(request: PDFChatRequest):
     from backend.vector_db import semantic_search_rag
@@ -637,7 +638,7 @@ async def chat_with_pdf(request: PDFChatRequest):
 
         # 5. Generate LLM Response using configured provider (Ollama Qwen2.5:14b)
         from backend.llm_client import generate_response
-        ai_response = await asyncio.to_thread(generate_response, user_prompt, system_instruction)
+        ai_response = await asyncio.to_thread(generate_response, user_prompt, system_instruction, None, request.history)
         
         return {
             "response": ai_response,
@@ -677,7 +678,7 @@ async def chat_with_pdf_stream(request: PDFChatRequest):
         
         def producer():
             try:
-                for token in generate_response_stream(user_prompt, system_instruction):
+                for token in generate_response_stream(user_prompt, system_instruction, request.history):
                     q.put(token)
             except Exception as ex:
                 logger.error(f"Error in stream producer thread: {str(ex)}")

@@ -336,6 +336,8 @@ document.addEventListener("DOMContentLoaded", () => {
     const chatSendBtn = document.getElementById("chat-send-btn");
     const chatMessages = document.getElementById("chat-messages");
     const chatCaseFilter = document.getElementById("chat-case-filter");
+    const clearPrecedentChatBtn = document.getElementById("clear-precedent-chat-btn");
+    let precedentChatHistory = [];
 
     // MODAL DASHBOARD
     const resultsModal = document.getElementById("results-modal");
@@ -2496,6 +2498,27 @@ This cannot be undone.`)) return;
     chatInput.addEventListener("keypress", (e) => {
         if (e.key === "Enter") handleChatSend();
     });
+    if (clearPrecedentChatBtn) {
+        clearPrecedentChatBtn.addEventListener("click", () => {
+            precedentChatHistory = [];
+            chatMessages.innerHTML = `
+                <div class="chat-bubble bot">
+                    <div class="chat-avatar"><i class="fa-solid fa-robot"></i></div>
+                    <div class="chat-text">
+                        Hello! I am your **AI Legal Assistant** coupled with your centralized **Qdrant Vector Database**.
+                        <br><br>
+                        Once you index legal files in the **PDF Library**, you can ask me semantic questions such as:
+                        <ul>
+                            <li>*"Find cases where an unmarried deceased of age 32 had 4 dependents"*</li>
+                            <li>*"Show me injury judgments with permanent disability above 40%"*</li>
+                            <li>*"What compensation was awarded in cases involving salary of Rs 25,000?"*</li>
+                        </ul>
+                        I will automatically locate matching sentences in Qdrant, retrieve the judgments, and formulate legal summaries!
+                    </div>
+                </div>
+            `;
+        });
+    }
 
     async function handleChatSend() {
         const query = chatInput.value.trim();
@@ -2511,7 +2534,8 @@ This cannot be undone.`)) return;
         try {
             const payload = {
                 message: query,
-                case_type: chatCaseFilter.value
+                case_type: chatCaseFilter.value,
+                history: precedentChatHistory.slice(-12)
             };
 
             const chatDocumentFilter = document.getElementById("chat-document-filter");
@@ -2534,6 +2558,10 @@ This cannot be undone.`)) return;
 
             // Render structured markdown legal response
             appendChatBubble(data.response, "bot");
+
+            // Update chat memory
+            precedentChatHistory.push({ role: "user", content: query });
+            precedentChatHistory.push({ role: "assistant", content: data.response });
 
         } catch (error) {
             console.error("AI Legal chat error:", error);
@@ -3410,6 +3438,8 @@ This cannot be undone.`)) return;
     const assistantChatMessages = document.getElementById("assistant-chat-messages");
     const assistantChatInput = document.getElementById("assistant-chat-input");
     const assistantChatSendBtn = document.getElementById("assistant-chat-send-btn");
+    const clearAssistantChatBtn = document.getElementById("clear-assistant-chat-btn");
+    let assistantChatHistory = [];
 
     // --- WORKSTATION RIGHT PANE TABS CONTROLLER ---
     const paneTabButtons = document.querySelectorAll(".pane-tab-btn");
@@ -3628,6 +3658,19 @@ This cannot be undone.`)) return;
             if (e.key === "Enter") handleAssistantChatSend();
         });
     }
+    if (clearAssistantChatBtn) {
+        clearAssistantChatBtn.addEventListener("click", () => {
+            assistantChatHistory = [];
+            assistantChatMessages.innerHTML = `
+                <div class="chat-bubble bot">
+                    <div class="chat-avatar"><i class="fa-solid fa-robot"></i></div>
+                    <div class="chat-text">
+                        Hello! I am your AI Legal Assistant. Click questions above to start auditing the workstation state!
+                    </div>
+                </div>
+            `;
+        });
+    }
 
     async function handleAssistantChatSend(displayLabel = null) {
         const query = assistantChatInput.value.trim();
@@ -3705,7 +3748,8 @@ This cannot be undone.`)) return;
                 ocr_text: currentOcrRawText ? currentOcrRawText.join("\n") : "",
                 parsed_fields: parsedFields,
                 calculator_result: calculatorResult,
-                is_justify: isJustify
+                is_justify: isJustify,
+                history: assistantChatHistory.slice(-12)
             };
 
             const response = await fetch("/api/chat/pdf/stream", {
@@ -3774,6 +3818,10 @@ This cannot be undone.`)) return;
             if (typeof bindChatBubbleClick === "function" && botBubble) {
                 bindChatBubbleClick(botBubble);
             }
+
+            // Append turn to history
+            assistantChatHistory.push({ role: "user", content: query });
+            assistantChatHistory.push({ role: "assistant", content: accumulatedText });
 
             // After justify, inject the "Recalculate Compensation" follow-up action
             if (isJustify) {

@@ -123,7 +123,7 @@ def validate_ollama_setup() -> dict:
         logger.error(f"Ollama startup connection failed at {base_url}: {str(e)}")
     return stats
  
-def generate_response(prompt: str, system_instruction: str = None, response_format: str = None) -> str:
+def generate_response(prompt: str, system_instruction: str = None, response_format: str = None, history: list[dict] | None = None) -> str:
     logger.info(f"Generating LLM response using provider '{LLM_PROVIDER}', model '{LLM_MODEL_NAME}'")
     
     char_count = len(prompt)
@@ -137,14 +137,28 @@ def generate_response(prompt: str, system_instruction: str = None, response_form
     final_prompt = prompt
     if system_instruction:
         final_prompt = f"System Instruction:\n{system_instruction}\n\nUser Question:\n{prompt}"
+    
+    # Cap history defensively
+    history_sliced = history[-12:] if history else None
+
     try:
         if LLM_PROVIDER == "gemini":
             url = f"https://generativelanguage.googleapis.com/v1beta/models/{LLM_MODEL_NAME}:generateContent?key={LLM_API_KEY}"
             headers = {"Content-Type": "application/json"}
-            payload = {"contents": [{"parts": [{"text": final_prompt}]}]}
-            if system_instruction:
-                payload["systemInstruction"] = {"parts": [{"text": system_instruction}]}
-                payload["contents"][0]["parts"][0]["text"] = prompt
+            if history_sliced:
+                contents = []
+                for turn in history_sliced:
+                    role = "user" if turn.get("role") == "user" else "model"
+                    contents.append({"role": role, "parts": [{"text": turn.get("content", "")}]})
+                contents.append({"role": "user", "parts": [{"text": prompt}]})
+                payload = {"contents": contents}
+                if system_instruction:
+                    payload["systemInstruction"] = {"parts": [{"text": system_instruction}]}
+            else:
+                payload = {"contents": [{"parts": [{"text": final_prompt}]}]}
+                if system_instruction:
+                    payload["systemInstruction"] = {"parts": [{"text": system_instruction}]}
+                    payload["contents"][0]["parts"][0]["text"] = prompt
             if response_format == "json":
                 payload["generationConfig"] = {"responseMimeType": "application/json"}
             req_body = json.dumps(payload).encode("utf-8")
@@ -154,6 +168,8 @@ def generate_response(prompt: str, system_instruction: str = None, response_form
                 messages = []
                 if system_instruction:
                     messages.append({"role": "system", "content": system_instruction})
+                if history_sliced:
+                    messages.extend(history_sliced)
                 messages.append({"role": "user", "content": prompt})
                 payload = {
                     "model": LLM_MODEL_NAME, 
@@ -168,6 +184,8 @@ def generate_response(prompt: str, system_instruction: str = None, response_form
                 messages = []
                 if system_instruction:
                     messages.append({"role": "system", "content": system_instruction})
+                if history_sliced:
+                    messages.extend(history_sliced)
                 messages.append({"role": "user", "content": prompt})
                 payload = {
                     "model": LLM_MODEL_NAME, 
@@ -187,6 +205,8 @@ def generate_response(prompt: str, system_instruction: str = None, response_form
             messages = []
             if system_instruction:
                 messages.append({"role": "system", "content": system_instruction})
+            if history_sliced:
+                messages.extend(history_sliced)
             messages.append({"role": "user", "content": prompt})
             payload = {"model": LLM_MODEL_NAME, "messages": messages, "temperature": 0.2}
             if response_format == "json":
@@ -239,7 +259,7 @@ def generate_response(prompt: str, system_instruction: str = None, response_form
         logger.error(f"Failed to generate LLM response: {str(e)}")
         return f"Error communicating with LLM client: {str(e)}"
  
-def generate_response_stream(prompt: str, system_instruction: str = None):
+def generate_response_stream(prompt: str, system_instruction: str = None, history: list[dict] | None = None):
     logger.info(f"Streaming LLM response using provider '{LLM_PROVIDER}', model '{LLM_MODEL_NAME}'")
     
     char_count = len(prompt)
@@ -250,6 +270,9 @@ def generate_response_stream(prompt: str, system_instruction: str = None):
         sys_token_est = int(sys_char_count / 4)
         logger.info(f"LLM Stream System Instruction size: {sys_char_count} chars, approx {sys_token_est} tokens")
 
+    # Cap history defensively
+    history_sliced = history[-12:] if history else None
+
     try:
         if LLM_PROVIDER == "ollama":
             if "v1" in LLM_API_ENDPOINT:
@@ -257,6 +280,8 @@ def generate_response_stream(prompt: str, system_instruction: str = None):
                 messages = []
                 if system_instruction:
                     messages.append({"role": "system", "content": system_instruction})
+                if history_sliced:
+                    messages.extend(history_sliced)
                 messages.append({"role": "user", "content": prompt})
                 payload = {
                     "model": LLM_MODEL_NAME, 
@@ -270,6 +295,8 @@ def generate_response_stream(prompt: str, system_instruction: str = None):
                 messages = []
                 if system_instruction:
                     messages.append({"role": "system", "content": system_instruction})
+                if history_sliced:
+                    messages.extend(history_sliced)
                 messages.append({"role": "user", "content": prompt})
                 payload = {
                     "model": LLM_MODEL_NAME,
@@ -307,7 +334,7 @@ def generate_response_stream(prompt: str, system_instruction: str = None):
                     except Exception as e:
                         logger.warning(f"Error parsing stream line: {str(e)}")
         else:
-            full_resp = generate_response(prompt, system_instruction)
+            full_resp = generate_response(prompt, system_instruction, history=history_sliced)
             yield full_resp
     except (urllib.error.URLError, socket.timeout, TimeoutError) as e:
         is_timeout = False

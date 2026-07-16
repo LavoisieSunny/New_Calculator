@@ -52,6 +52,7 @@ class TestChatbotCompensationContext(unittest.TestCase):
             
             called_args, _ = mock_generate.call_args
             prompt = called_args[0]
+            system_instruction = called_args[1] if len(called_args) > 1 else ""
             
             # Assertions:
             # 1. Chatbot prompt contains all four values in its context and instruction details
@@ -61,13 +62,13 @@ class TestChatbotCompensationContext(unittest.TestCase):
             self.assertIn("270000", prompt, "Calculated compensation must be in prompt context")
             
             # 2. Verify NO "source of truth" wording is allowed (forbidden list matches exactly)
-            self.assertIn("NEVER say: 'The deterministic calculator output supplied in the context is the absolute single source of truth' or 'the mathematical engine remains the ultimate source of truth'", prompt)
-            self.assertIn("NEVER say: 'Calculated amount is the source of truth'", prompt)
+            self.assertIn("NEVER say: 'The deterministic calculator output supplied in the context is the absolute single source of truth' or 'the mathematical engine remains the ultimate source of truth'", system_instruction)
+            self.assertIn("NEVER say: 'Calculated amount is the source of truth'", system_instruction)
             
             # 3. PDF award remains distinguishable from calculator output
-            self.assertIn("awarded_compensation: Amount awarded by the Tribunal/Court", prompt)
-            self.assertIn("calculated_compensation: Amount computed by the deterministic calculator", prompt)
-            self.assertIn("The Tribunal award is a judicial fact, whereas the calculator output is a computed estimate.", prompt)
+            self.assertIn("awarded_compensation: Amount awarded by the Tribunal/Court", system_instruction)
+            self.assertIn("calculated_compensation: Amount computed by the deterministic calculator", system_instruction)
+            self.assertIn("The Tribunal award is a judicial fact, whereas the calculator output is a computed estimate.", system_instruction)
 
     def test_chatbot_stream_context_wording_and_values(self):
         mock_payload = {
@@ -111,16 +112,84 @@ class TestChatbotCompensationContext(unittest.TestCase):
             
             called_args, _ = mock_generate_stream.call_args
             prompt = called_args[0]
+            system_instruction = called_args[1] if len(called_args) > 1 else ""
             
             # Assertions:
             self.assertIn("1,06,600", prompt)
             self.assertIn("7,50,000", prompt)
             self.assertIn("2,00,000", prompt)
             self.assertIn("270000", prompt)
-            self.assertIn("NEVER say: 'The deterministic calculator output supplied in the context is the absolute single source of truth' or 'the mathematical engine remains the ultimate source of truth'", prompt)
-            self.assertIn("NEVER say: 'Calculated amount is the source of truth'", prompt)
-            self.assertIn("awarded_compensation: Amount awarded by the Tribunal/Court", prompt)
-            self.assertIn("calculated_compensation: Amount computed by the deterministic calculator", prompt)
+            self.assertIn("NEVER say: 'The deterministic calculator output supplied in the context is the absolute single source of truth' or 'the mathematical engine remains the ultimate source of truth'", system_instruction)
+            self.assertIn("NEVER say: 'Calculated amount is the source of truth'", system_instruction)
+            self.assertIn("awarded_compensation: Amount awarded by the Tribunal/Court", system_instruction)
+            self.assertIn("calculated_compensation: Amount computed by the deterministic calculator", system_instruction)
+
+    def test_chatbot_history_forwarding(self):
+        """Verify that history array is forwarded to generate_response and generate_response_stream."""
+        mock_history = [
+            {"role": "user", "content": "Hello AI"},
+            {"role": "assistant", "content": "Hello User"},
+            {"role": "user", "content": "What is the formula?"}
+        ]
+        mock_payload = {
+            "question": "What is the compensation amount?",
+            "filename": "MA_609_2026.pdf",
+            "ocr_text": "Amount Awarded Rs. 1,06,600.",
+            "parsed_fields": {
+                "case_type": "injury",
+                "name": "Kumari Sneha",
+                "age": 6,
+                "monthly_income": 0,
+                "disability": 0
+            },
+            "calculator_result": {
+                "case_type": "injury",
+                "final_amount": 270000,
+                "total_compensation": 270000
+            },
+            "history": mock_history
+        }
+        
+        request = PDFChatRequest(**mock_payload)
+        
+        # Test chat_with_pdf history forwarding
+        with patch("backend.llm_client.generate_response") as mock_generate, \
+             patch("backend.vector_db.semantic_search_rag") as mock_rag:
+             
+            mock_generate.return_value = "Mocked Response"
+            mock_rag.return_value = []
+            
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            try:
+                loop.run_until_complete(chat_with_pdf(request))
+            finally:
+                loop.close()
+            
+            called_args, called_kwargs = mock_generate.call_args
+            history_val = called_kwargs.get("history") or (called_args[3] if len(called_args) > 3 else None)
+            self.assertEqual(history_val, mock_history)
+
+        # Test chat_with_pdf_stream history forwarding
+        with patch("backend.llm_client.generate_response_stream") as mock_generate_stream, \
+             patch("backend.vector_db.semantic_search_rag") as mock_rag:
+             
+            mock_generate_stream.return_value = ["Mocked Response Chunk"]
+            mock_rag.return_value = []
+            
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            try:
+                response = loop.run_until_complete(chat_with_pdf_stream(request))
+                async def consume():
+                    async for _ in response.body_iterator:
+                        pass
+                loop.run_until_complete(consume())
+            finally:
+                loop.close()
+            
+            called_args, _ = mock_generate_stream.call_args
+            self.assertEqual(called_args[2] if len(called_args) > 2 else None, mock_history)
 
 if __name__ == "__main__":
     unittest.main()

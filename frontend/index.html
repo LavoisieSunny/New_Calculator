@@ -594,7 +594,7 @@
                             <h3><i class="fa-solid fa-brain-circuit text-glow"></i> AI Precedent Chat Assistant</h3>
                             <p class="panel-subtitle">Runs semantic legal searches over your centralized Qdrant vector database.</p>
                         </div>
-                        <div class="chat-filters" style="display: flex; gap: 8px;">
+                        <div class="chat-filters" style="display: flex; gap: 8px; align-items: center;">
                             <select id="chat-document-filter" class="btn btn-secondary btn-small">
                                 <option value="all">All Documents</option>
                                 <!-- Dynamically populated indexed files -->
@@ -604,6 +604,9 @@
                                 <option value="injury">Injury Cases Only</option>
                                 <option value="death">Death Cases Only</option>
                             </select>
+                            <button id="clear-precedent-chat-btn" class="btn btn-secondary btn-small" title="Clear Chat History">
+                                <i class="fa-solid fa-trash-can"></i> Clear
+                            </button>
                         </div>
                     </div>
 
@@ -835,8 +838,13 @@
 
                 <!-- 2. Unified AI Chat Interface -->
                 <div class="assistant-chat-container" style="display: flex; flex-direction: column; flex: 1; min-height: 460px; gap: 10px;">
-                    <div style="font-family: 'Outfit', sans-serif; font-weight: 700; color: var(--text-secondary); font-size: 0.82rem; text-transform: uppercase; letter-spacing: 0.5px;">
-                        Interactive Audit Chat
+                    <div style="display: flex; justify-content: space-between; align-items: center;">
+                        <span style="font-family: 'Outfit', sans-serif; font-weight: 700; color: var(--text-secondary); font-size: 0.82rem; text-transform: uppercase; letter-spacing: 0.5px;">
+                            Interactive Audit Chat
+                        </span>
+                        <button type="button" id="clear-assistant-chat-btn" class="btn btn-secondary btn-small" style="padding: 2px 8px; font-size: 0.72rem; line-height: 1;" title="Clear Chat History">
+                            <i class="fa-solid fa-trash-can"></i> Clear
+                        </button>
                     </div>
                     <div id="assistant-chat-messages" class="chat-messages" style="flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 12px; padding: 14px; background: var(--bg-card); border-radius: var(--radius-sm); border: 1px solid var(--border-glass); min-height: 380px;">
                         <div class="chat-bubble bot">
