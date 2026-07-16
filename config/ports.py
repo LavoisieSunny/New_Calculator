@@ -11,8 +11,8 @@ import os
 HOST = os.getenv("COMP_CALC_HOST", "0.0.0.0")
 
 # Port to run the application on.
-# Default is 3109. You can easily change this to 80, 443, or any other port.
-PORT = int(os.getenv("COMP_CALC_PORT", 3109))
+# Default is 7203. You can easily change this to 80, 443, or any other port.
+PORT = int(os.getenv("COMP_CALC_PORT", 7203))
 
 # Debug mode for FastAPI (automatic reload, interactive docs)
 DEBUG = os.getenv("COMP_CALC_DEBUG", "True").lower() == "true"

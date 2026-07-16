@@ -782,11 +782,16 @@ async def delete_qdrant_document(filename: str):
         for file_id in to_delete:
             BATCH_QUEUE.pop(file_id, None)
             
+        message = (
+            f"Successfully deleted document '{filename}' from Qdrant and queue."
+            if deleted else
+            f"No matching points found in Qdrant for '{filename}'."
+        )
         return {
             "success": deleted,
             "filename": filename,
             "removed_from_queue": len(to_delete) > 0,
-            "message": f"Successfully deleted document '{filename}' from Qdrant and queue."
+            "message": message
         }
     except Exception as e:
         logger.error(f"Error in delete_qdrant_document endpoint: {str(e)}")

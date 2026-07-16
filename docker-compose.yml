@@ -3,12 +3,12 @@ services:
     build: .
     container_name: compensation-calc-app
     ports:
-      - "3111:3109"
+      - "7202:7203"
     environment:
-      - COMP_CALC_PORT=3109
+      - COMP_CALC_PORT=7203
       - COMP_CALC_HOST=0.0.0.0
       - COMP_CALC_DEBUG=True
-      - QDRANT_URL=http://qdrant:3108
+      - QDRANT_URL=http://qdrant:7204
       - LLM_API_ENDPOINT=http://host.docker.internal:11434
     extra_hosts:
       - "host.docker.internal:host-gateway"
@@ -35,9 +35,9 @@ services:
     image: qdrant/qdrant:latest
     container_name: compensation-calc-qdrant
     ports:
-      - "3108:3108"
+      - "7204:7204"
     environment:
-      - QDRANT__SERVICE__HTTP_PORT=3108
+      - QDRANT__SERVICE__HTTP_PORT=7204
     volumes:
       - ./qdrant_db:/qdrant/storage
     restart: unless-stopped

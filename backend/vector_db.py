@@ -13,8 +13,8 @@ logger = logging.getLogger("VectorDB")
 # Centralized collection name for all legal precedents
 COLLECTION_NAME = "legal_documents"
 
-# Qdrant server connection URL (configured to run on server port 3108)
-QDRANT_URL = os.getenv("QDRANT_URL", "http://localhost:3108")
+# Qdrant server connection URL (configured to run on server port 7204)
+QDRANT_URL = os.getenv("QDRANT_URL", "http://localhost:7204")
 
 # Global lazy-initialized clients to prevent loading models during module imports
 _qdrant_client = None
@@ -26,7 +26,7 @@ def get_qdrant_client():
         try:
             logger.info(f"Initializing Qdrant client at URL: {QDRANT_URL}")
             
-            # Connect to external Qdrant server (running on port 3108)
+            # Connect to external Qdrant server (running on port 7204)
             _qdrant_client = QdrantClient(url=QDRANT_URL)
             
             # Create centralized legal_documents collection if it doesn't exist yet
@@ -635,17 +635,32 @@ def delete_document(filename: str) -> bool:
         return False
     try:
         from qdrant_client.models import Filter, FieldCondition, MatchValue
+
+        delete_filter = Filter(
+            must=[
+                FieldCondition(
+                    key="filename",
+                    match=MatchValue(value=filename)
+                )
+            ]
+        )
+
+        # First check whether anything actually matches
+        existing, _ = client.scroll(
+            collection_name=COLLECTION_NAME,
+            scroll_filter=delete_filter,
+            limit=1,
+            with_payload=False,
+            with_vectors=False
+        )
+        if not existing:
+            logger.warning(f"No points found in Qdrant matching filename='{filename}'. Nothing deleted.")
+            return False
+
         logger.info(f"Deleting points for document '{filename}' from collection '{COLLECTION_NAME}'...")
         client.delete(
             collection_name=COLLECTION_NAME,
-            points_selector=Filter(
-                must=[
-                    FieldCondition(
-                        key="filename",
-                        match=MatchValue(value=filename)
-                    )
-                ]
-            )
+            points_selector=delete_filter
         )
         logger.info(f"Points for document '{filename}' deleted successfully!")
         return True
