@@ -113,5 +113,69 @@ def test_ocr_and_parsing():
         print(f"\n[ERROR] OCR Execution failed: {str(e)}")
         sys.exit(1)
 
+def test_vision_cross_check_trigger():
+    from unittest.mock import patch, MagicMock
+    from backend.ocr import ocr_page_with_vision
+    
+    mock_paddle_lines = ["Claimant Name: Rajesh", "Age: 32", "Award: 200000"]
+    mock_vision_text = "Claimant Name: Rajesh\nAge: 32\nAward: 200000"
+    
+    with patch("backend.ocr.classify_scanned_page", return_value="text-heavy"), \
+         patch("backend.ocr.call_paddle_ocr", return_value=(mock_paddle_lines, 0.95, True)) as mock_paddle, \
+         patch("backend.ocr.score_ocr_page_quality", return_value=0.95), \
+         patch("backend.ocr.call_vision_model", return_value=mock_vision_text) as mock_vision, \
+         patch("backend.ocr.Image.open") as mock_image_open:
+        
+        # Mock PIL Image
+        mock_img = MagicMock()
+        mock_img.convert.return_value = mock_img
+        mock_img.size = (800, 800)
+        mock_image_open.return_value = mock_img
+        
+        # Mock preprocessing helpers
+        with patch("backend.ocr.preprocess_for_vision", return_value=mock_img), \
+             patch("backend.ocr.image_to_base64", return_value="mock_b64"), \
+             patch("backend.ocr._vision_is_paused", return_value=False), \
+             patch("backend.ocr.OCR_ENABLE_VISION_ESCALATION", True):
+             
+            # 1. Test high_court track: should trigger vision cross-check even though paddle_good is True
+            # We pass fitz_text to bypass the dynamic language detection probe (which calls call_paddle_ocr)
+            lines_hc, meta_hc = ocr_page_with_vision(
+                page_idx=0,
+                total_pages=1,
+                rendered_img_path="dummy_path.png",
+                fitz_text="mock digital layer text to bypass dynamic language probe",
+                pdf_path=None,
+                vision_available=True,
+                paddle_available=True,
+                track="high_court"
+            )
+            
+            mock_paddle.assert_called_once()
+            mock_vision.assert_called_once()
+            assert meta_hc.get("vision_cross_checked") is True
+            assert "[VISION CROSS-CHECK]" in lines_hc
+            assert "Age: 32" in lines_hc
+            
+            # Reset mock counts for lower_court test
+            mock_paddle.reset_mock()
+            mock_vision.reset_mock()
+            
+            # 2. Test lower_court track: should NOT trigger vision cross-check when paddle_good is True
+            lines_lc, meta_lc = ocr_page_with_vision(
+                page_idx=0,
+                total_pages=1,
+                rendered_img_path="dummy_path.png",
+                pdf_path=None,
+                vision_available=True,
+                paddle_available=True,
+                track="lower_court"
+            )
+            
+            mock_paddle.assert_called_once()
+            mock_vision.assert_not_called()
+            assert meta_lc.get("vision_cross_checked") is False
+            assert "[VISION CROSS-CHECK]" not in lines_lc
+
 if __name__ == "__main__":
     test_ocr_and_parsing()

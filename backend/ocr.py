@@ -1088,7 +1088,8 @@ def ocr_page_with_vision(
                 "quality_score": 1.0, "preprocessing_applied": [],
                 "lines": len(lines), "ocr_boxes": [],
                 "render_time": 0.0, "ocr_time": elapsed, "total_page_time": elapsed,
-                "confidence_untrusted": False
+                "confidence_untrusted": False,
+                "vision_cross_checked": False
             }
             logger.info(f"Page {page_num}: PyMuPDF fast path ({len(lines)} lines, {elapsed:.2f}s)")
             return lines, meta
@@ -1100,7 +1101,8 @@ def ocr_page_with_vision(
             "confidence": 0.0, "text_length": 0, "quality_score": 0.0,
             "preprocessing_applied": [], "lines": 0, "ocr_boxes": [],
             "render_time": 0.0, "ocr_time": 0.0, "total_page_time": time.time() - start,
-            "confidence_untrusted": False
+            "confidence_untrusted": False,
+            "vision_cross_checked": False
         }
         return [], meta
 
@@ -1113,7 +1115,8 @@ def ocr_page_with_vision(
             "confidence": 0.0, "text_length": 0, "quality_score": 0.0,
             "preprocessing_applied": [], "lines": 0, "ocr_boxes": [],
             "render_time": 0.0, "ocr_time": 0.0, "total_page_time": time.time() - start,
-            "confidence_untrusted": False
+            "confidence_untrusted": False,
+            "vision_cross_checked": False
         }
 
     # ── 3. Blank page check ───────────────────────────────────────────
@@ -1128,7 +1131,8 @@ def ocr_page_with_vision(
             "confidence": 1.0, "text_length": 0, "quality_score": 0.0,
             "preprocessing_applied": [], "lines": 0, "ocr_boxes": [],
             "render_time": 0.0, "ocr_time": 0.0, "total_page_time": elapsed,
-            "confidence_untrusted": False
+            "confidence_untrusted": False,
+            "vision_cross_checked": False
         }
 
     # ── 4. Downscale only — defer the (CPU/RAM-costly) CLAHE/colour-space
@@ -1153,6 +1157,8 @@ def ocr_page_with_vision(
     engine_used = ""
     ocr_start = time.time()
     confidence = 0.0
+    is_cross_check = False
+    vis_lines = []
 
     # Determine language for this page
     page_lang = "hi" if track == "lower_court" else "en"
@@ -1227,28 +1233,41 @@ def ocr_page_with_vision(
             paddle_lines, paddle_conf, paddle_is_tabular = call_paddle_ocr(rendered_img_path, page_num=page_num, lang=page_lang)
             paddle_q = score_ocr_page_quality(paddle_lines)
             paddle_good = _paddle_result_is_trustworthy(paddle_lines, paddle_conf, paddle_q)
-            if paddle_good:
-                lines, engine_used, confidence = paddle_lines, "PaddleOCR", paddle_conf
-            elif vision_available and OCR_ENABLE_VISION_ESCALATION and not _vision_is_paused():
-                logger.info(f"Page {page_num}: PaddleOCR quality low (conf={paddle_conf:.2f}, q={paddle_q:.2f}) -> escalating to qwen2.5vl:7b")
+            
+            is_hc_tabular_escalation = (
+                track == "high_court" and
+                paddle_is_tabular and
+                OCR_ENABLE_VISION_ESCALATION and
+                vision_available and
+                not _vision_is_paused()
+            )
+            should_escalate = (not paddle_good) or is_hc_tabular_escalation
+            
+            if should_escalate and vision_available and OCR_ENABLE_VISION_ESCALATION and not _vision_is_paused():
+                if is_hc_tabular_escalation:
+                    is_cross_check = True
+                    logger.info(f"Page {page_num}: Tabular page in high_court track -> triggering vision cross-check")
+                else:
+                    logger.info(f"Page {page_num}: PaddleOCR quality low (conf={paddle_conf:.2f}, q={paddle_q:.2f}) -> escalating to qwen2.5vl:7b")
+                
                 img_b64 = image_to_base64(_get_processed(), quality=85)
                 raw_text = call_vision_model(img_b64, page_num=page_num)
                 del img_b64
                 vis_lines = [l.strip() for l in raw_text.split("\n") if l.strip()] if raw_text and raw_text.strip() != "[BLANK PAGE]" else []
-                vis_q = score_ocr_page_quality(vis_lines)
-                # Vision must clearly beat Paddle on the quality score, not just be
-                # longer — "more lines" alone is a weak/gameable signal (vision models
-                # can hallucinate repeated boilerplate or split single lines, which
-                # would otherwise let a worse transcription win purely on line count).
-                # Require a real quality margin; only fall back to the line-count
-                # signal when Paddle produced essentially nothing to compare against.
-                if vis_lines:
-                    lines, engine_used, confidence = vis_lines, "qwen2.5vl:7b", 0.90
-                elif paddle_lines and paddle_conf > 0.0:
+                
+                if is_cross_check:
+                    lines, engine_used, confidence = paddle_lines, OCR_HYBRID_LABEL, paddle_conf
+                else:
+                    if vis_lines:
+                        lines, engine_used, confidence = vis_lines, "qwen2.5vl:7b", 0.90
+                    elif paddle_lines and paddle_conf > 0.0:
+                        lines, engine_used, confidence = paddle_lines, "PaddleOCR", paddle_conf
+            else:
+                if paddle_good:
                     lines, engine_used, confidence = paddle_lines, "PaddleOCR", paddle_conf
-            elif _paddle_result_is_trustworthy(paddle_lines, paddle_conf, paddle_q):
-                # Paddle's result is the best we have (vision unavailable/disabled)
-                lines, engine_used, confidence = paddle_lines, "PaddleOCR", paddle_conf
+                elif _paddle_result_is_trustworthy(paddle_lines, paddle_conf, paddle_q):
+                    # Paddle's result is the best we have (vision unavailable/disabled)
+                    lines, engine_used, confidence = paddle_lines, "PaddleOCR", paddle_conf
         elif vision_available:
             logger.info(f"Page {page_num}: PaddleOCR unavailable -> qwen2.5vl:7b")
             img_b64 = image_to_base64(_get_processed(), quality=85)
@@ -1265,12 +1284,16 @@ def ocr_page_with_vision(
         # actual table structure (proper cells, not a gap-guessed " | "
         # join), and append it. This only fires for pages that need it —
         # not a blanket cost on every page in the batch.
-        if engine_used == "PaddleOCR" and paddle_is_tabular and OCR_ENABLE_TABLE_STRUCTURE:
+        if engine_used in ("PaddleOCR", OCR_HYBRID_LABEL) and paddle_is_tabular and OCR_ENABLE_TABLE_STRUCTURE:
             table_mds = extract_tables_via_structure(rendered_img_path, page_num=page_num)
             if table_mds:
                 lines = list(lines) + ["", "[STRUCTURED TABLE — PP-StructureV3]"]
                 for tmd in table_mds:
                     lines.extend(tmd.split("\n"))
+
+        # Append vision output as an additional labeled block if cross-checked
+        if is_cross_check and vis_lines:
+            lines = list(lines) + ["", "[VISION CROSS-CHECK]"] + vis_lines
 
         # ── 5c. Nothing worked → Tesseract (last resort) ─────────────
         if not lines:
@@ -1365,7 +1388,8 @@ def ocr_page_with_vision(
         "preprocessing_applied": ["rgb_convert", "clahe_contrast"],
         "lines": len(lines), "ocr_boxes": [],
         "render_time": 0.0, "ocr_time": ocr_time, "total_page_time": elapsed,
-        "confidence_untrusted": confidence == 0.0 and bool(lines)
+        "confidence_untrusted": confidence == 0.0 and bool(lines),
+        "vision_cross_checked": is_cross_check
     }
     return lines, meta
 
@@ -1904,7 +1928,8 @@ def perform_ocr_on_scanned_pdf(
                         "confidence": 0.0, "text_length": 0, "quality_score": 0.0,
                         "preprocessing_applied": [], "lines": 0, "ocr_boxes": [],
                         "render_time": 0.0, "ocr_time": 0.0, "total_page_time": 0.0,
-                        "error": str(e)
+                        "error": str(e),
+                        "vision_cross_checked": False
                     }
                 finally:
                     # Release this page's memory back to the OS (malloc_trim,
