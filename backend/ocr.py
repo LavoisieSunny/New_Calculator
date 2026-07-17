@@ -1037,6 +1037,27 @@ def _paddle_result_is_trustworthy(lines, confidence, quality_score):
     )
 
 
+def reconcile_paddle_and_vision(paddle_lines: list, vis_lines: list) -> tuple:
+    """
+    Reconciles PaddleOCR and Vision outputs by comparing page-level quality scores.
+    Returns (reconciled_lines: list[str], chosen_source: str, discarded_lines: list[str]).
+    """
+    if not vis_lines:
+        return paddle_lines, "PaddleOCR", []
+    if not paddle_lines:
+        return vis_lines, "qwen2.5vl:7b", []
+
+    p_q = score_ocr_page_quality(paddle_lines)
+    v_q = score_ocr_page_quality(vis_lines)
+
+    # If vision is significantly better than paddle, choose vision.
+    # Otherwise, default to the purpose-built OCR engine (PaddleOCR).
+    if v_q > p_q + 0.15:
+        return vis_lines, "qwen2.5vl:7b", paddle_lines
+    else:
+        return paddle_lines, "PaddleOCR", vis_lines
+
+
 # ======================================================
 # CORE VISION OCR — SINGLE PAGE
 # ======================================================
@@ -1153,6 +1174,13 @@ def ocr_page_with_vision(
             save_ocr_debug_image(f"debug_page_{page_num}.png", _processed_cache["img"])
         return _processed_cache["img"]
 
+    paddle_duration = 0.0
+    vision_duration = 0.0
+    structure_duration = 0.0
+    tesseract_duration = 0.0
+    meta_discarded = []
+    chosen_source = "PaddleOCR"
+
     lines = []
     engine_used = ""
     ocr_start = time.time()
@@ -1184,7 +1212,9 @@ def ocr_page_with_vision(
     if force_vision:
         logger.info(f"Page {page_num}: Lower Court Page {page_num} override → using qwen2.5vl:7b directly")
         img_b64 = image_to_base64(_get_processed(), quality=85)
+        t0 = time.time()
         raw_text = call_vision_model(img_b64, page_num=page_num)
+        vision_duration += time.time() - t0
         del img_b64
         vis_lines = [l.strip() for l in raw_text.split("\n") if l.strip()] if raw_text and raw_text.strip() != "[BLANK PAGE]" else []
         if vis_lines:
@@ -1197,7 +1227,9 @@ def ocr_page_with_vision(
         paddle_lines, paddle_conf, paddle_q = [], 0.0, 0.0
         if paddle_available:
             logger.info(f"Page {page_num}: low-content -> PaddleOCR ({page_lang})")
+            t0 = time.time()
             paddle_lines, paddle_conf, _ = call_paddle_ocr(rendered_img_path, page_num=page_num, lang=page_lang)
+            paddle_duration += time.time() - t0
             paddle_q = score_ocr_page_quality(paddle_lines)
 
         if _paddle_result_is_trustworthy(paddle_lines, paddle_conf, paddle_q):
@@ -1207,7 +1239,9 @@ def ocr_page_with_vision(
                   f"(conf={paddle_conf:.2f}, q={paddle_q:.2f}, lines={len(paddle_lines)}) "
                   f"-> escalating to vision")
             img_b64 = image_to_base64(_get_processed(), quality=85)
+            t0 = time.time()
             raw_text = call_vision_model(img_b64, page_num=page_num)
+            vision_duration += time.time() - t0
             del img_b64
             vis_lines = [l.strip() for l in raw_text.split("\n") if l.strip()] if raw_text and raw_text.strip() != "[BLANK PAGE]" else []
             if vis_lines:
@@ -1221,25 +1255,49 @@ def ocr_page_with_vision(
             lines, engine_used, confidence = paddle_lines, "PaddleOCR", paddle_conf
 
         if not lines:
+            t0 = time.time()
             lines = run_tesseract_fallback(_get_processed())
+            tesseract_duration += time.time() - t0
             engine_used = "Tesseract"
             confidence = 0.70 if lines else 0.0
 
     # ── 5b. Text/image-heavy → PaddleOCR first, escalate to vision ──
     else:
         paddle_is_tabular = False
+        try_structure_first = False
+        table_mds = []
         if paddle_available:
             logger.info(f"Page {page_num}: {classification} -> PaddleOCR ({page_lang})")
+            t0 = time.time()
             paddle_lines, paddle_conf, paddle_is_tabular = call_paddle_ocr(rendered_img_path, page_num=page_num, lang=page_lang)
+            paddle_duration += time.time() - t0
             paddle_q = score_ocr_page_quality(paddle_lines)
             paddle_good = _paddle_result_is_trustworthy(paddle_lines, paddle_conf, paddle_q)
             
+            # Check if we should try table structure first (if Paddle is good but page is tabular)
+            try_structure_first = (
+                track == "high_court" and
+                paddle_is_tabular and
+                paddle_good and
+                OCR_ENABLE_TABLE_STRUCTURE
+            )
+            
+            if try_structure_first:
+                t0 = time.time()
+                table_mds = extract_tables_via_structure(rendered_img_path, page_num=page_num)
+                structure_duration += time.time() - t0
+            
+            # We only escalate to vision on tabular pages if:
+            # 1. Paddle OCR is not good (not paddle_good)
+            # OR
+            # 2. PP-StructureV3 failed or returned empty table_mds on a tabular page
             is_hc_tabular_escalation = (
                 track == "high_court" and
                 paddle_is_tabular and
                 OCR_ENABLE_VISION_ESCALATION and
                 vision_available and
-                not _vision_is_paused()
+                not _vision_is_paused() and
+                (not paddle_good or not table_mds)
             )
             should_escalate = (not paddle_good) or is_hc_tabular_escalation
             
@@ -1251,12 +1309,16 @@ def ocr_page_with_vision(
                     logger.info(f"Page {page_num}: PaddleOCR quality low (conf={paddle_conf:.2f}, q={paddle_q:.2f}) -> escalating to qwen2.5vl:7b")
                 
                 img_b64 = image_to_base64(_get_processed(), quality=85)
+                t0 = time.time()
                 raw_text = call_vision_model(img_b64, page_num=page_num)
+                vision_duration += time.time() - t0
                 del img_b64
                 vis_lines = [l.strip() for l in raw_text.split("\n") if l.strip()] if raw_text and raw_text.strip() != "[BLANK PAGE]" else []
                 
                 if is_cross_check:
-                    lines, engine_used, confidence = paddle_lines, OCR_HYBRID_LABEL, paddle_conf
+                    lines, chosen_source, meta_discarded = reconcile_paddle_and_vision(paddle_lines, vis_lines)
+                    engine_used = OCR_HYBRID_LABEL
+                    confidence = 0.90 if chosen_source == "qwen2.5vl:7b" else paddle_conf
                 else:
                     if vis_lines:
                         lines, engine_used, confidence = vis_lines, "qwen2.5vl:7b", 0.90
@@ -1271,7 +1333,9 @@ def ocr_page_with_vision(
         elif vision_available:
             logger.info(f"Page {page_num}: PaddleOCR unavailable -> qwen2.5vl:7b")
             img_b64 = image_to_base64(_get_processed(), quality=85)
+            t0 = time.time()
             raw_text = call_vision_model(img_b64, page_num=page_num)
+            vision_duration += time.time() - t0
             del img_b64
             if raw_text and raw_text.strip() != "[BLANK PAGE]":
                 lines = [l.strip() for l in raw_text.split("\n") if l.strip()]
@@ -1285,19 +1349,20 @@ def ocr_page_with_vision(
         # join), and append it. This only fires for pages that need it —
         # not a blanket cost on every page in the batch.
         if engine_used in ("PaddleOCR", OCR_HYBRID_LABEL) and paddle_is_tabular and OCR_ENABLE_TABLE_STRUCTURE:
-            table_mds = extract_tables_via_structure(rendered_img_path, page_num=page_num)
+            if not try_structure_first:
+                t0 = time.time()
+                table_mds = extract_tables_via_structure(rendered_img_path, page_num=page_num)
+                structure_duration += time.time() - t0
             if table_mds:
                 lines = list(lines) + ["", "[STRUCTURED TABLE — PP-StructureV3]"]
                 for tmd in table_mds:
                     lines.extend(tmd.split("\n"))
 
-        # Append vision output as an additional labeled block if cross-checked
-        if is_cross_check and vis_lines:
-            lines = list(lines) + ["", "[VISION CROSS-CHECK]"] + vis_lines
-
         # ── 5c. Nothing worked → Tesseract (last resort) ─────────────
         if not lines:
+            t0 = time.time()
             lines = run_tesseract_fallback(_get_processed())
+            tesseract_duration += time.time() - t0
             engine_used = "Tesseract"
             confidence = 0.70 if lines else 0.0
 
@@ -1338,7 +1403,9 @@ def ocr_page_with_vision(
             retry_proc = preprocess_for_vision(Image.open(retry_img_path).convert("RGB"))
             retry_lines_best = []
             if paddle_available:
+                t0 = time.time()
                 retry_lines_best, retry_paddle_conf, _ = call_paddle_ocr(retry_img_path, page_num=page_num, lang=page_lang)
+                paddle_duration += time.time() - t0
                 if retry_lines_best and len(retry_lines_best) > len(lines):
                     lines = retry_lines_best
                     engine_used = "PaddleOCR-retry"
@@ -1346,7 +1413,9 @@ def ocr_page_with_vision(
                     q_score = score_ocr_page_quality(lines)
             if (not retry_lines_best or q_score < OCR_PADDLE_QUALITY_THRESHOLD) and vision_available and OCR_ENABLE_VISION_ESCALATION:
                 retry_b64 = image_to_base64(retry_proc, quality=85)
+                t0 = time.time()
                 retry_text = call_vision_model(retry_b64, page_num=page_num)
+                vision_duration += time.time() - t0
                 del retry_b64
                 if retry_text and retry_text.strip() != "[BLANK PAGE]":
                     retry_vis_lines = [l.strip() for l in retry_text.split("\n") if l.strip()]
@@ -1356,7 +1425,9 @@ def ocr_page_with_vision(
                         confidence = 0.90
                         q_score = score_ocr_page_quality(lines)
             if not lines:
+                t0 = time.time()
                 retry_lines = run_tesseract_fallback(retry_proc)
+                tesseract_duration += time.time() - t0
                 if len(retry_lines) > len(lines):
                     lines = retry_lines
                     engine_used = "Tesseract-retry"
@@ -1389,8 +1460,16 @@ def ocr_page_with_vision(
         "lines": len(lines), "ocr_boxes": [],
         "render_time": 0.0, "ocr_time": ocr_time, "total_page_time": elapsed,
         "confidence_untrusted": confidence == 0.0 and bool(lines),
-        "vision_cross_checked": is_cross_check
+        "vision_cross_checked": is_cross_check,
+        "paddle_time": round(paddle_duration, 3),
+        "vision_time": round(vision_duration, 3),
+        "structure_time": round(structure_duration, 3),
+        "tesseract_time": round(tesseract_duration, 3),
     }
+    if is_cross_check:
+        meta["discarded_lines"] = meta_discarded
+        meta["chosen_source"] = chosen_source
+
     return lines, meta
 
 
@@ -2038,6 +2117,26 @@ def perform_ocr_on_scanned_pdf(
         _tlog(f"[SUMMARY] {len(successful_pages)}/{total_pages} pages produced text, "
               f"{len(failed_pages)}/{total_pages} pages produced nothing")
 
+        # Aggregate duration metrics across pages
+        total_paddle_time = sum(m.get("paddle_time", 0.0) for m in page_details)
+        total_vision_time = sum(m.get("vision_time", 0.0) for m in page_details)
+        total_structure_time = sum(m.get("structure_time", 0.0) for m in page_details)
+        total_tesseract_time = sum(m.get("tesseract_time", 0.0) for m in page_details)
+        pages_hit_vision = sum(1 for m in page_details if m.get("vision_time", 0.0) > 0.0)
+        pages_hit_structure = sum(1 for m in page_details if m.get("structure_time", 0.0) > 0.0)
+
+        elapsed_total = time.time() - start_time
+
+        logger.info(
+            f"[OCR DOCUMENT METRICS] Pages={total_pages} | "
+            f"Vision escalated pages={pages_hit_vision} | "
+            f"Paddle total time={total_paddle_time:.2f}s | "
+            f"Vision total time={total_vision_time:.2f}s | "
+            f"Structure total time={total_structure_time:.2f}s | "
+            f"Tesseract total time={total_tesseract_time:.2f}s | "
+            f"Total duration={elapsed_total:.2f}s"
+        )
+
         overall_quality = round(sum(page_qualities) / len(page_qualities), 4) if page_qualities else 0.0
         overall_conf = round(sum(page_confidences) / len(page_confidences), 4) if page_confidences else 0.0
         real_lines = [l for l in text_lines if not l.startswith("--- PAGE")]
@@ -2045,7 +2144,6 @@ def perform_ocr_on_scanned_pdf(
             sum(len(l) for l in real_lines) / max(len(real_lines), 1) / 80.0, 3
         ) if real_lines else 0.0
 
-        elapsed_total = time.time() - start_time
         ocr_debug = _build_ocr_debug(
             engine_used=OCR_HYBRID_LABEL,
             retry_count=total_retry_count,
@@ -2061,9 +2159,12 @@ def perform_ocr_on_scanned_pdf(
             total_ocr_time=elapsed_total
         )
 
-        # Searchable-PDF generation isn't wired up yet. PaddleOCR pages do carry
-        # bounding boxes (rec_boxes), but pages that fell back to qwen2.5vl:7b
-        # don't, so a hybrid searchable-PDF overlay is a separate piece of work.
+        ocr_debug["total_paddle_time"] = round(total_paddle_time, 2)
+        ocr_debug["total_vision_time"] = round(total_vision_time, 2)
+        ocr_debug["total_structure_time"] = round(total_structure_time, 2)
+        ocr_debug["total_tesseract_time"] = round(total_tesseract_time, 2)
+        ocr_debug["pages_hit_vision"] = pages_hit_vision
+        ocr_debug["pages_hit_structure"] = pages_hit_structure
         ocr_debug["searchable_pdf_url"] = ""
 
         return text_lines, ocr_debug
