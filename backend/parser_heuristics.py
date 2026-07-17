@@ -2993,6 +2993,7 @@ def parse_extracted_text(text_lines, case_type=None):
 
     # Helper for contextual extraction parameters
     parser_debug = {}
+    anomalies_detected = []
     claimant_relationship_to_deceased = ""
     conf_claimant_relationship = 0.0
     future_type = 2
@@ -5059,6 +5060,259 @@ def parse_extracted_text(text_lines, case_type=None):
         "भविष्य की आय हानि", "भावी उपार्जन की क्षति"
     ])
 
+    # ── LLM Recovery Trigger for High Court Track ────────────────────────────
+    # Trigger if case_type is unknown, or if any core field is missing or has confidence < 0.70
+    ai_recovery_triggered = False
+    ai_recovery_needed = False
+    
+    if get_table_value(["estate"]):
+        conf_loss_estate = 0.90
+        method_loss_estate = "Table Extraction"
+    elif estate_loss:
+        conf_loss_estate = conf_estate_loss if 'conf_estate_loss' in locals() else 0.80
+        method_loss_estate = method_estate_loss if 'method_estate_loss' in locals() else "Heuristic Parser"
+    else:
+        conf_loss_estate = 0.50
+        method_loss_estate = "Default Heuristic"
+    
+    def is_checklist_page(p_num):
+        if not pages or p_num < 1 or p_num > len(pages):
+            return False
+        p_text = pages[p_num - 1].get("text", "").lower()
+        return "scrutiny report" in p_text or "computer sheet" in p_text or "scrutiny sheet" in p_text
+
+    try:
+        if is_checklist_page(locals().get('page_deceased_name', 0)): conf_deceased_name = 0.60
+        if is_checklist_page(locals().get('page_claimant_name', 0)): conf_claimant_name = 0.60
+        if is_checklist_page(locals().get('page_age', 0)): conf_age = 0.60
+        if is_checklist_page(locals().get('page_monthly_income', 0)): conf_monthly_income = 0.60
+        if is_checklist_page(locals().get('page_total_compensation', 0)): conf_total_compensation = 0.60
+        if is_checklist_page(locals().get('page_multiplier', 0)): conf_multiplier = 0.60
+        if is_checklist_page(locals().get('page_future_prospect', 0)): conf_future_prospect = 0.60
+        if is_checklist_page(locals().get('page_dependents', 0)): conf_dependents = 0.60
+        if is_checklist_page(locals().get('page_marital_status', 0)): conf_marital_status = 0.60
+        if is_checklist_page(locals().get('page_consortium', 0)): conf_consortium = 0.60
+        if is_checklist_page(locals().get('page_funeral_expenses', 0)): conf_funeral_expenses = 0.60
+    except Exception as e:
+        logger.error(f"Error checking checklist pages: {e}")
+
+    # Generic year validation to reject calendar years (like 2024) matched as compensation
+    try:
+        val_comp = float(total_compensation) if total_compensation else 0.0
+    except (ValueError, TypeError):
+        val_comp = 0.0
+    if 1990 <= val_comp <= 2035:
+        conf_total_compensation = 0.40
+
+    # ── Pre-Recovery Validation Cross-checks ───────────────────────────────
+    from backend.calculator import get_multiplier, get_future_prospect
+    try:
+        age_val = int(age) if age else None
+    except (ValueError, TypeError):
+        age_val = None
+        
+    if age_val is not None and multiplier is not None and multiplier != "":
+        try:
+            expected_mult = get_multiplier(age_val)
+            if int(multiplier) != expected_mult:
+                conf_multiplier = 0.40
+                conf_age = 0.40
+                logger.warning(f"[PRE-RECOVERY] Multiplier mismatch: age={age_val}, multiplier={multiplier}, expected={expected_mult}. Lowering confidence.")
+        except Exception as e:
+            logger.error(f"Error in pre-recovery multiplier validation: {e}")
+            
+    if age_val is not None and future_prospect not in (None, "", "null"):
+        try:
+            try:
+                f_type = int(future_type)
+            except (ValueError, TypeError):
+                f_type = 2
+            expected_prospect = get_future_prospect(age_val, f_type) * 100.0
+            if abs(float(future_prospect) - expected_prospect) > 0.01:
+                conf_future_prospect = 0.40
+                conf_age = 0.40
+                logger.warning(f"[PRE-RECOVERY] Future prospect mismatch: age={age_val}, prospect={future_prospect}%, expected={expected_prospect}%. Lowering confidence.")
+        except Exception as e:
+            logger.error(f"Error in pre-recovery future prospect validation: {e}")
+
+    if case_type == "death":
+        if (not deceased_name or conf_deceased_name < 0.70 or
+            not age or conf_age < 0.70 or
+            not monthly_income or conf_monthly_income < 0.70 or
+            not total_compensation or conf_total_compensation < 0.70 or
+            not multiplier or conf_multiplier < 0.70 or
+            not future_prospect or conf_future_prospect < 0.70):
+            ai_recovery_needed = True
+    elif case_type == "injury":
+        if (not claimant_name or conf_claimant_name < 0.70 or
+            not age or conf_age < 0.70 or
+            not monthly_income or conf_monthly_income < 0.70 or
+            not total_compensation or conf_total_compensation < 0.70 or
+            not disability or conf_disability < 0.70):
+            ai_recovery_needed = True
+    else:
+        ai_recovery_needed = True
+        
+    consortium_claimants = None
+    conf_consortium_claimants = 0.0
+    method_consortium_claimants = "Default Heuristic"
+
+    if ai_recovery_needed:
+        ai_recovery_triggered = True
+        logger.info("Triggering LLM data recovery for high court appeal document...")
+        from backend.llm_client import ai_data_recovery
+        recovered = ai_data_recovery(full_text, track="high_court", case_type=case_type)
+        if recovered:
+            # Cross-validate heuristic age against LLM multiplier to detect incorrect age extractions (e.g. child age)
+            from backend.calculator import get_multiplier
+            h_age = age
+            l_mult = recovered.get("multiplier")
+            if h_age and l_mult:
+                try:
+                    h_age_val = int(h_age)
+                    l_mult_val = int(l_mult)
+                    expected_mult = get_multiplier(h_age_val)
+                    if expected_mult != l_mult_val:
+                        l_age = recovered.get("age")
+                        if l_age and int(l_age) != h_age_val:
+                            conf_age = 0.40
+                            logger.warning(f"[MERGE VALIDATION] Heuristic age {h_age} conflicts with LLM multiplier {l_mult_val}. Lowering conf_age.")
+                except Exception as e:
+                    pass
+
+            def merge_field(field_name, heuristic_val, heuristic_conf, heuristic_method, llm_val, llm_conf):
+                def is_empty(val):
+                    return val in (None, "", 0, 0.0, "null")
+                if heuristic_conf >= 0.70 and not is_empty(heuristic_val):
+                    logger.info(f"[FIELD] {field_name} = {heuristic_val}, matched_by={heuristic_method}, confidence={heuristic_conf}")
+                    return heuristic_val, heuristic_conf, heuristic_method
+                elif not is_empty(llm_val):
+                    logger.info(f"[FIELD] {field_name} = {llm_val}, matched_by=AI Data Recovery Fallback (high_court), confidence={llm_conf}")
+                    return llm_val, llm_conf, "AI Data Recovery Fallback (high_court)"
+                else:
+                    logger.info(f"[FIELD] {field_name} = {heuristic_val}, matched_by={heuristic_method} (fallback), confidence={heuristic_conf}")
+                    return heuristic_val, heuristic_conf, heuristic_method
+
+            llm_conf_dec = recovered.get("confidence_scores", {}).get("deceased_name", {}).get("confidence", 0.85)
+            deceased_name, conf_deceased_name, method_deceased_name = merge_field(
+                "deceased_name", deceased_name, conf_deceased_name, method_deceased_name, recovered.get("deceased_name"), llm_conf_dec
+            )
+
+            llm_conf_claim = recovered.get("confidence_scores", {}).get("claimant_name", {}).get("confidence", 0.85)
+            claimant_name, conf_claimant_name, method_claimant_name = merge_field(
+                "claimant_name", claimant_name, conf_claimant_name, method_claimant_name, recovered.get("claimant_name"), llm_conf_claim
+            )
+
+            llm_conf_age = recovered.get("confidence_scores", {}).get("age", {}).get("confidence", 0.85)
+            age, conf_age, method_age = merge_field(
+                "age", age, conf_age, method_age, recovered.get("age"), llm_conf_age
+            )
+
+            llm_conf_income = recovered.get("confidence_scores", {}).get("monthly_income", {}).get("confidence", 0.85)
+            monthly_income, conf_monthly_income, method_monthly_income = merge_field(
+                "monthly_income", monthly_income, conf_monthly_income, method_monthly_income, recovered.get("monthly_income"), llm_conf_income
+            )
+
+            llm_conf_dis = recovered.get("confidence_scores", {}).get("disability", {}).get("confidence", 0.85)
+            disability, conf_disability, method_disability = merge_field(
+                "disability", disability, conf_disability, method_disability, recovered.get("disability_percentage") or recovered.get("disability"), llm_conf_dis
+            )
+
+            llm_conf_mult = recovered.get("confidence_scores", {}).get("multiplier", {}).get("confidence", 0.85)
+            multiplier, conf_multiplier, method_multiplier = merge_field(
+                "multiplier", multiplier, conf_multiplier, method_multiplier, recovered.get("multiplier"), llm_conf_mult
+            )
+
+            llm_conf_prop = recovered.get("confidence_scores", {}).get("future_prospect", {}).get("confidence", 0.85)
+            future_prospect, conf_future_prospect, method_future_prospect = merge_field(
+                "future_prospect", future_prospect, conf_future_prospect, method_future_prospect, recovered.get("future_prospect"), llm_conf_prop
+            )
+
+            llm_conf_deps = recovered.get("confidence_scores", {}).get("dependents", {}).get("confidence", 0.85)
+            dependents, conf_dependents, method_dependents = merge_field(
+                "dependents", dependents, conf_dependents, method_dependents, recovered.get("dependents"), llm_conf_deps
+            )
+
+            llm_conf_mar = recovered.get("confidence_scores", {}).get("marital_status", {}).get("confidence", 0.85)
+            marital_status, conf_marital_status, method_marital_status = merge_field(
+                "marital_status", marital_status, conf_marital_status, method_marital_status, recovered.get("marital_status"), llm_conf_mar
+            )
+
+            llm_conf_comp = recovered.get("confidence_scores", {}).get("total_compensation", {}).get("confidence", 0.85)
+            total_compensation, conf_total_compensation, method_total_compensation = merge_field(
+                "total_compensation", total_compensation, conf_total_compensation, method_total_compensation, recovered.get("total_compensation") or recovered.get("award_amount"), llm_conf_comp
+            )
+
+            llm_conf_cons = recovered.get("confidence_scores", {}).get("consortium", {}).get("confidence", 0.85)
+            consortium, conf_consortium, method_consortium = merge_field(
+                "consortium", consortium, conf_consortium, method_consortium, recovered.get("consortium"), llm_conf_cons
+            )
+
+            llm_conf_fun = recovered.get("confidence_scores", {}).get("funeral_expenses", {}).get("confidence", 0.85)
+            funeral_expenses, conf_funeral_expenses, method_funeral_expenses = merge_field(
+                "funeral_expenses", funeral_expenses, conf_funeral_expenses, method_funeral_expenses, recovered.get("funeral_expenses"), llm_conf_fun
+            )
+
+            llm_conf_est = recovered.get("confidence_scores", {}).get("loss_estate", {}).get("confidence", 0.85)
+            loss_estate_val, conf_loss_estate, method_loss_estate = merge_field(
+                "loss_estate", loss_estate_val, conf_loss_estate, method_loss_estate, recovered.get("loss_estate") or recovered.get("loss_estate_val"), llm_conf_est
+            )
+
+            llm_conf_cc = recovered.get("confidence_scores", {}).get("consortium_claimants", {}).get("confidence", 0.85)
+            consortium_claimants, conf_consortium_claimants, method_consortium_claimants = merge_field(
+                "consortium_claimants", consortium_claimants, conf_consortium_claimants, method_consortium_claimants, recovered.get("consortium_claimants"), llm_conf_cc
+            )
+
+    # ── Post-Merge Validation Pass ──────────────────────────────────────────
+    from backend.calculator import get_multiplier, get_future_prospect, get_deduction
+    
+    try:
+        age_val = int(age) if age else None
+    except (ValueError, TypeError):
+        age_val = None
+        
+    if age_val is not None and multiplier is not None:
+        try:
+            expected_multiplier = get_multiplier(age_val)
+            if int(multiplier) != expected_multiplier:
+                conf_multiplier = 0.40
+                msg = f"Multiplier mismatch: extracted {multiplier}, expected {expected_multiplier} for age {age_val}."
+                logger.warning(msg)
+                anomalies_detected.append(msg)
+        except Exception as e:
+            logger.error(f"Error validating multiplier: {e}")
+            
+    if age_val is not None and future_prospect not in (None, "", "null"):
+        try:
+            try:
+                f_type = int(future_type)
+            except (ValueError, TypeError):
+                f_type = 2
+            expected_prospect = get_future_prospect(age_val, f_type) * 100.0
+            if abs(float(future_prospect) - expected_prospect) > 0.01:
+                conf_future_prospect = 0.40
+                msg = f"Future prospect mismatch: extracted {future_prospect}%, expected {expected_prospect}% for age {age_val} and type {f_type}."
+                logger.warning(msg)
+                anomalies_detected.append(msg)
+        except Exception as e:
+            logger.error(f"Error validating future prospect: {e}")
+            
+    if case_type == "death" and dependents is not None:
+        try:
+            dep_val = int(dependents)
+        except (ValueError, TypeError):
+            dep_val = 0
+            
+        status_str = str(marital_status).strip().lower() if marital_status else ""
+        is_bachelor = status_str in ("single", "bachelor", "unmarried", "b", "s")
+        
+        if dep_val == 1 and not is_bachelor:
+            conf_marital_status = 0.40
+            conf_dependents = 0.40
+            msg = "Sole dependent (dependents=1) case detected, but marital status is not single/bachelor. Should route to bachelor 1/2 rule, not married table."
+            logger.warning(msg)
+            anomalies_detected.append(msg)
+
     if case_type == "injury":
         deceased_name = ""
         dependents = ""
@@ -5127,6 +5381,7 @@ def parse_extracted_text(text_lines, case_type=None):
         "citations": citations,
         
         "loss_estate": loss_estate_val,
+        "consortium_claimants": consortium_claimants,
         "conlum": extracted_conlum,
         "conspo": extracted_conspo,
         "conpar": extracted_conpar,
@@ -5283,6 +5538,14 @@ def parse_extracted_text(text_lines, case_type=None):
                 "source_page": page_funeral_expenses,
                 "extraction_method": method_funeral_expenses
             },
+            "loss_estate": {
+                "value": loss_estate_val,
+                "confidence": conf_loss_estate,
+                "source": "raw_ocr",
+                "source_section": "raw_ocr",
+                "source_page": 1,
+                "extraction_method": method_loss_estate
+            },
             "total_compensation": {
                 "value": total_compensation,
                 "confidence": conf_total_compensation,
@@ -5370,6 +5633,14 @@ def parse_extracted_text(text_lines, case_type=None):
                 "source_section": sec_marital_status,
                 "source_page": page_marital_status,
                 "extraction_method": method_marital_status
+            },
+            "consortium_claimants": {
+                "value": consortium_claimants,
+                "confidence": conf_consortium_claimants,
+                "source": "raw_ocr",
+                "source_section": "raw_ocr",
+                "source_page": 1,
+                "extraction_method": method_consortium_claimants
             },
             "claimant_relationship_type": {
                 "value": claimant_relationship_to_deceased,

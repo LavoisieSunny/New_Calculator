@@ -14,7 +14,7 @@ def get_conventional_heads_enhanced(base_amount: float, reference_date: date, an
     if (reference_date.month, reference_date.day) < (anchor_date.month, anchor_date.day):
         years_elapsed -= 1
     periods = years_elapsed // 3
-    return float(round(base_amount * (1.10 ** periods), 2))
+    return float(round(base_amount * (1.0 + 0.10 * periods), 2))
 
 # ======================================================
 # SAFE NUMERIC PARSING HELPERS (Task 4)
@@ -35,6 +35,13 @@ def safe_int(val, default=0) -> int:
         return int(val)
     except (ValueError, TypeError):
         return default
+
+def safe_round(val: float) -> int:
+    """
+    Standard mathematical rounding (half-up) to integer.
+    E.g. 45004.5 -> 45005 (Python's round() does banker's rounding to nearest even, returning 45004).
+    """
+    return int(val + 0.5)
 
 # ======================================================
 # REQUEST MODEL
@@ -72,6 +79,8 @@ class CompensationRequest(BaseModel):
     funeral_expenses: Optional[float] = None
 
     loss_estate: Optional[float] = None
+
+    consortium_claimants: Optional[int] = None
 
     # Consortium Breakdown Subheadings (from PHP claim calculator)
     conlum: float = 0.0
@@ -133,6 +142,8 @@ class CompensationRequest(BaseModel):
                     cleaned[k] = 30 if k == "age" else 2
                 elif k == "future_prospect":
                     cleaned[k] = None
+                elif k == "consortium_claimants":
+                    cleaned[k] = None
                 elif k in ["monthly_income", "consortium", "funeral_expenses", "loss_estate", "disability"]:
                     if k in ["consortium", "funeral_expenses", "loss_estate"]:
                         cleaned[k] = None
@@ -148,7 +159,7 @@ class CompensationRequest(BaseModel):
                     ] else 0
             else:
                 # Coerce numeric values if passed as string but non-empty
-                if k in ["age", "dependents", "future_type"]:
+                if k in ["age", "dependents", "future_type", "consortium_claimants"]:
                     cleaned[k] = safe_int(v)
                 elif k in [
                     "monthly_income", "consortium", "funeral_expenses", "loss_estate", "disability",
@@ -266,12 +277,15 @@ def get_deduction(
     is_bachelor = marital_status.strip().upper() in ("B", "BACHELOR", "SINGLE", "UNMARRIED", "S")
 
     if is_bachelor:
-        return 0.50
-    else:
-        # Married (shifted by 1 for family size including deceased)
-        if dependents <= 2:
+        if dependents <= 1:
+            return 0.50
+        else:
             return 1 / 3
-        elif dependents <= 5:
+    else:
+        # Married
+        if dependents <= 3:
+            return 1 / 3
+        elif dependents <= 6:
             return 0.25
         else:
             return 0.20
@@ -337,7 +351,12 @@ def calculate_death_compensation(
     funeral_default = get_conventional_heads_enhanced(15000.0, ref_date)
     loss_estate_default = get_conventional_heads_enhanced(15000.0, ref_date)
 
-    consortium = safe_float(data.consortium, consortium_default) if data.consortium is not None else consortium_default
+    consortium_claimants_val = safe_int(data.consortium_claimants)
+    if consortium_claimants_val <= 0:
+        consortium_claimants_val = 1
+
+    consortium_per_person = safe_float(data.consortium, consortium_default) if data.consortium is not None else consortium_default
+    consortium = consortium_per_person * consortium_claimants_val
     funeral_expenses = safe_float(data.funeral_expenses, funeral_default) if data.funeral_expenses is not None else funeral_default
     loss_estate = safe_float(data.loss_estate, loss_estate_default) if data.loss_estate is not None else loss_estate_default
 
@@ -365,37 +384,41 @@ def calculate_death_compensation(
     if consortium_breakdown_total > 0.0:
         consortium = 0.0
 
+    medical_expenses = safe_float(data.medical_expenses, 0.0)
+
     final_compensation = (
         loss_of_dependency_float +
         consortium +
         funeral_expenses +
         loss_estate +
-        consortium_breakdown_total
+        consortium_breakdown_total +
+        medical_expenses
     )
 
     return {
         "case_type": "death",
-        "monthly_income": round(monthly_income),
+        "monthly_income": safe_round(monthly_income),
         "future_prospect_percentage": future_prospect_percentage,
-        "future_prospect_amount": round(future_prospect_amount_float),
-        "enhanced_monthly_income": round(enhanced_monthly_income_float),
-        "annual_income": round(annual_income_float),
-        "future_income": round(annual_income_float),
+        "future_prospect_amount": safe_round(future_prospect_amount_float),
+        "enhanced_monthly_income": safe_round(enhanced_monthly_income_float),
+        "annual_income": safe_round(annual_income_float),
+        "future_income": safe_round(annual_income_float),
         "deduction_percentage": deduction_percentage,
         "deduction_label": deduction_label,
-        "deduction_amount": round(deduction_amount_float),
-        "dependency_income": round(dependency_income_float),
+        "deduction_amount": safe_round(deduction_amount_float),
+        "dependency_income": safe_round(dependency_income_float),
         "multiplier": multiplier,
-        "loss_of_dependency": round(loss_of_dependency_float),
+        "loss_of_dependency": safe_round(loss_of_dependency_float),
         "consortium": consortium,
         "funeral_expenses": funeral_expenses,
         "loss_estate": loss_estate,
+        "medical_expenses": medical_expenses,
         "conlum": conlum, "conspo": conspo, "conpar": conpar,
         "conchil": conchil, "conwif": conwif, "conmo": conmo,
         "confath": confath, "conhus": conhus, "conbro": conbro, "consis": consis,
-        "consortium_breakdown_total": round(consortium_breakdown_total),
-        "final_compensation": round(final_compensation),
-        "final_amount": round(final_compensation)
+        "consortium_breakdown_total": safe_round(consortium_breakdown_total),
+        "final_compensation": safe_round(final_compensation),
+        "final_amount": safe_round(final_compensation)
     }
 
 

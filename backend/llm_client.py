@@ -576,7 +576,10 @@ def ai_data_recovery(raw_ocr_text: str, track: str = "high_court", case_type: st
         "- 'आय की हानि' / 'वेतन की क्षति' / 'उपचार अवधि के दौरान आय' -> loss_of_income\n"
         "- 'स्थायी अपंगता' / 'स्थायी अपंगता प्रतिशत' / 'विकलांगता प्रतिशत' / 'निरोग्यता प्रतिशत' -> disability_percentage\n"
         "- 'मासिक आय' / 'मासिक वेतन' -> monthly_income\n"
-        "- 'प्रतिकर राशि' / 'कुल क्षतिपूर्ति' / 'कुल प्रतिकर' -> total_compensation / award_amount\n\n"
+        "- 'प्रतिकर राशि' / 'कुल क्षतिपूर्ति' / 'कुल प्रतिकर' -> total_compensation / award_amount\n"
+        "- 'सहचर्य हानि' / 'पति/पत्नी के प्रति सहचर्य' -> loss_of_consortium\n"
+        "- 'सम्पदा की हानि' / 'सम्पदा हानि' -> loss_of_estate\n"
+        "- 'दाह संस्कार व्यय' / 'दाह संस्कार' / 'अंतिम संस्कार व्यय' -> funeral_expenses\n\n"
  
         "Extract ALL of these fields:\n\n"
  
@@ -624,7 +627,8 @@ def ai_data_recovery(raw_ocr_text: str, track: str = "high_court", case_type: st
         "- loss_of_consortium: float (per-person loss of consortium. Do NOT default or guess Rs.40000 if not explicitly mentioned in the text. Return null if not mentioned)\n"
         "- loss_of_estate: float (loss of estate. Do NOT default or guess Rs.15000 if not explicitly mentioned in the text. Return null if not mentioned)\n"
         "- funeral_expenses: float (funeral expenses. Do NOT default or guess Rs.15000 if not explicitly mentioned in the text. Return null if not mentioned)\n"
-        "- loss_of_love_affection: float (parental/filial consortium)\n\n"
+        "- loss_of_love_affection: float (parental/filial consortium)\n"
+        "- consortium_claimants: number of claimants eligible for consortium as integer (e.g. number of family members awarded consortium)\n\n"
  
         "CALCULATION PARAMETERS:\n"
         "- future_prospect: float percentage e.g. 25.0 or 40.0 (future prospects addition)\n"

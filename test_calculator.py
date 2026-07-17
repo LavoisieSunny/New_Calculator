@@ -159,10 +159,10 @@ class TestDeductionBracketFix(unittest.TestCase):
     """
 
     def test_bachelor_always_gets_half_regardless_of_dependents(self):
-        # Bachelor always gets 1/2 regardless of dependents count
+        # Bachelor gets 1/2 for <= 1 dependents, and 1/3 for > 1 dependents
         self.assertEqual(get_deduction(0, "single"), 0.50)
         self.assertEqual(get_deduction(1, "bachelor"), 0.50)
-        self.assertEqual(get_deduction(5, "B"), 0.50)   # bachelor always gets 1/2
+        self.assertEqual(get_deduction(5, "B"), 1 / 3)   # bachelor with >1 dependents gets 1/3
         self.assertEqual(get_deduction("", "single"), 0.50)
 
     def test_married_with_one_dependent_no_longer_breaks(self):
@@ -175,10 +175,10 @@ class TestDeductionBracketFix(unittest.TestCase):
 
     def test_married_brackets_corrected(self):
         self.assertEqual(get_deduction(2, "married"), 1 / 3)
-        self.assertEqual(get_deduction(3, "married"), 0.25)
+        self.assertEqual(get_deduction(3, "married"), 1 / 3)
         self.assertEqual(get_deduction(4, "married"), 0.25)
         self.assertEqual(get_deduction(5, "married"), 0.25)
-        self.assertEqual(get_deduction(6, "married"), 0.20)
+        self.assertEqual(get_deduction(6, "married"), 0.25)
         self.assertEqual(get_deduction(7, "married"), 0.20)
 
     def test_death_compensation_does_not_silently_zero_out_for_one_dependent(self):
@@ -321,9 +321,9 @@ class TestDeductionBracketFix(unittest.TestCase):
             award_date="2023-11-01"
         )
         res_b = calculate_death_compensation(req_b)
-        self.assertEqual(res_b["consortium"], 48400.0)
-        self.assertEqual(res_b["funeral_expenses"], 18150.0)
-        self.assertEqual(res_b["loss_estate"], 18150.0)
+        self.assertEqual(res_b["consortium"], 48000.0)
+        self.assertEqual(res_b["funeral_expenses"], 18000.0)
+        self.assertEqual(res_b["loss_estate"], 18000.0)
 
         # Scenario C: explicit overrides are respected even on a later award_date
         req_c = CompensationRequest(
@@ -368,9 +368,9 @@ class TestDeductionBracketFix(unittest.TestCase):
             future_type=2
         )
         res_e = calculate_death_compensation(req_e)
-        self.assertEqual(res_e["consortium"], 48400.0)
-        self.assertEqual(res_e["funeral_expenses"], 18150.0)
-        self.assertEqual(res_e["loss_estate"], 18150.0)
+        self.assertEqual(res_e["consortium"], 48000.0)
+        self.assertEqual(res_e["funeral_expenses"], 18000.0)
+        self.assertEqual(res_e["loss_estate"], 18000.0)
 
     def test_death_calculator_gaps_verification(self):
         """
@@ -397,7 +397,7 @@ class TestDeductionBracketFix(unittest.TestCase):
         # Income after prospects = 18000. Annual = 216000. Net = 144000. Multiplier = 17. Loss = 2448000.
         self.assertEqual(res1["loss_of_dependency"], 2448000)
 
-        # 2. Married with 3 dependents (family of 4) -> 1/4 deduction
+        # 2. Married with 3 dependents -> 1/3 deduction
         req2 = CompensationRequest(
             case_type="death",
             age=30,
@@ -408,11 +408,26 @@ class TestDeductionBracketFix(unittest.TestCase):
             award_date="2017-11-01"
         )
         res2 = calculate_death_compensation(req2)
-        self.assertEqual(res2["deduction_label"], "1/4")
-        # Net = 216000 * 0.75 = 162000. Loss = 162000 * 17 = 2754000.
-        self.assertEqual(res2["loss_of_dependency"], 2754000)
+        self.assertEqual(res2["deduction_label"], "1/3")
+        # Net = 216000 * 2/3 = 144000. Loss = 144000 * 17 = 2448000.
+        self.assertEqual(res2["loss_of_dependency"], 2448000)
 
-        # 3. Bachelor deceased (always 1/2 deduction)
+        # 2b. Married with 4 dependents -> 1/4 deduction
+        req2_4 = CompensationRequest(
+            case_type="death",
+            age=30,
+            monthly_income=12000.0,
+            dependents=4,
+            marital_status="married",
+            future_type=1,
+            award_date="2017-11-01"
+        )
+        res2_4 = calculate_death_compensation(req2_4)
+        self.assertEqual(res2_4["deduction_label"], "1/4")
+        # Net = 216000 * 0.75 = 162000. Loss = 162000 * 17 = 2754000.
+        self.assertEqual(res2_4["loss_of_dependency"], 2754000)
+
+        # 3. Bachelor deceased with 3 dependents (> 1 dependent -> 1/3 deduction)
         req3 = CompensationRequest(
             case_type="death",
             age=30,
@@ -423,7 +438,7 @@ class TestDeductionBracketFix(unittest.TestCase):
             award_date="2017-11-01"
         )
         res3 = calculate_death_compensation(req3)
-        self.assertEqual(res3["deduction_label"], "1/2")
+        self.assertEqual(res3["deduction_label"], "1/3")
 
         # 4. Above age 60 (0% future prospects)
         req4 = CompensationRequest(
@@ -458,14 +473,14 @@ class TestDeductionBracketFix(unittest.TestCase):
         self.assertEqual(res5["final_compensation"], 2150000)
 
         # 6. Precise intermediate float precision check
-        # monthly_income=10001, nodep=3, married (1/4 deduction), age=30 (17 multiplier), future_type=1 (50% prospects)
+        # monthly_income=10001, nodep=4, married (1/4 deduction), age=30 (17 multiplier), future_type=1 (50% prospects)
         # Enhanced monthly = 15001.5. Annual = 180018. Deduction = 45004.5. Dependency = 135013.5.
         # Loss of dependency = 135013.5 * 17 = 2295229.5 -> rounds to 2295230.
         req6 = CompensationRequest(
             case_type="death",
             age=30,
             monthly_income=10001.0,
-            dependents=3,
+            dependents=4,
             marital_status="married",
             future_type=1,
             award_date="2017-11-01"
