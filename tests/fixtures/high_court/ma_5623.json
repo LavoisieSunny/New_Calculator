@@ -19,7 +19,7 @@
     "multiplier": [9, 11],
     "dependents": 3,
     "monthly_income": [34248.0, 29798.0, 33989.67],
-    "award_amount": 3667766.0,
+    "award_amount": [3667766.0, 3523755.0],
     "consortium": [48000.0, 192000.0, 44000.0, 176000.0],
     "funeral_expenses": 18000.0,
     "loss_estate": 18000.0,

@@ -48,7 +48,7 @@ class TestParserFixesAndTrackRouting(unittest.TestCase):
         """
         global current_pdf_context
         pdf_path_1 = r"C:\Users\lavoi\Desktop\Miracle\pdfs\compensation\MA_20_2026.pdf"
-        pdf_path_2 = r"C:\Users\lavoi\Desktop\Miracle\pdfs\compensation\MA_10076_2025.pdf"
+        pdf_path_2 = r"C:\Users\lavoi\Desktop\Miracle\pdfs\compensation\MA_10076_2025_d.pdf"
         
         # Verify files exist
         self.assertTrue(os.path.exists(pdf_path_1), f"File not found: {pdf_path_1}")

@@ -797,15 +797,24 @@ document.addEventListener("DOMContentLoaded", () => {
     function getDeductionRatio(dependents, status) {
         // Mirrors backend/calculator.py get_deduction()
         const stat = String(status || "married").trim().toLowerCase();
-        const isBachelor = stat === "single" || stat === "bachelor" || stat === "b" || stat === "unmarried";
+        const isBachelor = stat === "single" || stat === "bachelor" || stat === "b" || stat === "unmarried" || stat === "s";
+        const deps = parseInt(dependents) || 0;
 
-        if (isBachelor) return 0.50;          // dependents not applicable for bachelor/single
-
-        const deps = parseInt(dependents);
-        if (isNaN(deps) || deps < 2) return 1 / 3;   // safety net, lowest real bracket (not the bachelor rate)
-        if (deps <= 3) return 1 / 3;
-        if (deps <= 6) return 0.25;
-        return 0.20;
+        if (isBachelor) {
+            if (deps <= 1) {
+                return 0.50;
+            } else {
+                return 1 / 3;
+            }
+        } else {
+            if (deps <= 3) {
+                return 1 / 3;
+            } else if (deps <= 6) {
+                return 0.25;
+            } else {
+                return 0.20;
+            }
+        }
     }
 
     function updateLiveCalculations() {
@@ -1917,7 +1926,14 @@ This cannot be undone.`)) return;
             "special_diet": "special-diet",
             "attender_charges": "attender-charges",
             "loss_of_income": "loss-of-income",
-            "disability": "disability"
+            "disability": "disability",
+            "coliti": "coliti",
+            "misex": "misex",
+            "loamiti": "loamiti",
+            "lopmarri": "lopmarri",
+            "loexlife": "loexlife",
+            "loveaff": "loveaff",
+            "lossofenjoy": "lossofenjoy"
         };
 
         // Death Specific (Part 6) - mirrors PHP REQUEST fields: loc, loa, fe, conlum, conspo etc.
@@ -2005,6 +2021,13 @@ This cannot be undone.`)) return;
             }
             el.dispatchEvent(new Event("input"));
             el.dispatchEvent(new Event("change"));
+
+            // Auto-expand containing collapsible section if value populated
+            const collapsibleParent = el.closest(".collapsible-section");
+            if (collapsibleParent) {
+                collapsibleParent.style.display = "grid";
+                collapsibleParent.classList.remove("hidden-section");
+            }
 
             // Check confidence score
             const conf = lastExtractedConfidences[cacheKey];
@@ -2821,9 +2844,17 @@ This cannot be undone.`)) return;
             funeral_expenses: Number(document.getElementById("funeral-expenses")?.value || 18150),
             loss_estate: Number(document.getElementById("loss-estate")?.value || 18150),
 
-            // Consortium sub-heads removed from form — kept as zero for API compatibility
-            conlum: 0, conspo: 0, conpar: 0, conchil: 0, conwif: 0,
-            conmo: 0, confath: 0, conhus: 0, conbro: 0, consis: 0,
+            // Consortium sub-heads read from form
+            conlum: Number(document.getElementById("conlum")?.value || 0),
+            conspo: Number(document.getElementById("conspo")?.value || 0),
+            conpar: Number(document.getElementById("conpar")?.value || 0),
+            conchil: Number(document.getElementById("conchil")?.value || 0),
+            conwif: Number(document.getElementById("conwif")?.value || 0),
+            conmo: Number(document.getElementById("conmo")?.value || 0),
+            confath: Number(document.getElementById("confath")?.value || 0),
+            conhus: Number(document.getElementById("conhus")?.value || 0),
+            conbro: Number(document.getElementById("conbro")?.value || 0),
+            consis: Number(document.getElementById("consis")?.value || 0),
 
             disability: Number(document.getElementById("disability")?.value || 0),
             medical_expenses: Number(document.getElementById("medical-expenses")?.value || 0),
@@ -2834,14 +2865,14 @@ This cannot be undone.`)) return;
             attender_charges: Number(document.getElementById("attender-charges")?.value || 0),
             loss_of_income: Number(document.getElementById("loss-of-income")?.value || 0),
 
-            // Extra Injury heads
-            coliti: 0,
-            misex: 0,
-            loamiti: 0,
-            lopmarri: 0,
-            loexlife: 0,
-            loveaff: 0,
-            lossofenjoy: 0
+            // Extra Injury heads read from form
+            coliti: Number(document.getElementById("coliti")?.value || 0),
+            misex: Number(document.getElementById("misex")?.value || 0),
+            loamiti: Number(document.getElementById("loamiti")?.value || 0),
+            lopmarri: Number(document.getElementById("lopmarri")?.value || 0),
+            loexlife: Number(document.getElementById("loexlife")?.value || 0),
+            loveaff: Number(document.getElementById("loveaff")?.value || 0),
+            lossofenjoy: Number(document.getElementById("lossofenjoy")?.value || 0)
         };
 
         try {
@@ -2921,7 +2952,76 @@ This cannot be undone.`)) return;
             const deductionAmount = annualIncome * deductionRatio;
             const dependencyIncome = annualIncome - deductionAmount;
             const lossOfDependency = dependencyIncome * multiplier;
-            const finalCompensation = lossOfDependency + data.consortium + data.funeral_expenses + data.loss_estate;
+
+            const conlum = Number(data.conlum || 0);
+            const conspo = Number(data.conspo || 0);
+            const conpar = Number(data.conpar || 0);
+            const conchil = Number(data.conchil || 0);
+            const conwif = Number(data.conwif || 0);
+            const conmo = Number(data.conmo || 0);
+            const confath = Number(data.confath || 0);
+            const conhus = Number(data.conhus || 0);
+            const conbro = Number(data.conbro || 0);
+            const consis = Number(data.consis || 0);
+            const consortium_breakdown_total = conlum + conspo + conpar + conchil + conwif + conmo + confath + conhus + conbro + consis;
+            
+            function getConventionalHeadsEnhanced(baseAmount, referenceDateStr) {
+                let refDate = null;
+                if (referenceDateStr) {
+                    let parts = referenceDateStr.split(/[-/]/);
+                    if (parts.length === 3) {
+                        if (parts[0].length === 4) {
+                            refDate = new Date(Number(parts[0]), Number(parts[1]) - 1, Number(parts[2]));
+                        } else {
+                            refDate = new Date(Number(parts[2]), Number(parts[1]) - 1, Number(parts[0]));
+                        }
+                    }
+                }
+                if (!refDate || isNaN(refDate.getTime())) {
+                    refDate = new Date();
+                }
+
+                const anchorDate = new Date(2017, 9, 31);
+                if (refDate <= anchorDate) {
+                    return baseAmount;
+                }
+
+                let yearsElapsed = refDate.getFullYear() - anchorDate.getFullYear();
+                if (refDate.getMonth() < anchorDate.getMonth() || 
+                    (refDate.getMonth() === anchorDate.getMonth() && refDate.getDate() < anchorDate.getDate())) {
+                    yearsElapsed -= 1;
+                }
+                const periods = Math.floor(yearsElapsed / 3);
+                return Math.round(baseAmount * (1.0 + 0.10 * periods) * 100) / 100;
+            }
+
+            function getVal(val, defaultVal) {
+                if (val === undefined || val === null || val === "" || isNaN(Number(val))) {
+                    return defaultVal;
+                }
+                return Number(val);
+            }
+
+            const refDateStr = data.award_date || data.date_of_accident;
+            const consortiumDefault = getConventionalHeadsEnhanced(40000.0, refDateStr);
+            const funeralDefault = getConventionalHeadsEnhanced(15000.0, refDateStr);
+            const lossEstateDefault = getConventionalHeadsEnhanced(15000.0, refDateStr);
+
+            let claimants = Number(data.consortium_claimants);
+            if (isNaN(claimants) || claimants <= 0) {
+                claimants = 1;
+            }
+            const consortiumPerPerson = getVal(data.consortium, consortiumDefault);
+            let consortium = consortiumPerPerson * claimants;
+
+            if (consortium_breakdown_total > 0) {
+                consortium = 0;
+            }
+            const funeral_expenses = getVal(data.funeral_expenses, funeralDefault);
+            const loss_estate = getVal(data.loss_estate, lossEstateDefault);
+            const medical_expenses = Number(data.medical_expenses || 0);
+
+            const finalCompensation = lossOfDependency + consortium + funeral_expenses + loss_estate + consortium_breakdown_total + medical_expenses;
 
             return {
                 case_type: "death",
@@ -2936,36 +3036,66 @@ This cannot be undone.`)) return;
                 deduction_amount: Math.round(deductionAmount),
                 dependency_income: Math.round(dependencyIncome),
                 loss_of_dependency: Math.round(lossOfDependency),
-                consortium: data.consortium,
-                funeral_expenses: data.funeral_expenses,
-                loss_estate: data.loss_estate,
+                consortium: consortium,
+                funeral_expenses: funeral_expenses,
+                loss_estate: loss_estate,
+                medical_expenses: medical_expenses,
+                conlum: conlum,
+                conspo: conspo,
+                conpar: conpar,
+                conchil: conchil,
+                conwif: conwif,
+                conmo: conmo,
+                confath: confath,
+                conhus: conhus,
+                conbro: conbro,
+                consis: consis,
+                consortium_breakdown_total: Math.round(consortium_breakdown_total),
                 final_compensation: Math.round(finalCompensation),
                 final_amount: Math.round(finalCompensation)
             };
         } else {
             const disabilityCompensation = annual * (data.disability / 100) * multiplier;
-            const finalCompensation = disabilityCompensation + data.medical_expenses + data.future_medical_expenses +
-                data.pain_and_suffering + data.transportation + data.special_diet + data.attender_charges + data.loss_of_income;
+            
+            const medical_expenses = Number(data.medical_expenses || 0);
+            const future_medical_expenses = Number(data.future_medical_expenses || 0);
+            const pain_and_suffering = Number(data.pain_and_suffering || 0);
+            const transportation = Number(data.transportation || 0);
+            const special_diet = Number(data.special_diet || 0);
+            const attender_charges = Number(data.attender_charges || 0);
+            const loss_of_income = Number(data.loss_of_income || 0);
+
+            const coliti = Number(data.coliti || 0);
+            const misex = Number(data.misex || 0);
+            const loamiti = Number(data.loamiti || 0);
+            const lopmarri = Number(data.lopmarri || 0);
+            const loexlife = Number(data.loexlife || 0);
+            const loveaff = Number(data.loveaff || 0);
+            const lossofenjoy = Number(data.lossofenjoy || 0);
+
+            const finalCompensation = disabilityCompensation + medical_expenses + future_medical_expenses +
+                pain_and_suffering + transportation + special_diet + attender_charges + loss_of_income +
+                coliti + misex + loamiti + lopmarri + loexlife + loveaff + lossofenjoy;
 
             return {
                 case_type: "injury",
                 multiplier: multiplier,
                 annual_income: Math.round(annual),
                 future_income_loss: Math.round(disabilityCompensation),
-                medical_expenses: data.medical_expenses,
-                future_medical_expenses: data.future_medical_expenses,
-                pain_and_suffering: data.pain_and_suffering,
-                transportation: data.transportation,
-                special_diet: data.special_diet,
-                attender_charges: data.attender_charges,
-                loss_of_income: data.loss_of_income,
-                coliti: 0,
-                misex: 0,
-                loamiti: 0,
-                lopmarri: 0,
-                loexlife: 0,
-                loveaff: 0,
-                lossofenjoy: 0,
+                medical_expenses: medical_expenses,
+                future_medical_expenses: future_medical_expenses,
+                pain_and_suffering: pain_and_suffering,
+                transportation: transportation,
+                special_diet: special_diet,
+                attender_charges: attender_charges,
+                loss_of_income: loss_of_income,
+                coliti: coliti,
+                misex: misex,
+                loamiti: loamiti,
+                lopmarri: lopmarri,
+                loexlife: loexlife,
+                loveaff: loveaff,
+                lossofenjoy: lossofenjoy,
                 final_amount: Math.round(finalCompensation)
             };
         }
@@ -4230,7 +4360,8 @@ This cannot be undone.`)) return;
         "transportation", "special-diet", "attender-charges", "loss-of-income", "disability",
         "consortium", "funeral-expenses", "loss-estate", "marital-status", "future-type",
         "claimant-relationship-display", "claimant-relationship-type-hidden", "dependents",
-        "conspo", "conwif", "conhus", "conpar", "conchil", "conmo", "confath", "conbro", "consis", "conlum"
+        "conspo", "conwif", "conhus", "conpar", "conchil", "conmo", "confath", "conbro", "consis", "conlum",
+        "coliti", "misex", "loamiti", "lopmarri", "loexlife", "loveaff", "lossofenjoy"
     ];
 
     function setAutofillFieldsPending(isPending) {
@@ -4290,6 +4421,27 @@ This cannot be undone.`)) return;
             }
         });
     }
+
+    // Collapsible sections toggle click listener
+    document.querySelectorAll(".toggle-collapse-btn").forEach(btn => {
+        btn.addEventListener("click", () => {
+            const targetId = btn.getAttribute("data-target");
+            const target = document.getElementById(targetId);
+            if (target) {
+                const isHidden = target.style.display === "none" || target.classList.contains("hidden-section");
+                if (isHidden) {
+                    target.style.display = "grid";
+                    target.classList.remove("hidden-section");
+                } else {
+                    target.style.display = "none";
+                    target.classList.add("hidden-section");
+                }
+            }
+        });
+    });
+
+    // Global exposure of local math calculator for parity tests
+    window.calculateCompensationLocally = calculateCompensationLocally;
 });
 
 

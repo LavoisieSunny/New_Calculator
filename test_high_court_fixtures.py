@@ -13,8 +13,8 @@ class TestHighCourtFixtures(unittest.TestCase):
         fixtures_dir = os.path.join(os.path.dirname(__file__), "tests", "fixtures", "high_court")
         self.assertTrue(os.path.exists(fixtures_dir), f"Fixtures directory not found: {fixtures_dir}")
         
-        # Test the three main High Court files: ma_609, ma_2196, ma_10076
-        files = ["ma_609", "ma_2196", "ma_10076"]
+        # Test the three main High Court files: ma_609, ma_2196, ma_10076, ma_3078
+        files = ["ma_609", "ma_2196", "ma_10076", "ma_3078"]
         
         for name in files:
             txt_path = os.path.join(fixtures_dir, f"{name}.txt")
@@ -89,6 +89,75 @@ class TestHighCourtFixtures(unittest.TestCase):
             expected_class = expected["classification"]
             self.assertEqual(verdict["verdict"], expected_class["verdict"], f"Fixture {name}: expected verdict {expected_class['verdict']}, got {verdict['verdict']}")
             self.assertEqual(verdict["basis"], expected_class["basis"], f"Fixture {name}: expected basis {expected_class['basis']}, got {verdict['basis']}")
+
+            # 7. Genuine Heuristics Validation: Assert parsed fields match ground truth without AI recovery mocks
+            if "ground_truth" in expected:
+                gt = expected["ground_truth"]
+                suggestions = parse_extracted_text(lines)
+                
+                # Assert Name of Deceased
+                if "deceased_name" in gt:
+                    self._assert_field_match(suggestions.get("name") or suggestions.get("deceased_name"), gt["deceased_name"], f"{name}: name")
+                
+                # Assert Father/Husband Name
+                if "father_name" in gt:
+                    self._assert_field_match(suggestions.get("father_name"), gt["father_name"], f"{name}: father_name")
+                
+                # Assert Date of Accident
+                if "date_of_accident" in gt:
+                    self._assert_field_match(suggestions.get("date_of_accident"), gt["date_of_accident"], f"{name}: date_of_accident")
+                
+                # Assert Place of Accident
+                if "place_of_accident" in gt:
+                    self._assert_field_match(suggestions.get("place_of_accident"), gt["place_of_accident"], f"{name}: place_of_accident")
+                
+                # Assert Age
+                if "age" in gt:
+                    self._assert_field_match(suggestions.get("age"), gt["age"], f"{name}: age")
+                
+                # Assert Monthly Income
+                if "monthly_income" in gt:
+                    self._assert_field_match(suggestions.get("monthly_income"), gt["monthly_income"], f"{name}: monthly_income", tolerance=10.0)
+                
+                # Assert Marital Status
+                if "marital_status" in gt:
+                    self._assert_field_match(suggestions.get("marital_status"), gt["marital_status"], f"{name}: marital_status")
+                
+                # Assert Future Prospects Type
+                if "future_type" in gt:
+                    self._assert_field_match(suggestions.get("future_type"), gt["future_type"], f"{name}: future_type")
+
+    def _assert_field_match(self, extracted, expected, field_name, tolerance=None):
+        if isinstance(expected, list):
+            match_found = False
+            for exp in expected:
+                try:
+                    if tolerance is not None and extracted is not None and exp is not None:
+                        if abs(float(extracted) - float(exp)) <= tolerance:
+                            match_found = True
+                            break
+                    else:
+                        if str(extracted).strip().lower() == str(exp).strip().lower() if extracted is not None and exp is not None else (extracted in (None, "") and exp in (None, "")):
+                            match_found = True
+                            break
+                except (ValueError, TypeError):
+                    if str(extracted).strip().lower() == str(exp).strip().lower() if extracted is not None and exp is not None else (extracted in (None, "") and exp in (None, "")):
+                            match_found = True
+                            break
+            self.assertTrue(
+                match_found, 
+                f"Field '{field_name}' got '{extracted}', expected one of {expected}"
+            )
+        else:
+            if tolerance is not None:
+                self.assertIsNotNone(extracted, f"Field '{field_name}' is None, expected {expected}")
+                self.assertAlmostEqual(float(extracted), float(expected), delta=tolerance, msg=f"Field '{field_name}' mismatch")
+            else:
+                self.assertEqual(
+                    str(extracted).strip().lower() if extracted is not None else "",
+                    str(expected).strip().lower() if expected is not None else "",
+                    f"Field '{field_name}' mismatch"
+                )
 
 if __name__ == "__main__":
     unittest.main()

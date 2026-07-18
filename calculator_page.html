@@ -1,0 +1,1651 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="csrf-token" content="s1BS7SpdU4ai194BnfmQruFOEoHdOaqY1YoOWpnz">
+    <title>Claim Calculator - High Court of Madhya Pradesh</title>
+    <link rel="icon" type="image/png" href="https://mphc.gov.in/images/fav.png">
+
+    <script src="https://mphc.gov.in/assets/js/jquery/dist/jquery.min.js"></script>
+    <link rel="preload" as="style" href="https://mphc.gov.in/build/assets/app-CmbZKCFf.css" /><link rel="modulepreload" as="script" href="https://mphc.gov.in/build/assets/app-BVSEW36w.js" /><link rel="modulepreload" as="script" href="https://mphc.gov.in/build/assets/bootstrap-Bj43h_rG.js" /><link rel="modulepreload" as="script" href="https://mphc.gov.in/build/assets/jquery-LSlFlvLm.js" /><link rel="modulepreload" as="script" href="https://mphc.gov.in/build/assets/vendor-fullcalendar-BnIsBlfy.js" /><link rel="modulepreload" as="script" href="https://mphc.gov.in/build/assets/vendor-ckeditor-CkMGwBIg.js" /><link rel="modulepreload" as="script" href="https://mphc.gov.in/build/assets/vendor-jquery-DKenW1nw.js" /><link rel="stylesheet" href="https://mphc.gov.in/build/assets/app-CmbZKCFf.css" /><script type="module" src="https://mphc.gov.in/build/assets/app-BVSEW36w.js"></script>
+    <!-- Custom CSS -->
+    <link rel="stylesheet" href="https://mphc.gov.in/assets/css/app.css">
+    <link rel="stylesheet" href="https://mphc.gov.in/assets/css/mega-menu.css">
+    <style>
+    .claim-readonly {
+        background-color: var(--light-bg) !important;
+        font-weight: 600;
+    }
+    .claim-error {
+        display: block;
+        font-size: 0.82rem;
+        margin-top: 4px;
+    }
+    .claim-result-area {
+        min-height: 60px;
+    }
+</style>
+</head>
+
+<body class="">
+    <!-- Top Bar -->
+    <div class="top-bar small border-bottom">
+    <div class="container">
+        <div class="d-flex justify-content-between align-items-center py-1 gap-3 flex-wrap">
+            <div class="d-flex gap-3 align-items-center flex-wrap">
+                <a href="#faq" class="text-decoration-none "><i class="bi bi-question-circle me-1"></i>FAQ</a>
+                <a href="#" class="text-decoration-none d-none d-md-block"><i
+                        class="bi bi-universal-access me-1"></i>Accessibility</a>
+                                    
+                    <a href="#" data-bs-toggle="modal" data-bs-target="#loginModal" class="text-decoration-none "><i
+                            class="bi bi-box-arrow-in-right me-1"></i>Login</a>
+                            </div>
+            <div class="d-flex align-items-center gap-3 flex-wrap">
+                <div class="d-flex gap-2">
+                    <a href="https://mphc.gov.in/lang/hi" class="text-decoration-none ">
+                        <i class="bi bi-translate me-1"></i>हिंदी
+                    </a>
+                    <a href="https://mphc.gov.in/lang/en" class="text-decoration-none fw-bold">
+                        <i class="bi bi-translate me-1"></i>English
+                    </a>
+                </div>
+
+                
+                <div class="d-flex gap-1 align-items-center font-size-controls d-none d-md-flex">
+                    <button class="btn btn-outline-light btn-sm border-0 topbar-font-btn" data-font-btn="0"
+                            onclick="decreaseFont()" title="Decrease font size">A<sup>-</sup></button>
+                    <button class="btn btn-outline-light btn-sm border-0 topbar-font-btn" data-font-btn="1"
+                            onclick="resetFont()" title="Reset font size">A</button>
+                    <button class="btn btn-outline-light btn-sm border-0 topbar-font-btn" data-font-btn="2"
+                            onclick="increaseFont()" title="Increase font size">A<sup>+</sup></button>
+                </div>
+
+                
+                <!-- <div class="dropdown ms-auto" style="z-index: 1020;">
+                    <button class="btn btn-sm dropdown-toggle" style="color: #fff" data-bs-toggle="dropdown"
+                        aria-expanded="false" aria-label="Choose colour theme">
+                        Theme
+                    </button>
+                    <ul class="dropdown-menu dropdown-menu-end p-2" style="min-width: auto;">
+                        <li class="d-flex gap-2 justify-content-center align-items-center">
+
+                            <button class="btn p-0 theme-dot" data-theme-btn=""
+                                    style="background:#6c4a3f;"
+                                    onclick="setTheme('')"
+                                    title="Default"></button>
+
+                            <button class="btn p-0 theme-dot" data-theme-btn="theme-navy"
+                                    style="background:#1a2a6c;"
+                                    onclick="setTheme('theme-navy')"
+                                    title="Navy & Gold"></button>
+
+                            <button class="btn p-0 theme-dot" data-theme-btn="theme-emerald"
+                                    style="background:#047857;"
+                                    onclick="setTheme('theme-emerald')"
+                                    title="Emerald"></button>
+
+                            <button class="btn p-0 theme-dot" data-theme-btn="theme-maroon"
+                                    style="background:#7b2c2c;"
+                                    onclick="setTheme('theme-maroon')"
+                                    title="Maroon"></button>
+
+                            <button class="btn p-0 theme-dot" data-theme-btn="theme-steel-blue"
+                                    style="background:#2e4a7a;"
+                                    onclick="setTheme('theme-steel-blue')"
+                                    title="Steel Blue"></button>
+
+                            <button class="btn p-0 theme-dot" data-theme-btn="theme-dark"
+                                    style="background:#0f172a;"
+                                    onclick="setTheme('theme-dark')"
+                                    title="Dark"></button>
+
+                        </li>
+                    </ul>
+                </div> -->
+            </div>
+        </div>
+    </div>
+</div>
+
+    <!-- Header & Navigation -->
+    <header class="main-header">
+    <div class="container">
+        <div class="logo-section d-flex justify-content-between align-items-center">
+            <div class="d-flex align-items-center">
+                <div class="logo-img me-3">
+                    <a href="https://mphc.gov.in">
+                        <img src="https://mphc.gov.in/assets/img/logo.png" alt="MP High Court Logo" class="logo-img">
+                    </a>
+                </div>
+                <div>
+                    <h2 class="mb-0 fw-bold fs-4">High Court of Madhya Pradesh</h2>
+                    <p class="mb-0 text-muted pt-2 pb-2">मध्य प्रदेश उच्च न्यायालय</p>
+                </div>
+            </div>
+
+            
+            <div class="old-website-link">
+                <a href="https://portal.mphc.gov.in"
+                   target="_blank"
+                   rel="noopener noreferrer"
+                   class="btn btn-warning fw-semibold px-3 py-2 d-flex align-items-center gap-2 shadow-sm border-0"
+                   style="background: linear-gradient(135deg, #f59e0b, #d97706); color: #1a1a1a; border-radius: 8px; text-decoration: none; font-size: 0.85rem; letter-spacing: 0.3px;">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" viewBox="0 0 16 16">
+                        <path d="M0 8a8 8 0 1 1 16 0A8 8 0 0 1 0 8zm7.5-6.923c-.67.204-1.335.82-1.887 1.855A7.97 7.97 0 0 0 5.145 4H7.5V1.077zM4.09 4a9.267 9.267 0 0 1 .64-1.539 6.7 6.7 0 0 1 .597-.933A7.025 7.025 0 0 0 2.255 4H4.09zm-.582 3.5c.03-.877.138-1.718.312-2.5H1.674a6.958 6.958 0 0 0-.656 2.5h2.49zM4.847 5a12.5 12.5 0 0 0-.338 2.5H7.5V5H4.847zM8.5 5v2.5h2.99a12.495 12.495 0 0 0-.337-2.5H8.5zM4.51 8.5a12.5 12.5 0 0 0 .337 2.5H7.5V8.5H4.51zm3.99 0V11h2.653c.187-.765.306-1.608.338-2.5H8.5zM5.145 12c.138.386.295.744.468 1.068.552 1.035 1.218 1.65 1.887 1.855V12H5.145zm.182 2.472a6.696 6.696 0 0 1-.597-.933A9.268 9.268 0 0 1 4.09 12H2.255a7.024 7.024 0 0 0 3.072 2.472zM3.82 11a13.652 13.652 0 0 1-.312-2.5h-2.49c.062.89.291 1.733.656 2.5H3.82zm6.853 3.472A7.024 7.024 0 0 0 13.745 12H11.91a9.27 9.27 0 0 1-.64 1.539 6.688 6.688 0 0 1-.597.933zM8.5 12v2.923c.67-.204 1.335-.82 1.887-1.855.173-.324.33-.682.468-1.068H8.5zm3.68-1h2.146c.365-.767.594-1.61.656-2.5h-2.49a13.65 13.65 0 0 1-.312 2.5zm2.802-3.5a6.959 6.959 0 0 0-.656-2.5H11.72c.174.782.282 1.623.312 2.5h2.49zM11.27 2.461c.247.464.462.98.64 1.539h1.835a7.024 7.024 0 0 0-3.072-2.472c.218.284.418.598.597.933zM10.855 4a7.966 7.966 0 0 0-.468-1.068C9.835 1.897 9.17 1.282 8.5 1.077V4h2.355z"/>
+                    </svg>
+                    Go To Old Website
+                </a>
+            </div>
+
+        </div>
+    </div>
+</header>    <nav class="navbar navbar-expand-lg navbar-dark main-nav">
+    <div class="container">
+        <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav" aria-controls="navbarNav" aria-expanded="false" aria-label="Toggle navigation">
+            <span class="navbar-toggler-icon"></span>
+        </button>
+        <div class="collapse navbar-collapse" id="navbarNav">
+            <ul class="navbar-nav mx-auto">
+                <li class="nav-item">
+                    <a class="nav-link" href="https://mphc.gov.in">
+                        Home
+                    </a>
+                </li>
+                
+                
+                <li class="nav-item dropdown mega-dropdown">
+    <a class="nav-link dropdown-toggle" href="#" role="button" data-bs-toggle="dropdown" aria-expanded="false">
+        Judges
+    </a>
+    <div class="dropdown-menu mega-menu shadow-lg border-0">
+        <div class="container custom-scroll">
+            <div class="row">
+
+                
+                <div class="col-md-4">
+                    <div class="mega-menu-section">
+                        <h6 class="mega-menu-title">Hon&#039;ble Judges</h6>
+                        <ul class="list-unstyled mega-menu-list">
+                            <li>
+                                <a href="https://mphc.gov.in/chief-justice-and-sitting-judges" class="mega-menu-link">
+                                    <span class="menu-text">Hon&#039;ble Chief Justice and Sitting Judges</span>
+                                </a>
+                            </li>
+                            <li>
+                                <a href="https://mphc.gov.in/appointed-as-cji" class="mega-menu-link">
+                                    <span class="menu-text">Hon&#039;ble Judges Appointed as Chief Justices of India</span>
+                                </a>
+                            </li>
+                            <li>
+                                <a href="https://mphc.gov.in/appointed-as-judge-of-sci" class="mega-menu-link">
+                                    <span class="menu-text">Hon&#039;ble Judges Appointed as Judges of Supreme Court</span>
+                                </a>
+                            </li>
+                        </ul>
+                    </div>
+                </div>
+
+                
+                <div class="col-md-4">
+                    <div class="mega-menu-section">
+                        <h6 class="mega-menu-title">Portfolio Judges &amp; Committees</h6>
+                        <ul class="list-unstyled mega-menu-list">
+                            <li>
+                                <a href="https://mphc.gov.in/portfolio-judges" class="mega-menu-link">
+                                    <span class="menu-text">Portfolio Judges</span>
+                                </a>
+                            </li>
+                            <li>
+                                <a href="https://mphc.gov.in/administrative-committees" class="mega-menu-link">
+                                    <span class="menu-text">Administrative Committees</span>
+                                </a>
+                            </li>
+                            <li>
+                                <a href="https://mphc.gov.in/administrative-setup" class="mega-menu-link">
+                                    <span class="menu-text">Administrative Setup</span>
+                                </a>
+                            </li>
+                        </ul>
+                    </div>
+                </div>
+
+                
+                <div class="col-md-4">
+                    <div class="mega-menu-section">
+                        <h6 class="mega-menu-title">Former Hon&#039;ble Judges</h6>
+                        <ul class="list-unstyled mega-menu-list">
+                            <li>
+                                <a href="https://mphc.gov.in/former-cj" class="mega-menu-link">
+                                    <span class="menu-text">Former Hon&#039;ble Chief Justices</span>
+                                </a>
+                            </li>
+                            <li>
+                                <a href="https://mphc.gov.in/elevated-as-cj-of-other-hc" class="mega-menu-link">
+                                    <span class="menu-text">Former Hon&#039;ble Judges Elevated as Chief Justice</span>
+                                </a>
+                            </li>
+                            <li>
+                                <a href="https://mphc.gov.in/former-judges" class="mega-menu-link">
+                                    <span class="menu-text">Former Hon&#039;ble Judges</span>
+                                </a>
+                            </li>
+                        </ul>
+                    </div>
+                </div>
+
+            </div>
+        </div>
+    </div>
+</li>
+
+<style>
+    @media (max-width: 768px) {
+        .custom-scroll {
+            max-height: 70vh;
+            overflow-y: auto;
+        }
+        .custom-scroll::-webkit-scrollbar {
+            width: 6px;
+        }
+        .custom-scroll::-webkit-scrollbar-thumb {
+            background: #ccc;
+            border-radius: 3px;
+        }
+    }
+</style>
+                <li class="nav-item dropdown">
+                    <a class="nav-link dropdown-toggle" href="https://mphc.gov.in/registry-officers" role="button" data-bs-toggle="dropdown">
+                        Administration
+                    </a>
+                    <ul class="dropdown-menu">
+                        <li><a class="dropdown-item mega-menu-link" href="https://mphc.gov.in/registry-officers" >Registry Officers</a></li>
+                        <li><a class="dropdown-item mega-menu-link" href="https://mphc.gov.in/gradiation-list" >Gradation List</a></li>
+                    </ul>
+                </li>
+                <li class="nav-item">
+                    <a class="nav-link" href="https://mphc.gov.in/case-status">
+                        Case Status
+                    </a>
+                </li>
+                <li class="nav-item dropdown">
+                    <a class="nav-link dropdown-toggle" href="https://mphc.gov.in/causelist" role="button" data-bs-toggle="dropdown">
+                        Cause List
+                    </a>
+                    <ul class="dropdown-menu">
+                        <li><a class="dropdown-item mega-menu-link" href="https://mphc.gov.in/causelist" >by Judge Name</a></li>
+                        <li><a class="dropdown-item mega-menu-link" href="https://mphc.gov.in/advocate-en-causelist" >by Advocate Enroll. No.</a></li>
+                        <li><a class="dropdown-item mega-menu-link" href="https://mphc.gov.in/advocate-name-causelist" >by Advocate Name</a></li>
+                        <li><a class="dropdown-item mega-menu-link" href="https://mphc.gov.in/partyname-causelist" >by Party Name</a></li>
+                    </ul>
+                </li>
+                <li class="nav-item">
+                    <a class="nav-link" href="https://mphc.gov.in/roster">
+                        Roster
+                    </a>
+                </li>
+                <li class="nav-item">
+                    <a class="nav-link" href="https://mphc.gov.in/judgements" >
+                    Judgements/Orders
+                    </a>
+                </li>
+                
+                <li class="nav-item dropdown">
+                    <a class="nav-link dropdown-toggle"  role="button" data-bs-toggle="dropdown">
+                        Caveat
+                    </a>
+                    <ul class="dropdown-menu">
+                          <li><a class="dropdown-item mega-menu-link" href="https://mphc.gov.in/caveat-case-number">By Case Number</a></li>
+                          <li><a class="dropdown-item mega-menu-link" href="https://mphc.gov.in/caveat-by-number">By Caveat Number</a></li>
+                          <li><a class="dropdown-item mega-menu-link" href="https://mphc.gov.in/caveat-by-partyname">By Party Name</a></li>
+                          <li><a class="dropdown-item mega-menu-link" href="https://mphc.gov.in/caveat-between-dates">Caveat between two Dates</a></li>
+                      </ul>
+                </li>
+                <li class="nav-item dropdown">
+                    <a class="nav-link dropdown-toggle" href="https://mphc.gov.in/district-court" role="button" data-bs-toggle="dropdown">
+                        District Courts
+                    </a>
+                      <ul class="dropdown-menu">
+                        <li><a class="dropdown-item mega-menu-link" href='https://district.mphc.gov.in' target="_blank">District Courts</a></li>
+                        <li><hr class="dropdown-divider"></li>
+                        <li><a class="dropdown-item mega-menu-link" href='https://familycourts.mphc.gov.in/' target="_blank">Family Court</a></li>
+                    </ul>
+                </li>
+                
+                <li class="nav-item dropdown mega-dropdown">
+    <a class="nav-link dropdown-toggle" href="#" role="button" data-bs-toggle="dropdown" aria-expanded="false">
+        e-Services
+    </a>
+    <div class="dropdown-menu mega-menu shadow-lg border-0">
+        <div class="container custom-scroll">
+            <div class="row">
+                
+                <div class="col-md-4">
+                    <div class="mega-menu-section ">
+                        <h6 class="mega-menu-title">Filing &amp; Display</h6>
+                        <ul class="list-unstyled mega-menu-list">
+                            <li>
+                                <a href="https://portal.mphc.gov.in/efiling" target="_blank" rel="noopener noreferrer" class="mega-menu-link">
+                                    <span class="menu-text">e-Filing High Court</span>
+                                </a>
+                            </li>
+                            <li>
+                                <a href="https://filing.ecourts.gov.in/pdedev/" target="_blank" rel="noopener noreferrer" class="mega-menu-link">
+                                    <span class="menu-text">e-Filing District Court</span>
+                                </a>
+                            </li>
+                            <li>
+                                <a href="https://mphc.gov.in/display-board" class="mega-menu-link">
+                                    <span class="menu-text">e-Display Board</span>
+                                </a>
+                            </li>
+                            <li>
+                                <a href="https://erp.mphc.gov.in/online_rti/online" target="_blank" rel="noopener noreferrer" class="mega-menu-link">
+                                    <span class="menu-text">e-RTI</span>
+                                </a>
+                            </li>
+                        </ul>
+                        
+                        
+                    </div>
+                </div>
+                
+                
+                <div class="col-md-4">
+                    <div class="mega-menu-section">
+                        <h6 class="mega-menu-title">Certified Copy Services</h6>
+                        <ul class="list-unstyled mega-menu-list">
+                            <li>
+                                <a href="https://mphc.gov.in/copying" rel="noopener noreferrer" class="mega-menu-link">
+                                    <span class="menu-text">e-Copying</span>
+                                </a>
+                            </li>
+                            <li>
+                                <a href="https://erp.mphc.gov.in/highcourt/copying/sendOtp" target="_blank" rel="noopener noreferrer" class="mega-menu-link">
+                                    <span class="menu-text">e-Certified Copy High Court</span>
+                                </a>
+                            </li>
+                            <li>
+                                <a href="https://portal.mphc.gov.in/docc" target="_blank" rel="noopener noreferrer" class="mega-menu-link">
+                                    <span class="menu-text">e-Certified Copy District Court</span>
+                                </a>
+                            </li>
+                            <li>
+                                <a href="https://erp.mphc.gov.in/advocate/epaper-book" class="mega-menu-link" target="_blank" rel="noopener noreferrer">
+                                    <span class="menu-text">e-Paperbook</span>
+                                </a>
+                            </li>
+                            <li>
+                                <a href="https://erp.mphc.gov.in/inspection" class="mega-menu-link" target="_blank" rel="noopener noreferrer">
+                                    <span class="menu-text">e-Inspection</span>
+                                </a>
+                            </li>
+                        </ul>
+                        
+                        
+                    </div>
+                </div>
+                
+                
+                <div class="col-md-4">
+                    <div class="mega-menu-section">
+                        <h6 class="mega-menu-title">Information &amp; Support</h6>
+                        <ul class="list-unstyled mega-menu-list">
+                            <li>
+                                <a href="https://mphc.gov.in/ecourt-information" class="mega-menu-link">
+                                    <span class="menu-text">e-Court Informative</span>
+                                </a>
+                            </li>
+                            <li>
+                                <a href="https://portal.mphc.gov.in/esewa/" class="mega-menu-link" target="_blank" rel="noopener noreferrer">
+                                    <span class="menu-text">e-sewa Kendra</span>
+                                </a>
+                            </li>
+                            <li>
+                                <a href="https://mphc.gov.in/e-courts-info/technical-staff" class="mega-menu-link">
+                                    <span class="menu-text">Technical Staff</span>
+                                </a>
+                            </li>
+                        </ul>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</li>
+
+<style>
+    @media (max-width: 768px) {
+  .custom-scroll {
+    max-height: 70vh;   /* limit the height */
+    overflow-y: auto;   /* add vertical scrollbar */
+  }
+
+  /* optional: smooth mobile scrolling */
+  .custom-scroll::-webkit-scrollbar {
+    width: 6px;
+  }
+
+  .custom-scroll::-webkit-scrollbar-thumb {
+    background: #ccc;
+    border-radius: 3px;
+  }
+}
+</style>                
+                <li class="nav-item">
+                    <a class="nav-link" href="https://erp.mphc.gov.in/" target="_blank" rel="noopener noreferrer">
+                        ERP
+                    </a>
+            </ul>
+        </div>
+        
+        <!-- Hamburger Menu Button (Right Side) -->
+        <button class="sidebar-toggle-btn" type="button" id="sidebarToggle">
+            <span></span>
+            <span></span>
+            <span></span>
+        </button>
+    </div>
+</nav>
+    <!-- Sidebar -->
+    <!-- Sidebar Overlay -->
+<div class="sidebar-overlay" id="sidebarOverlay"></div>
+
+<!-- Sidebar -->
+<div class="sidebar" id="sidebar">
+    <div class="sidebar-header">
+        <h5><i class="bi bi-menu-button-wide me-2"></i>Menu</h5>
+        <button class="sidebar-close" id="sidebarClose">
+            <i class="bi bi-x-lg"></i>
+        </button>
+    </div>
+    
+    <div class="sidebar-content">
+        <div class="sidebar-section">
+            <h6><i class="bi bi-speedometer2 me-2"></i>Reports</h6>
+            <ul class="sidebar-menu">
+                <li><a href="https://mphc.gov.in/case-statistics"><i class="bi bi-search me-2"></i>Case Statistics</a></li>
+                <li><a href="https://mphc.gov.in/causelist"><i class="bi bi-calendar3 me-2"></i>Reports</a></li>
+                
+            </ul>
+        </div>
+
+        <div class="sidebar-section">
+            <h6><i class="bi bi-laptop me-2"></i>News and Events</h6>
+            <ul class="sidebar-menu">
+                <li><a href="https://mphc.gov.in/best-practices"><i class="bi bi-credit-card me-2"></i>Best Practices</a></li>
+                <li><a href="https://www.youtube.com/channel/UCCIVFftzmBqzBKoijOmIl1A" target="_blank"><i class="bi bi-file-earmark-check me-2"></i>YouTube Channel</a></li>
+                
+            </ul>
+        </div>
+
+        <div class="sidebar-section">
+            <h6><i class="bi bi-info-circle me-2"></i>Important Links</h6>
+            <ul class="sidebar-menu">
+                <li><a href="https://www.sci.gov.in/" target="_blank"><i class="bi bi-person-badge me-2"></i> Supreme Court of India</a></li>
+                <li><a href="https://judgments.ecourts.gov.in/pdfsearch/?p=pdf_search/index&escr_flag=Y" target="_blank"><i class="bi bi-building me-2"></i>eSCR</a></li>
+                <li><a href="https://ecourts.gov.in/ecourts_home/" target="_blank"><i class="bi bi-shield-check me-2"></i>eCourt India Services</a></li>
+                <li><a href="https://ecommitteesci.gov.in/" target="_blank"><i class="bi bi-telephone me-2"></i>e-Committee, SCI</a></li>
+                <li><a href="https://njdg.ecourts.gov.in/njdg_v3/" target="_blank"><i class="bi bi-telephone me-2"></i>NJDG</a></li>
+                <li><a href="https://mpsja.mphc.gov.in/" target="_blank"><i class="bi bi-telephone me-2"></i>MPSJA</a></li>
+                <li><a href="https://www.mpslsa.gov.in/" target="_blank"><i class="bi bi-telephone me-2"></i>MPSLSA</a></li>
+                <li><a href="http://mpdiac.gov.in/" target="_blank"><i class="bi bi-telephone me-2"></i>MP Arbitration Centre</a></li>
+            </ul>
+        </div>
+
+        <div class="sidebar-section">
+            <h6><i class="bi bi-download me-2"></i>Calculator</h6>
+            <ul class="sidebar-menu">
+                <li><a href="https://mphc.gov.in/claim-calculator"><i class="bi bi-file-earmark-text me-2"></i>Claim Calculator</a></li>
+                <li><a href="#"><i class="bi bi-file-pdf me-2"></i>e-Court Fees Calculator</a></li>
+                
+            </ul>
+        </div>
+    </div>
+</div>
+    <!-- Main Content -->
+    <div class="container py-3">
+
+    
+    <div class="card shadow-sm mb-3">
+        <div class="card-header d-flex justify-content-between align-items-center"
+            style="background: var(--primary-color)">
+            <div class="text-dark fw-semibold">
+                <i class="bi bi-calculator me-1"></i> Claim Calculator
+            </div>
+            <div class="badge rounded-pill text-dark" style="background: var(--accent-color)">
+                MACT Compensation
+            </div>
+        </div>
+        <div class="card-body" style="background: var(--light-bg)">
+            <p class="small text-muted mb-0">
+                Tentative Compensation Calculator Software for <strong>MACT Claim Cases</strong>.
+                This tool helps advocates and litigants estimate compensation amounts based on the latest
+                guidelines of the Hon'ble Supreme Court in <strong>Sarla Verma</strong> and
+                <strong>Pranay Sethi</strong> cases.
+            </p>
+        </div>
+    </div>
+
+    
+    <form onsubmit="return false;">
+        <div class="card shadow-sm border-0 mb-3">
+            <div class="card-body" style="background: var(--light-bg)">
+                <div class="row g-3 align-items-end justify-content-center">
+                    <div class="col-12 col-md-5">
+                        <label for="toin" class="form-label small text-uppercase fw-semibold">
+                            Type of Injury / Case <span class="text-danger">*</span>
+                        </label>
+                        <select class="form-select form-select-sm" name="toin" id="toin" onchange="admSelectCheck1()">
+                            <option value="0">-- Select --</option>
+                            <option value="1">Injury</option>
+                            <option value="3">Death</option>
+                        </select>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        
+        <div id="deathcase_1" style="display:none;">
+            <div class="card shadow-sm mb-3">
+                <div class="card-header d-flex align-items-center"
+                    style="background: var(--primary-color)">
+                    <span class="text-dark fw-semibold">
+                        <i class="bi bi-file-earmark-text me-1"></i> Death Case Details
+                    </span>
+                </div>
+                <div class="card-body">
+                    <div class="alert alert-warning border-0 shadow-sm small mb-3">
+                        <i class="bi bi-exclamation-triangle me-1"></i>
+                        Please fill all required fields carefully for accurate tentative compensation calculation.
+                    </div>
+                    <div class="row g-3">
+                        <div class="col-md-6">
+                            <label for="named" class="form-label small text-uppercase fw-semibold">Name of Deceased <span class="text-danger">*</span></label>
+                            <input type="text" style="text-transform: uppercase;" class="form-control form-control-sm" id="named" placeholder="Enter full name">
+                            <span class="text-danger claim-error" id="error_named"></span>
+                        </div>
+                        <div class="col-md-6">
+                            <label for="fnamed" class="form-label small text-uppercase fw-semibold">Father Name of Deceased</label>
+                            <input type="text" style="text-transform: uppercase;" class="form-control form-control-sm" id="fnamed" placeholder="Enter father name">
+                            <span class="text-danger claim-error" id="error_fnamed"></span>
+                        </div>
+                        <div class="col-md-6">
+                            <label for="doacc" class="form-label small text-uppercase fw-semibold">Date Of Accident <span class="text-danger">*</span></label>
+                            <input type="date" class="form-control form-control-sm" id="doacc">
+                            <span class="text-danger claim-error" id="error_doacc"></span>
+                        </div>
+                        <div class="col-md-6">
+                            <label for="poacc" class="form-label small text-uppercase fw-semibold">Place Of Accident</label>
+                            <input type="text" style="text-transform: uppercase;" class="form-control form-control-sm" id="poacc" placeholder="Enter accident place">
+                            <span class="text-danger claim-error" id="error_poacc"></span>
+                        </div>
+                        <div class="col-md-6">
+                            <label for="dobd" class="form-label small text-uppercase fw-semibold">Date of Birth of Deceased <span class="text-danger">*</span></label>
+                            <input type="date" class="form-control form-control-sm" id="dobd" />
+                            <span class="text-danger claim-error" id="error_dobd"></span>
+                        </div>
+                        <div class="col-md-6">
+                            <label for="age" class="form-label small text-uppercase fw-semibold">Age of Deceased <span class="text-danger">*</span></label>
+                            <input type="text" class="form-control form-control-sm claim-readonly" id="age" readonly placeholder="Auto calculated">
+                            <span class="text-danger claim-error" id="error_age"></span>
+                        </div>
+                        <div class="col-md-6">
+                            <label for="maritalStatus" class="form-label small text-uppercase fw-semibold">Marital Status <span class="text-danger">*</span></label>
+                            <select class="form-select form-select-sm" id="maritalStatus" name="maritalStatus" onchange="toggleDependents()">
+                                <option value="">-- Select Marital Status --</option>
+                                <option value="M">Married</option>
+                                <option value="B">Bachelor</option>
+                            </select>
+                            <span class="text-danger claim-error" id="error_maritalStatus"></span>
+                        </div>
+                        <div class="col-md-6" id="nodepWrapper" style="display:none;">
+                            <label for="nodep" class="form-label small text-uppercase fw-semibold">Number of Dependents <span class="text-danger">*</span></label>
+                            <input type="number" class="form-control form-control-sm" id="nodep" placeholder="Enter number of dependents">
+                            <span class="text-danger claim-error" id="error_nodep"></span>
+                        </div>
+                        <div class="col-md-6">
+                            <label for="mincome" class="form-label small text-uppercase fw-semibold">Monthly Income <span class="text-danger">*</span></label>
+                            <input type="number" class="form-control form-control-sm" id="mincome" placeholder="Enter monthly income">
+                            <span class="text-danger claim-error" id="error_mincome"></span>
+                        </div>
+                        <div class="col-md-6">
+                            <label for="fupro" class="form-label small text-uppercase fw-semibold">Future Prospects <span class="text-danger">*</span></label>
+                            <select id="fupro" name="fupro" class="form-select form-select-sm">
+                                <option value="0">-- Select --</option>
+                                <option value="1">Permanent job with increments</option>
+                                <option value="2">Self-employed / Fixed salaried</option>
+                            </select>
+                            <span class="text-danger claim-error" id="error_fupro"></span>
+                        </div>
+                        <div class="col-md-4">
+                            <label for="loa" class="form-label small text-uppercase fw-semibold">Loss of Estate</label>
+                            <input type="number" class="form-control form-control-sm" id="loa" value="15000" />
+                            <span class="text-danger claim-error" id="error_loa"></span>
+                        </div>
+                        <div class="col-md-4">
+                            <label for="loc" class="form-label small text-uppercase fw-semibold">Loss of Consortium</label>
+                            <input type="number" class="form-control form-control-sm" id="loc" value="40000">
+                            <span class="text-danger claim-error" id="error_loc"></span>
+                        </div>
+                        <div class="col-md-4">
+                            <label for="fe" class="form-label small text-uppercase fw-semibold">Funeral Expenses</label>
+                            <input type="number" class="form-control form-control-sm" id="fe" value="15000" />
+                            <span class="text-danger claim-error" id="error_fe"></span>
+                        </div>
+                    </div>
+                    <div class="row mt-3">
+                        <div class="col-md-3 mx-auto d-grid">
+                            <button type="button" class="btn btn-sm fw-semibold" id="btnDeathCalculate"
+                                style="background-color: var(--secondary-color); color: white;">
+                                <i class="bi bi-calculator me-1"></i> Calculate Compensation
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        
+        <div id="injery" style="display:none;">
+            <div class="card shadow-sm mb-3">
+                <div class="card-header d-flex align-items-center"
+                    style="background: var(--primary-color)">
+                    <span class="text-dark fw-semibold">
+                        <i class="bi bi-bandaid me-1"></i> Injury Case Details
+                    </span>
+                </div>
+                <div class="card-body">
+                    <div class="alert alert-warning border-0 shadow-sm small mb-3">
+                        <i class="bi bi-exclamation-triangle me-1"></i>
+                        Enter claimant and injury-related details carefully to generate a tentative compensation estimate.
+                    </div>
+                    <div class="row g-3">
+                        <div class="col-md-6">
+                            <label for="namei" class="form-label small text-uppercase fw-semibold">Name of Injured <span class="text-danger">*</span></label>
+                            <input type="text" class="form-control form-control-sm" id="namei" style="text-transform: uppercase;" placeholder="Enter injured person's name">
+                            <span class="text-danger claim-error" id="error_namei"></span>
+                        </div>
+                        <div class="col-md-6">
+                            <label for="fnamei" class="form-label small text-uppercase fw-semibold">Father Name of Injured</label>
+                            <input type="text" class="form-control form-control-sm" id="fnamei" style="text-transform: uppercase;" placeholder="Enter father name">
+                            <span class="text-danger claim-error" id="error_fnamei"></span>
+                        </div>
+                        <div class="col-md-6">
+                            <label for="doacci" class="form-label small text-uppercase fw-semibold">Date Of Accident <span class="text-danger">*</span></label>
+                            <input type="date" class="form-control form-control-sm" id="doacci">
+                            <span class="text-danger claim-error" id="error_doacci"></span>
+                        </div>
+                        <div class="col-md-6">
+                            <label for="poacci" class="form-label small text-uppercase fw-semibold">Place Of Accident</label>
+                            <input type="text" class="form-control form-control-sm" id="poacci" style="text-transform: uppercase;" placeholder="Enter accident place">
+                            <span class="text-danger claim-error" id="error_poacci"></span>
+                        </div>
+                        <div class="col-md-6">
+                            <label for="dobdi" class="form-label small text-uppercase fw-semibold">Date Of Birth of Injured <span class="text-danger">*</span></label>
+                            <input type="date" class="form-control form-control-sm" id="dobdi">
+                            <span class="text-danger claim-error" id="error_dobdi"></span>
+                        </div>
+                        <div class="col-md-6">
+                            <label for="agei" class="form-label small text-uppercase fw-semibold">Age of Injured <span class="text-danger">*</span></label>
+                            <input type="text" class="form-control form-control-sm claim-readonly" id="agei" readonly placeholder="Auto calculated">
+                            <span class="text-danger claim-error" id="error_agei"></span>
+                        </div>
+                        <div class="col-md-6">
+                            <label for="nodepi" class="form-label small text-uppercase fw-semibold">Number of Dependents <span class="text-danger">*</span></label>
+                            <input type="number" class="form-control form-control-sm" id="nodepi" placeholder="Enter number of dependents">
+                            <span class="text-danger claim-error" id="error_nodepi"></span>
+                        </div>
+                        <div class="col-md-6">
+                            <label for="mincomei" class="form-label small text-uppercase fw-semibold">Monthly Income <span class="text-danger">*</span></label>
+                            <input type="number" class="form-control form-control-sm" id="mincomei" placeholder="Enter monthly income">
+                            <span class="text-danger claim-error" id="error_mincomei"></span>
+                        </div>
+                        <div class="col-md-6">
+                            <label for="padi" class="form-label small text-uppercase fw-semibold">Permanent Disability (in %) <span class="text-danger">*</span></label>
+                            <input type="number" class="form-control form-control-sm" id="padi" placeholder="Enter disability percentage">
+                            <span class="text-danger claim-error" id="error_padi"></span>
+                        </div>
+                        <div class="col-md-6">
+                            <label for="medex" class="form-label small text-uppercase fw-semibold">Medical Expenses</label>
+                            <input type="number" class="form-control form-control-sm" id="medex" placeholder="Enter amount">
+                            <span class="text-danger claim-error" id="error_medex"></span>
+                        </div>
+                        <div class="col-md-6">
+                            <label for="paasu" class="form-label small text-uppercase fw-semibold">Pain and Suffering</label>
+                            <input type="number" class="form-control form-control-sm" id="paasu" placeholder="Enter amount">
+                            <span class="text-danger claim-error" id="error_paasu"></span>
+                        </div>
+                        <div class="col-md-6">
+                            <label for="sd" class="form-label small text-uppercase fw-semibold">Special Diet</label>
+                            <input type="number" class="form-control form-control-sm" id="sd" placeholder="Enter amount">
+                            <span class="text-danger claim-error" id="error_sd"></span>
+                        </div>
+                        <div class="col-md-6">
+                            <label for="tran" class="form-label small text-uppercase fw-semibold">Transportation</label>
+                            <input type="number" class="form-control form-control-sm" id="tran" placeholder="Enter amount">
+                            <span class="text-danger claim-error" id="error_tran"></span>
+                        </div>
+                        <div class="col-md-6">
+                            <label for="att" class="form-label small text-uppercase fw-semibold">Attender</label>
+                            <input type="number" class="form-control form-control-sm" id="att" placeholder="Enter amount">
+                            <span class="text-danger claim-error" id="error_att"></span>
+                        </div>
+                        <div class="col-md-6">
+                            <label for="loss_incme" class="form-label small text-uppercase fw-semibold">Loss of Income</label>
+                            <input type="number" class="form-control form-control-sm" id="loss_incme" placeholder="Enter amount">
+                            <span class="text-danger claim-error" id="error_loss_incme"></span>
+                        </div>
+                        <div class="col-md-6">
+                            <label for="futmedaxp" class="form-label small text-uppercase fw-semibold">Future Medical Expenses</label>
+                            <input type="number" class="form-control form-control-sm" id="futmedaxp" placeholder="Enter amount">
+                            <span class="text-danger claim-error" id="error_futmedaxp"></span>
+                        </div>
+                    </div>
+                    <div class="row mt-3">
+                        <div class="col-md-3 mx-auto d-grid">
+                            <button type="button" class="btn btn-sm fw-semibold" id="btnInjuryCalculate"
+                                style="background-color: var(--secondary-color); color: white;">
+                                <i class="bi bi-calculator me-1"></i> Calculate Compensation
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </form>
+
+    
+    <div id="dv_res1" class="claim-result-area mt-3"></div>
+
+</div>
+
+    
+    <div class="modal fade" id="caseDetailModal" tabindex="-1" aria-labelledby="caseDetailModalLabel" aria-hidden="true">
+        <div class="modal-dialog modal-xl modal-dialog-scrollable">
+            <div class="modal-content">
+                <div class="modal-header" style="background: var(--primary-color)">
+                    <h6 class="modal-title fw-bold" id="caseDetailModalLabel">Case Details</h6>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body" id="caseDetailModalBody">
+                    <div class="text-center py-5">
+                        <div class="spinner-border" role="status"></div>
+                        <div class="mt-2 text-muted">Loading case details...</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Footer -->
+    <footer class="footer">
+    <div class="container">
+        <div class="row">
+            <div class="col-md-3 contact-info">
+                <h5>Contact Information</h5>
+                <p><span class="fw-semibold">Registrar General</span>
+                    <br />High Court of Madhya Pradesh
+                    <br />Jabalpur, India - 482001
+                    <br />0761-2620380, 2622674, 2626734
+                    <br />IVRS Number - 0761-2637400
+                    <br /><span class="fw-semibold">Email - mphc[at]nic[dot]in</span>
+                </p>
+                <hr />
+                <p><span class="fw-semibold">Indore Bench</span>
+                    <br />M.G. Road, South Tukoganj
+                    <br />Indore, India - 452001
+                    <br /><span class="fw-semibold">Email - hc-indore[at]nic[dot]in</span>
+                </p>
+                <hr>
+                <p><span class="fw-semibold">Gwalior Bench</span>
+                    <br />New High Court Building,
+                    <br />City Centre, Gwalior, India - 474009
+                    <br /><span class="fw-semibold">Email - hc-gwalior[at]nic[dot]in</span>
+                </p>
+            </div>
+            <div class="col-md-3">
+                <h5>Quick Links</h5>
+                <a href="https://mphc.gov.in/history" style="color: var(--dark-text)">History &amp; Constitution</a>
+                <a href="https://mphc.gov.in/high-court-rules" style="color: var(--dark-text)">High Court Rules</a>
+                
+                <a href="https://portal.mphc.gov.in/virtual-justice-clock" target="_blank" style="color: var(--dark-text)">Virtual Justice Clock</a>
+                <a href="https://mphc.gov.in/important-links" style="color: var(--dark-text)">Important Links</a>
+                <a href="https://code.mp.gov.in/" target="_blank" style="color: var(--dark-text)">MP Code</a>
+                <a href="https://www.indiacode.nic.in/" target="_blank" style="color: var(--dark-text)">Central &amp; State Acts (India Code)</a>
+                <div>
+                    <h5 class="me-2 mb-2 mt-2">Download App</h5>
+                    <div class="d-flex flex-column justify-content-center gap-1">
+                        <a href="https://apps.mgov.gov.in/app-info/2227" target="_blank" style="all: unset; cursor: pointer;">
+                            <img src="https://mphc.gov.in/assets/img/mgov.jpg" alt="Gov.in Play Store" width="40px" height="40px"
+                                class="app-badge">
+                        </a>
+
+                        <a href="https://play.google.com/store/apps/details?id=gov.mp.mapit.mphc" target="_blank" style="all: unset; cursor: pointer;">
+                            <img src="https://mphc.gov.in/assets/img/Android.png" alt="Google Play Store" width="90px" height="30px"
+                                class="app-badge">
+                        </a>
+
+                        <a href="https://apps.apple.com/us/app/mp-high-court-eservices/id1554839414" target="_blank" style="all: unset; cursor: pointer;">
+                            <img src="https://mphc.gov.in/assets/img/iOS.png" alt="Apple App Store" width="90px" height="30px"
+                                class="app-badge">
+                        </a>
+                    </div>
+
+                </div>
+            </div>
+            <div class="col-md-3">
+                <h5>Resources</h5>
+                <a href="https://mphc.gov.in/vc/schedule" target="_blank" style="color: var(--dark-text)">VC Schedule</a>
+                <a href="https://mphc.gov.in/vc/adv-vc-links" target="_blank" style="color: var(--dark-text)">VC Link</a>
+                <a href="https://mphc.gov.in/schemes" style="color: var(--dark-text)">Schemes</a>
+                <a href="https://mphc.gov.in/listing-policy" style="color: var(--dark-text)">Listing Policy</a>
+                <a href="#" style="color: var(--dark-text)">Senior Advocate Rules</a>
+                <a href="https://mphc.gov.in/advocates-details" style="color: var(--dark-text)">Advocates</a>
+                <a href="#" style="color: var(--dark-text)">Advocates Clerk</a>
+                <a href="https://mphc.gov.in/PDF/department_State_updated.pdf" style="color: var(--dark-text)">Government Departments</a>
+            </div>
+            <div class="container col-md-3">
+    <div id="calendar-footer"></div>
+    <div class="mt-4">
+    <span style="color: red">Sundays, 2nd - 3rd Saturday, Gazetted holidays and Vacation are shown in Red.</span>
+    <span style="color: green">Registry Working Saturdays are shown in Green.</span>
+    <span style="color: blue">Court Working Saturdays are shown in Blue.</span>
+</div>
+</div>
+<style>
+    // ...existing code...
+    // FullCalendar look & feel (Bootstrap 5 themed)
+    :root {
+        --hc-primary: var(--secondary-color);
+        --hc-muted: #6c757d;
+    }
+
+    .fc {
+        font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+        color: var(--hc-muted);
+        font-size: .875rem;
+        background: linear-gradient(135deg, #f5f5f5, #ffffff);
+        ;
+        border-radius: .5rem;
+        padding: .5rem;
+        height: auto;
+    }
+
+    .fc .fc-toolbar-title {
+        font-weight: 600;
+        font-size: 1.05rem;
+        color: var(--secondary-color)
+    }
+
+    .fc .fc-button-primary {
+        background-color: var(--secondary-color);
+        border-color: var(--hc-primary);
+    }
+
+    .fc .fc-button .fc-icon {
+        font-size: 0.8rem;
+    }
+
+    .fc .fc-button-primary:hover,
+    .fc .fc-button-primary:not(:disabled).fc-button-active {
+        background-color: var(--secondary-color);
+        border-color: black;
+    }
+
+    .fc .fc-col-header-cell-cushion,
+    .fc .fc-daygrid-day-number {
+        font-weight: 600;
+        text-decoration: none;
+        padding: auto;
+    }
+
+    .fc .fc-daygrid-body-natural .fc-daygrid-day-events {
+        margin-bottom: 0;
+    }
+
+    .fc .fc-daygrid-body-unbalanced .fc-daygrid-day-events {
+        min-height: 0;
+    }
+
+.date-red { color: #dc3545 !important; font-weight: 700; }
+.date-green { color: #198754 !important; font-weight: 700; } /* registry working Saturday */
+.date-blue { color: #0d6efd !important; font-weight: 700; }
+
+.fc-event.fc-event-start.fc-event-end.fc-event-past.fc-daygrid-event.fc-daygrid-block-event.fc-h-event {
+    display: none;
+}
+.fc-event.fc-event-start.fc-event-end.fc-event-future.fc-daygrid-event.fc-daygrid-block-event.fc-h-event {
+    display: none;
+}
+.fc-event.fc-event-start.fc-event-end.fc-event-today.fc-daygrid-event.fc-daygrid-block-event.fc-h-event {
+    display: none;
+}
+</style>
+        </div>
+        <hr class="bg-white mt-4">
+
+        <div class="text-center footer-credit fw-semibold   ">
+            <p class="mb-0">Visitors Count: <span class="fw-bold">383,376</span></p>
+            <p class="mb-0">&copy; 2026 High Court of Madhya Pradesh. All Rights Reserved.</p>
+            <p class="mb-0 small text-muted">Designed & Developed by IT Team High Court of Madhya Pradesh
+                Jabalpur</p>
+        </div>
+    </div>
+</footer>
+
+    <!-- Floating Action Buttons -->
+    <!-- Floating Action Button -->
+<div class="fab-container">
+    <button class="fab-btn" id="scrollToggleBtn" title="Scroll" onclick="toggleScroll()">
+        <i class="bi bi-arrow-down" id="scrollIcon"></i>
+    </button>
+</div>
+
+<!-- Scroll Toggle Script -->
+<script>
+    // Toggle scroll direction on click
+    function toggleScroll() {
+        if (isAtBottom()) {
+            window.scrollTo({ top: 0, behavior: 'smooth' });
+        } else {
+            window.scrollTo({ top: document.body.scrollHeight, behavior: 'smooth' });
+        }
+    }
+
+    // Check if at bottom
+    function isAtBottom() {
+        return (window.innerHeight + window.scrollY) >= (document.body.offsetHeight - 10);
+    }
+
+    // Update icon based on scroll position
+    function updateIcon() {
+        const icon = document.getElementById('scrollIcon');
+        if (isAtBottom()) {
+            icon.classList.remove('bi-arrow-down');
+            icon.classList.add('bi-arrow-up');
+        } else {
+            icon.classList.remove('bi-arrow-up');
+            icon.classList.add('bi-arrow-down');
+        }
+    }
+
+    // Listen to scroll events
+    window.addEventListener('scroll', updateIcon);
+
+    // Run on initial load
+    document.addEventListener('DOMContentLoaded', updateIcon);
+</script>
+
+    <!-- Auth: Login Modal -->
+    <div class="modal fade" id="loginModal" tabindex="-1" aria-labelledby="loginModalLabel" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content">
+      <div class="modal-header py-2">
+        <h6 class="modal-title fw-semibold" id="loginModalLabel">Sign In</h6>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body">
+        <div class="alert alert-danger d-none small" id="loginError"></div>
+        <form id="loginForm" autocomplete="on">
+          <input type="hidden" name="_token" value="s1BS7SpdU4ai194BnfmQruFOEoHdOaqY1YoOWpnz" autocomplete="off">          <div class="mb-3">
+            <label for="loginEmail" class="form-label small mb-1">Email</label>
+            <input type="email" class="form-control form-control-sm" id="loginEmail" name="email" required autofocus>
+          </div>
+          <div class="mb-2">
+            <label for="loginPassword" class="form-label small mb-1">Password</label>
+            <input type="password" class="form-control form-control-sm" id="loginPassword" name="password" required>
+          </div>
+          <div class="d-flex justify-content-between align-items-center mb-3">
+            <div class="form-check small">
+              <input class="form-check-input" type="checkbox" value="1" id="remember" name="remember">
+              <label class="form-check-label" for="remember">Remember me</label>
+            </div>
+            <a href="#" class="small text-decoration-none">Forgot password?</a>
+          </div>
+          <button type="submit" class="btn btn-primary w-100 btn-sm" id="loginSubmitBtn">
+            <span class="default-text">Login</span>
+            <span class="spinner-border spinner-border-sm d-none" role="status" aria-hidden="true"></span>
+          </button>
+        </form>
+        <a href="https://portal.mphc.gov.in/user/login?current=node/20" class=" mt-2 btn btn-warning w-100 btn-sm" target="_blank">For Advocate Login <span class="fw-semibold">Click Here</span></a>
+      </div>
+    </div>
+  </div>
+</div>
+
+
+    <!-- Important Announcement Bar -->
+    <div id="announcementBar" class="announcement-bar fixed-bottom text-white">
+        <div class="container-fluid">
+            <div class="d-flex align-items-center justify-content-between gap-2">
+                <div class="marquee flex-grow-1" role="region" aria-label="Court announcements" tabindex="0"
+                    data-marquee-speed="60">
+                    
+                    <div class="marquee__track">
+                        <div class="marquee__inner">
+                                <a class="announcement-link" href="https://portal.mphc.gov.in/Photo/yoga2026.php" target="_blank"
+                                    rel="noopener">
+                                    <span class="badge rounded-pill text-bg-danger text-uppercase me-2">New</span>
+                                    <span class="announcement-text">International Yoga Day Celebration 21/06/2026</span>
+                                </a>
+
+                        
+                            <a class="announcement-link" href="https://mphc.gov.in/storage/PDF/web_pdf/LU/A-2528%20dated%2006.07.26%20Reference%20Notice.pdf" target="_blank"
+                                    rel="noopener">
+                                    <span class="badge rounded-pill text-bg-danger text-uppercase me-2">New</span>
+                                    <span class="announcement-text">Reference on 09.07.2026 on the sad demise of Shri Deependra Kumar Shrivastava, Shri Anand Diwakar Deoras, Shri Madan Mohan Mudgal, Shri Umesh Trivedi and Shri Rajendra Jain, Advocates, High Court of Madhya Pradesh.</span>
+                                </a>
+                            
+                            <a class="announcement-link" href="https://mphc.gov.in/storage/PDF/web_pdf/LU/Final%20draft%20with%20Notice_v2.pdf" target="_blank"
+                                    rel="noopener">
+                                    <span class="badge rounded-pill text-bg-danger text-uppercase me-2">New</span>
+                                    <span class="announcement-text">Seeking views/suggestions of all stakeholders and the general public on draft ‘Regulations for Use of Artificial Intelligence (AI) in Courts, 2026’.</span>
+                                </a>
+                            
+                            <a class="announcement-link" href="https://www.youtube.com/watch?v=9nyh0EMtjuA" target="_blank"
+                                    rel="noopener">
+                                    <span class="badge rounded-pill text-bg-danger text-uppercase me-2">New</span>
+                                    <span class="announcement-text">High Court of Madhya Pradesh, Live webcast of &#039;FRAGMENTATION TO FUSION&#039; Empowering Justice via United Digital Platform Integration.</span>
+                                </a>
+                            
+                            <a class="announcement-link" href="#" target="_blank"
+                                    rel="noopener">
+                                    <span class="badge rounded-pill text-bg-danger text-uppercase me-2">New</span>
+                                    <span class="announcement-text">Yearly Digest-2025 of ILR (M.P. Series) is now available online in user friendly digital flipbook form on the webpage of I.L.R. in the website of High Court of Madhya Pradesh.</span>
+                                </a>
+                            
+                            <a class="announcement-link" href="https://mphc.gov.in/PDF/web_pdf/LU/Notice%20B-2143%20dated%2017.03.2026.pdf" target="_blank"
+                                    rel="noopener">
+                                    <span class="badge rounded-pill text-bg-danger text-uppercase me-2">New</span>
+                                    <span class="announcement-text">Notice inviting applications from learned Advocates for being designated as Senior Advocates in accordance with the &quot;The High Court of Madhya Pradesh (Designation of Senior Advocates) Rules, 2025&quot;.</span>
+                                </a>
+                                                    </div>
+                        <div class="marquee__inner" aria-hidden="true">
+                                                            <a class="announcement-link" href="https://mphc.gov.in/storage/PDF/web_pdf/LU/A-2528%20dated%2006.07.26%20Reference%20Notice.pdf" target="_blank"
+                                    rel="noopener">
+                                    <span class="badge rounded-pill text-bg-danger text-uppercase me-2">New</span>
+                                    <span class="announcement-text">Reference on 09.07.2026 on the sad demise of Shri Deependra Kumar Shrivastava, Shri Anand Diwakar Deoras, Shri Madan Mohan Mudgal, Shri Umesh Trivedi and Shri Rajendra Jain, Advocates, High Court of Madhya Pradesh.</span>
+                                </a>
+                                                            <a class="announcement-link" href="https://mphc.gov.in/storage/PDF/web_pdf/LU/Final%20draft%20with%20Notice_v2.pdf" target="_blank"
+                                    rel="noopener">
+                                    <span class="badge rounded-pill text-bg-danger text-uppercase me-2">New</span>
+                                    <span class="announcement-text">Seeking views/suggestions of all stakeholders and the general public on draft ‘Regulations for Use of Artificial Intelligence (AI) in Courts, 2026’.</span>
+                                </a>
+                                                            <a class="announcement-link" href="https://www.youtube.com/watch?v=9nyh0EMtjuA" target="_blank"
+                                    rel="noopener">
+                                    <span class="badge rounded-pill text-bg-danger text-uppercase me-2">New</span>
+                                    <span class="announcement-text">High Court of Madhya Pradesh, Live webcast of &#039;FRAGMENTATION TO FUSION&#039; Empowering Justice via United Digital Platform Integration.</span>
+                                </a>
+                                                            <a class="announcement-link" href="#" target="_blank"
+                                    rel="noopener">
+                                    <span class="badge rounded-pill text-bg-danger text-uppercase me-2">New</span>
+                                    <span class="announcement-text">Yearly Digest-2025 of ILR (M.P. Series) is now available online in user friendly digital flipbook form on the webpage of I.L.R. in the website of High Court of Madhya Pradesh.</span>
+                                </a>
+                                                            <a class="announcement-link" href="https://mphc.gov.in/PDF/web_pdf/LU/Notice%20B-2143%20dated%2017.03.2026.pdf" target="_blank"
+                                    rel="noopener">
+                                    <span class="badge rounded-pill text-bg-danger text-uppercase me-2">New</span>
+                                    <span class="announcement-text">Notice inviting applications from learned Advocates for being designated as Senior Advocates in accordance with the &quot;The High Court of Madhya Pradesh (Designation of Senior Advocates) Rules, 2025&quot;.</span>
+                                </a>
+                                                    </div>
+                    </div>
+                </div>
+
+                <div class="d-none d-sm-flex align-items-center gap-2 ms-2 flex-row">
+                    <button type="button" class="btn btn-sm btn-outline-dark px-2 announcement-toggle"
+                        aria-label="Pause scrolling" data-state="running">
+                        <span class="toggle-icon" data-running='<i class="bi bi-pause-fill"></i>'
+                            data-paused='<i class="bi bi-play-fill"></i>'>
+                            <i class="bi bi-pause-fill"></i>
+                        </span>
+                    </button>
+                    <button type="button" class="btn-close btn-close-dark announcement-close"
+                        aria-label="Close announcements"></button>
+                </div>
+            </div>
+        </div>
+
+    </div>
+
+<style>
+    :root {
+        --announcement-bg: var(--secondary-color, #0d6efd);
+        --announcement-color: #000000;
+        --announcement-glass-bg: rgba(78, 52, 46, 0.19);
+        /* semi-transparent for glass effect */
+        --marquee-gap: 3rem;
+        /* gap between repeated messages */
+        --marquee-duration: 15s;
+        /* fallback */
+        --marquee-distance: 1000px;
+        /* fallback px distance */
+    }
+
+    /* announcement bar */
+    .announcement-bar {
+        /* Glassmorphism background */
+        background-color: transparent;
+        background: var(--announcement-glass-bg);
+        -webkit-backdrop-filter: saturate(140%) blur(10px);
+        backdrop-filter: saturate(140%) blur(10px);
+        border-top: 1px solid rgba(255, 255, 255, 0.25);
+        box-shadow: 0 -8px 20px rgba(0, 0, 0, 0.12), inset 0 1px 0 rgba(255, 255, 255, 0.1);
+        color: var(--announcement-color);
+        font-weight: 600;
+        overflow: hidden;
+        padding: 4px 0;
+        z-index: 1050;
+    }
+
+    /* Improve text legibility on transparent backgrounds */
+    .announcement-bar .announcement-text,
+    .announcement-bar .badge,
+    .announcement-bar .announcement-link {
+        text-shadow: 0 1px 1px rgba(0, 0, 0, 0.25);
+    }
+
+    /* marquee region styling */
+    .marquee {
+        overflow: hidden;
+        white-space: nowrap;
+        width: 100%;
+        outline: none;
+    }
+
+    /* track holds two copies */
+    .marquee__track {
+        display: inline-flex;
+        align-items: center;
+        gap: var(--marquee-gap);
+        /* We'll animate the whole track leftwards */
+        will-change: transform;
+        animation-name: marquee-scroll;
+        animation-timing-function: linear;
+        animation-iteration-count: infinite;
+        animation-duration: var(--marquee-duration);
+        transform: translateX(0);
+    }
+
+    /* inner copies */
+    .marquee__inner {
+        display: inline-flex;
+        align-items: center;
+        gap: var(--marquee-gap);
+        padding-right: 1rem;
+        font-size: 0.95rem;
+    }
+
+    .announcement-link {
+        color: var(--announcement-color);
+        text-decoration: none;
+        display: inline-flex;
+        align-items: center;
+    }
+
+    .announcement-link:hover,
+    .announcement-link:focus {
+        text-decoration: underline;
+    }
+
+    /* keyframes use CSS variables for distance */
+    @keyframes marquee-scroll {
+        from {
+            transform: translateX(0);
+        }
+
+        to {
+            transform: translateX(calc(var(--marquee-distance) * -1));
+        }
+    }
+
+    /* pause on hover/focus */
+    /* manual pause class applied via JS */
+    .marquee.is-paused .marquee__track {
+        animation-play-state: paused !important;
+    }
+
+    /* keyboard focus visible */
+    .marquee:focus {
+        box-shadow: 0 0 0 3px rgba(255, 255, 255, .08);
+    }
+
+    /* Respect reduced motion */
+    @media (prefers-reduced-motion: reduce) {
+        .marquee__track {
+            animation: none;
+            transform: translateX(0);
+        }
+    }
+
+    /* small screens slightly smaller text */
+    @media (max-width: 576px) {
+        .marquee__inner {
+            font-size: 0.85rem;
+        }
+    }
+</style>
+
+<script>
+    (function() {
+        // calculate distance and duration so speed remains consistent regardless of text length.
+        function setupMarquee(el) {
+            try {
+                var track = el.querySelector('.marquee__track');
+                var copy = el.querySelector('.marquee__inner'); // single copy
+                if (!track || !copy) return;
+
+                // speed in px per second (data attr or default)
+                var speed = parseFloat(el.dataset.marqueeSpeed) || 100;
+
+                // measure width of one copy + gap
+                // getBoundingClientRect returns layout width in px
+                var copyWidth = copy.getBoundingClientRect().width;
+                // compute gap from CSS variable --marquee-gap (fallback to 48px)
+                var computed = getComputedStyle(track);
+                var gapRaw = computed.getPropertyValue('--marquee-gap') || '';
+                var gapPx = 0;
+                if (gapRaw.trim().endsWith('rem')) {
+                    // approximate rem -> px by multiplying by root font-size
+                    var rem = parseFloat(gapRaw) || 0;
+                    gapPx = rem * parseFloat(getComputedStyle(document.documentElement).fontSize || 16);
+                } else if (gapRaw.trim().endsWith('px')) {
+                    gapPx = parseFloat(gapRaw);
+                } else {
+                    gapPx = 48; // safe fallback
+                }
+
+                var distance = copyWidth + gapPx;
+                // duration seconds = distance / speed (px per second)
+                var duration = Math.max(6, distance / speed); // ensure a min duration so it isn't too fast
+
+                // set CSS variables (distance in px, duration with s)
+                track.style.setProperty('--marquee-distance', distance + 'px');
+                track.style.setProperty('--marquee-duration', duration + 's');
+
+                // if content changes later (eg dynamic messages), re-run
+            } catch (e) {
+                // silent fail; browser will fall back to CSS defaults
+                console.warn('Marquee setup error:', e);
+            }
+        }
+
+        // initialize for all marquees on DOM ready
+        function initAll() {
+            var els = document.querySelectorAll('.marquee');
+            els.forEach(setupMarquee);
+        }
+
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', initAll);
+        } else {
+            initAll();
+        }
+
+        // Optional: observe DOM changes inside marquee to re-calc if messages change dynamically
+        var observer = new MutationObserver(function(mutations) {
+            mutations.forEach(function(m) {
+                if (m.target.closest && m.target.closest('.marquee')) {
+                    setupMarquee(m.target.closest('.marquee'));
+                }
+            });
+        });
+        document.querySelectorAll('.marquee__inner').forEach(function(node) {
+            observer.observe(node, {
+                childList: true,
+                characterData: true,
+                subtree: true
+            });
+        });
+
+        // Close button behavior (non-persistent now)
+        document.addEventListener('click', function(e) {
+            if (e.target && e.target.classList.contains('announcement-close')) {
+                var bar = document.getElementById('announcementBar');
+                if (bar) bar.style.display = 'none';
+            }
+        });
+
+        // Pause/Play toggle
+        document.addEventListener('click', function(e) {
+            if (e.target.closest && e.target.closest('.announcement-toggle')) {
+                var btn = e.target.closest('.announcement-toggle');
+                var marquee = document.querySelector('#announcementBar .marquee');
+                if (!marquee) return;
+                var state = btn.getAttribute('data-state');
+                var icon = btn.querySelector('.toggle-icon');
+                if (state === 'running') {
+                    marquee.classList.add('is-paused');
+                    btn.setAttribute('data-state', 'paused');
+                    btn.setAttribute('aria-label', 'Resume scrolling');
+                    if (icon) icon.innerHTML = icon.getAttribute('data-paused');
+                } else {
+                    marquee.classList.remove('is-paused');
+                    btn.setAttribute('data-state', 'running');
+                    btn.setAttribute('aria-label', 'Pause scrolling');
+                    if (icon) icon.innerHTML = icon.getAttribute('data-running');
+                }
+            }
+        });
+    })();
+</script>
+
+    <!-- Custom JS -->
+    <script src="https://mphc.gov.in/assets/js/app.js" defer></script>
+    <link rel="modulepreload" as="script" href="https://mphc.gov.in/build/assets/theme-BEfk-QEv.js" /><script type="module" src="https://mphc.gov.in/build/assets/theme-BEfk-QEv.js"></script>
+    
+    <script>
+    $(document).on('click', '.get_data', function(e) {
+        e.preventDefault();
+        var fil_no = $(this).data('cino');
+        var $modalBody = $('#caseDetailModalBody');
+
+        $modalBody.html(
+            '<div class="text-center py-5"><div class="spinner-border" role="status"></div>' +
+            '<div class="mt-2 text-muted">Loading case details...</div></div>'
+        );
+
+        var modal = new bootstrap.Modal(document.getElementById('caseDetailModal'));
+        modal.show();
+
+        $('#caseDetailModal').data('fil_no', fil_no);
+
+        $.ajax({
+            headers: { 'X-CSRF-TOKEN': $('meta[name="csrf-token"]').attr('content') },
+            url: "https://mphc.gov.in/case-status-modal",
+            type: 'POST',
+            dataType: 'json',
+            data: { fil_no: fil_no },
+            success: function(result) {
+                if (result.status) {
+                    $modalBody.html(result.page);
+                } else {
+                    $modalBody.html('<div class="alert alert-danger">' + (result.message || 'Case not found.') + '</div>');
+                }
+            },
+            error: function(xhr) {
+                $modalBody.html('<div class="alert alert-danger">Error loading case details (' + xhr.status + ').</div>');
+            }
+        });
+    });
+
+
+    // two diffrent jQuery versions are creating conflict, so i am using click insted of 'shown.bs.tab'
+    $(document).on('click', '#modalCaseTabs button[data-bs-toggle="tab"]', function(e) {
+        
+        var tab_data = $(e.target).data('linkType');
+        if (!tab_data || tab_data === 'home') return;
+
+        var $pane = $('#modal_' + tab_data);
+        if (!$pane.length) return;
+        if ($pane.data('loaded')) return;
+
+        var fil_no = $('#caseDetailModal').data('fil_no');
+
+        $pane.html(
+            '<div class="py-4 text-center text-muted">' +
+            '<div class="spinner-border spinner-border-sm me-2" role="status"></div>Loading...</div>'
+        );
+
+        $.ajax({
+            headers: { 'X-CSRF-TOKEN': $('meta[name="csrf-token"]').attr('content') },
+            url: "https://mphc.gov.in/case-status-tab",
+            type: 'POST',
+            dataType: 'json',
+            data: { tab_data: tab_data, fil_no: fil_no },
+            success: function(result) {
+                $pane.html(result.page || '<div class="text-muted small">No data found.</div>');
+                $pane.data('loaded', true);
+            },
+            error: function(xhr) {
+                $pane.html('<div class="alert alert-danger small">Error loading data (' + xhr.status + ').</div>');
+            }
+        });
+    });
+
+    $('#caseDetailModal').on('hidden.bs.modal', function() {
+        $('#caseDetailModalBody').html('');
+    });
+    </script>
+
+    <script>
+    function toggleDependents() {
+        let maritalStatus = $('#maritalStatus').val();
+        if (maritalStatus === 'M') {
+            $('#nodepWrapper').show();
+        } else {
+            $('#nodepWrapper').hide();
+            $('#nodep').val('');
+        }
+    }
+    $(document).ready(function() {
+        toggleDependents();
+    });
+    function admSelectCheck1() {
+        var selectbox = document.getElementById('toin').value;
+        if (selectbox == 3) {
+            document.getElementById("deathcase_1").style.display = 'inline';
+        } else {
+            document.getElementById("deathcase_1").style.display = 'none';
+        }
+        if (selectbox != 3) {
+            document.getElementById("injery").style.display = 'inline';
+        } else {
+            document.getElementById("injery").style.display = 'none';
+        }
+        $('#dv_res1').html('');
+    }
+    function calculateAge(dobId, accidentId, ageId) {
+        const dob = $('#' + dobId).val();
+        const accidentDate = $('#' + accidentId).val();
+        if (!dob || !accidentDate) {
+            $('#' + ageId).val('');
+            return;
+        }
+        $.ajax({
+            url: "https://mphc.gov.in/claim/age-cal",
+            type: "GET",
+            data: {
+                userDateinput: dob,
+                userDateinput2: accidentDate
+            },
+            success: function(response) {
+                let age = $.trim(response);
+                $('#' + ageId).val(age);
+            },
+            error: function(xhr) {
+                console.log('Age calculation error:', xhr.responseText);
+                $('#' + ageId).val('0');
+            }
+        });
+    }
+    function calculateDeathCompensation() {
+        $.ajax({
+            url: "https://mphc.gov.in/claim/calculate-compensation",
+            type: "POST",
+            data: {
+                _token: "s1BS7SpdU4ai194BnfmQruFOEoHdOaqY1YoOWpnz",
+                case_type: 'death',
+                named: $('#named').val(),
+                fnamed: $('#fnamed').val(),
+                doacc: $('#doacc').val(),
+                poacc: $('#poacc').val(),
+                dobd: $('#dobd').val(),
+                age: $('#age').val(),
+                nodep: $('#nodep').val(),
+                mincome: $('#mincome').val(),
+                fupro: $('#fupro').val(),
+                loa: $('#loa').val(),
+                loc: $('#loc').val(),
+                fe: $('#fe').val(),
+                maritalStatus: $('#maritalStatus').val()
+            },
+            success: function(response) {
+                if (response.status) {
+                    $('#dv_res1').html(response.html);
+                } else {
+                    let msg = response.message || 'Calculation failed. Please check your inputs.';
+                    $('#dv_res1').html('<div class="alert alert-danger">' + msg + '</div>');
+                }
+            },
+            error: function(xhr) {
+                console.log('AJAX Error:', xhr.responseText);
+                $('.claim-error').html('');
+                if (xhr.status === 422) {
+                    let resp = JSON.parse(xhr.responseText);
+                    if (resp.errors) {
+                        $.each(resp.errors, function(key, value) {
+                            $('#error_' + key).html(value[0]);
+                        });
+                    }
+                } else {
+                    let errorMessage = 'Something went wrong. Please try again.';
+                    $('#dv_res1').html('<div class="alert alert-danger">' + errorMessage + '</div>');
+                }
+            }
+        });
+    }
+    function calculateInjuryCompensation() {
+        $.ajax({
+            url: "https://mphc.gov.in/claim/calculate-compensation",
+            type: "POST",
+            data: {
+                _token: "s1BS7SpdU4ai194BnfmQruFOEoHdOaqY1YoOWpnz",
+                case_type: 'injury',
+                namei: $('#namei').val(),
+                fnamei: $('#fnamei').val(),
+                doacci: $('#doacci').val(),
+                poacci: $('#poacci').val(),
+                dobdi: $('#dobdi').val(),
+                agei: $('#agei').val(),
+                nodepi: $('#nodepi').val(),
+                mincomei: $('#mincomei').val(),
+                padi: $('#padi').val(),
+                medex: $('#medex').val(),
+                paasu: $('#paasu').val(),
+                sd: $('#sd').val(),
+                tran: $('#tran').val(),
+                att: $('#att').val(),
+                loss_incme: $('#loss_incme').val(),
+                futmedaxp: $('#futmedaxp').val()
+            },
+            success: function(response) {
+                if (response.status) {
+                    $('#dv_res1').html(response.html);
+                } else {
+                    let msg = response.message || 'Calculation failed. Please check your inputs.';
+                    $('#dv_res1').html('<div class="alert alert-danger">' + msg + '</div>');
+                }
+            },
+            error: function(xhr) {
+                console.log('AJAX Error:', xhr.responseText);
+                $('.claim-error').html('');
+                if (xhr.status === 422) {
+                    let resp = JSON.parse(xhr.responseText);
+                    if (resp.errors) {
+                        $.each(resp.errors, function(key, value) {
+                            $('#error_' + key).html(value[0]);
+                        });
+                    }
+                } else {
+                    let errorMessage = 'Something went wrong. Please try again.';
+                    $('#dv_res1').html('<div class="alert alert-danger">' + errorMessage + '</div>');
+                }
+            }
+        });
+    }
+    $(document).ready(function() {
+        $('#dobd, #doacc').on('change', function() {
+            calculateAge('dobd', 'doacc', 'age');
+        });
+        $('#dobdi, #doacci').on('change', function() {
+            calculateAge('dobdi', 'doacci', 'agei');
+        });
+        $('#btnDeathCalculate').on('click', function() {
+            calculateDeathCompensation();
+        });
+        $('#btnInjuryCalculate').on('click', function() {
+            calculateInjuryCompensation();
+        });
+        $('#prtn').on('click', function() {
+            CallPrint('prtn1');
+        });
+    });
+    function CallPrint() {
+        var callpri = document.getElementById("prtn1").innerHTML;
+        var a = window.open('', '', 'height=500, width=500');
+        a.document.write('<html>');
+        a.document.write(callpri);
+        a.document.write('<br><br><br>This Amount should Not be treated as determined by High Court </html>');
+        a.document.close();
+        a.print();
+    }
+</script>
+<script>
+(function(){
+  const form = document.getElementById('loginForm');
+  if(!form) return;
+  const submitBtn = document.getElementById('loginSubmitBtn');
+  const errorBox = document.getElementById('loginError');
+  form.addEventListener('submit', function(e){
+    e.preventDefault();
+    errorBox.classList.add('d-none');
+    const spinner = submitBtn.querySelector('.spinner-border');
+    const defaultText = submitBtn.querySelector('.default-text');
+    submitBtn.disabled = true;
+    spinner.classList.remove('d-none');
+    defaultText.classList.add('d-none');
+
+    fetch("https://mphc.gov.in/login", {
+      method: 'POST',
+      headers: {
+        'Accept': 'application/json',
+        'X-Requested-With': 'XMLHttpRequest',
+        'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]').getAttribute('content'),
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        email: form.email.value.trim(),
+        password: form.password.value,
+        remember: form.remember.checked ? 1 : 0
+      })
+    }).then(async res => {
+      let data = {};
+      try { data = await res.json(); } catch(_) {}
+  if(res.ok && (data.success || data.redirect)){
+        // Redirect
+        window.location.href = data.redirect || 'https://mphc.gov.in/dashboard';
+      } else {
+        let msg = data.message || 'Login failed. Please check your credentials.';
+        if(data.errors){
+          // Collect first validation error
+            const firstKey = Object.keys(data.errors)[0];
+            if(firstKey) msg = data.errors[firstKey][0];
+        }
+        errorBox.textContent = msg;
+        errorBox.classList.remove('d-none');
+      }
+    }).catch(err => {
+      errorBox.textContent = 'An unexpected error occurred. Please try again.';
+      errorBox.classList.remove('d-none');
+    }).finally(() => {
+      submitBtn.disabled = false;
+      spinner.classList.add('d-none');
+      defaultText.classList.remove('d-none');
+    });
+  });
+
+  // Reset state when modal hides
+  const loginModalEl = document.getElementById('loginModal');
+  if(loginModalEl){
+    loginModalEl.addEventListener('hidden.bs.modal', () => {
+      form.reset();
+      errorBox.classList.add('d-none');
+    });
+  }
+})();
+</script>
+    
+</body>
+</html>

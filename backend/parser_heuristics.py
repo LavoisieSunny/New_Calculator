@@ -3002,6 +3002,112 @@ def parse_extracted_text(text_lines, case_type=None):
     page_future_type = 1
     method_future_type = "Default Heuristic"
 
+    # ── HIGH COURT PARTICULARS BLOCK HEURISTIC PARSER ────────────────────────
+    block_date = None
+    block_place = None
+    block_dec_name = None
+    block_age = None
+    block_father_name = None
+    block_occupation = None
+    block_earning_daily = None
+
+    # 1. Accident block
+    accident_match = re.search(
+        r'\bPARTICULARS\s+OF\s+(?:THE\s+)?ACCIDENT\b.*?(?=\bPARTICULARS\b|\bNAME\s+AND\s+DESCRIPTION\b|\bDETAILS\b|\bIN\s+FATAL\s+ACCIDENT\b|\(\s*[I|V|X|L|C|D|M]+\s*\)|$)',
+        full_text,
+        re.IGNORECASE | re.DOTALL
+    )
+    if accident_match:
+        acc_block_text = accident_match.group(0)
+        # Extract date of accident
+        date_match = re.search(r'\b(\d{1,2})[-/\.](\d{1,2})[-/\.](\d{4})\b', acc_block_text)
+        if date_match:
+            try:
+                block_date = f"{int(date_match.group(1)):02d}-{int(date_match.group(2)):02d}-{date_match.group(3)}"
+            except ValueError:
+                pass
+            
+        # Extract place of accident
+        sub_fields = []
+        for label in ["Place Near", "Place of Accident", "Place", "Village/Locality", "Village", "Locality", "Tehsil", "District", "P.S.", "Police Station"]:
+            m_label = re.search(rf'\b{re.escape(label)}\b\s*[:\-;\u2022]\s*(.*)', acc_block_text, re.IGNORECASE)
+            if m_label:
+                first_line = m_label.group(1).strip()
+                if first_line:
+                    val = first_line
+                else:
+                    start_pos = m_label.end()
+                    remainder = acc_block_text[start_pos:]
+                    lines = remainder.split("\n")
+                    captured_lines = []
+                    for line in lines:
+                        cleaned_line = line.strip()
+                        if not cleaned_line:
+                            continue
+                        if re.match(r'^(?:\d+\.|\(\s*[I|V|X|L|C|D|M]+\s*\))', cleaned_line):
+                            break
+                        if any(cleaned_line.lower().startswith(l.lower()) for l in ["Registration", "Time and date", "PARTICULARS"]):
+                            break
+                        captured_lines.append(cleaned_line)
+                    val = " ".join(captured_lines)
+                val = " ".join(val.split())
+                if val:
+                    sub_fields.append((label, val))
+
+        super_fields = [v for l, v in sub_fields if l in ["Place Near", "Place of Accident", "Place"]]
+        if super_fields:
+            base_place = super_fields[0]
+            extra_vals = []
+            for l, v in sub_fields:
+                if l not in ["Place Near", "Place of Accident", "Place"]:
+                    if v.lower() not in base_place.lower():
+                        extra_vals.append(v)
+            if extra_vals:
+                block_place = base_place + ", " + ", ".join(extra_vals)
+            else:
+                block_place = base_place
+        elif sub_fields:
+            sub_fields.sort(key=lambda x: acc_block_text.find(x[0]))
+            block_place = ", ".join([v for l, v in sub_fields])
+
+    # 2. Deceased block
+    deceased_match = re.search(
+        r'\b(?:NAME\s+AND\s+DESCRIPTION\s+OF\s+THE\s+(?:INJURED/)?DECEASED|DECEASED\s+PERSON|DESCRIPTION\s+OF\s+DECEASED)\b.*?(?=\bIN\s+FATAL\s+ACCIDENT\b|\bDETAILS\b|\(\s*[I|V|X|L|C|D|M]+\s*\)|$)',
+        full_text,
+        re.IGNORECASE | re.DOTALL
+    )
+    if deceased_match:
+        dec_block_text = deceased_match.group(0)
+        
+        # Deceased Name
+        name_match = re.search(r'\b(?:1\.?\s*Name)\s*[:\-;\u2022]\s*([^\n]+)', dec_block_text, re.IGNORECASE)
+        if name_match:
+            cand_name = clean_legal_name(name_match.group(1).strip())
+            if cand_name:
+                block_dec_name = cand_name.title()
+            
+        # Age
+        age_match = re.search(r'\b(?:2\.?\s*Age)\s*[:\-;\u2022]\s*(\d{1,2})\b', dec_block_text, re.IGNORECASE)
+        if age_match:
+            block_age = int(age_match.group(1))
+            
+        # Father / Husband Name
+        fh_match = re.search(r'\b(?:3\.?\s*(?:Father|Husband)(?:’|\')?s?\s*Name)\s*[:\-;\u2022]\s*([^\n]+)', dec_block_text, re.IGNORECASE)
+        if fh_match:
+            cand_fh = clean_legal_name(fh_match.group(1).strip())
+            if cand_fh:
+                block_father_name = cand_fh.title()
+
+        # Occupation
+        occ_match = re.search(r'\b(?:4\.?\s*Occupation)\s*[:\-;\u2022]\s*([^\n]+)', dec_block_text, re.IGNORECASE)
+        if occ_match:
+            block_occupation = occ_match.group(1).strip()
+            
+        # Claimed Daily Wage
+        earning_match = re.search(r'\b(?:5\.?\s*Earning)\s*[:\-;\u2022]\s*([^\n]+)', dec_block_text, re.IGNORECASE)
+        if earning_match:
+            block_earning_daily = earning_match.group(1).strip()
+
     # Cause Title Claimant Extraction (e.g. "Insurance vs Claimant" or "Claimant vs Driver")
     cause_title_claimant = None
     cause_title_conf = 0.0
@@ -3128,22 +3234,29 @@ def parse_extracted_text(text_lines, case_type=None):
     if claimant_name: claimant_name = claimant_name.title()
 
     # 2. Deceased Name extraction
-    dec_patterns = [
-        r'^(?:\d+[\.\)\-][ \t]*)?\bdeceased\b[ \t]*(?:name)?[ \t]*[:\-][ \t]*(.*)',
-        r'\b(?:name\s+of\s+)deceased\b[ \t]*[:\-][ \t]*(.*)',
-        r'^(?:\d+[\.\)\-][ \t]*)?\bdeath\s+of\s+(.*)',
-        r'\blate\b[ \t]*(?:shri|smt)?[ \t]*(.*)',
-        r'\b((?-i:[A-Z][a-z]+(?:\s+[A-Z][a-z]+)*))[ \t]*(?:\(deceased\)|deceased)\b',
-        r'\b(?:deceased)[ \t]+((?-i:[A-Z][a-z]+(?:\s+[A-Z][a-z]+)*))\b',
-        r'\bdeath[ \t]+of[ \t]+(?:shri|smt|late)?[ \t]*((?-i:[A-Z][a-z]+(?:\s+[A-Z][a-z]+)*))\b',
-        r'\b((?-i:[A-Z][a-z]+(?:\s+[A-Z][a-z]+)*))[ \t]*(?:died|expired)\b'
-    ]
-    deceased_name, conf_deceased_name, sec_deceased_name, page_deceased_name = contextual_extract(
-        dec_patterns, sections, [("claimant_section", 90), ("facts_section", 85), ("memo_of_appeal_section", 80)], type_cast=str,
-        field_name="deceased_name", debug_info=parser_debug, pages=pages, sections_metadata=sections_metadata, page_importances=page_importances
-    )
-    method_deceased_name = "Section-Aware Contextual Regex"
-    if deceased_name: deceased_name = deceased_name.title()
+    if block_dec_name:
+        deceased_name = block_dec_name
+        conf_deceased_name = 0.99
+        sec_deceased_name = "particulars_block"
+        page_deceased_name = 1
+        method_deceased_name = "High Court Particulars Block"
+    else:
+        dec_patterns = [
+            r'^(?:\d+[\.\)\-][ \t]*)?\bdeceased\b[ \t]*(?:name)?[ \t]*[:\-][ \t]*(.*)',
+            r'\b(?:name\s+of\s+)deceased\b[ \t]*[:\-][ \t]*(.*)',
+            r'^(?:\d+[\.\)\-][ \t]*)?\bdeath\s+of\s+(.*)',
+            r'\blate\b[ \t]*(?:shri|smt)?[ \t]*(.*)',
+            r'\b((?-i:[A-Z][a-z]+(?:\s+[A-Z][a-z]+)*))[ \t]*(?:\(deceased\)|deceased)\b',
+            r'\b(?:deceased)[ \t]+((?-i:[A-Z][a-z]+(?:\s+[A-Z][a-z]+)*))\b',
+            r'\bdeath[ \t]+of[ \t]+(?:shri|smt|late)?[ \t]*((?-i:[A-Z][a-z]+(?:\s+[A-Z][a-z]+)*))\b',
+            r'\b((?-i:[A-Z][a-z]+(?:\s+[A-Z][a-z]+)*))[ \t]*(?:died|expired)\b'
+        ]
+        deceased_name, conf_deceased_name, sec_deceased_name, page_deceased_name = contextual_extract(
+            dec_patterns, sections, [("claimant_section", 90), ("facts_section", 85), ("memo_of_appeal_section", 80)], type_cast=str,
+            field_name="deceased_name", debug_info=parser_debug, pages=pages, sections_metadata=sections_metadata, page_importances=page_importances
+        )
+        method_deceased_name = "Section-Aware Contextual Regex"
+        if deceased_name: deceased_name = deceased_name.title()
 
     # Deceased Block Extraction (Page 8 - High Court Factual Details)
     deceased_block_match = re.search(
@@ -3180,26 +3293,33 @@ def parse_extracted_text(text_lines, case_type=None):
         method_claimant_name = "Deceased Override Check"
 
     # 3. Father / Husband Name
-    father_patterns = [
-        r'(?:father|husband)\s*(?:s\s*)?name\s*[:\-]\s*(.*)',
-        r'(?:father|husband)\s*[/\\]\s*(?:husband|father)\s*(?:name|s\s*name)?\s*[:\-]\s*(.*)',
-        r'\bs[\./\s\\]*o\b\s*(?:shri|late\s+shri|late)?\s*(.*)',
-        r'\bd[\./\s\\]*o\b\s*(?:shri|smt|kumari|late)?\s*(.*)',
-        r'\bw[\./\s\\]*o\b\s*(?:shri|late\s+shri|late)?\s*(.*)',
-        r'\bh[\./\s\\]*o\b\s*(?:shri|late\s+shri|late)?\s*(.*)',
-        r'\bc[\./\s\\]*o\b\s*(?:shri|smt)?\s*(.*)',
-        r'\bson\s+of\b\s*(?:shri|late)?\s*(.*)',
-        r'\bdaughter\s+of\b\s*(?:shri|smt|late)?\s*(.*)',
-        r'\bwife\s+of\b\s*(?:shri|late)?\s*(.*)',
-        r'\bhusband\s+of\b\s*(?:shri|late)?\s*(.*)',
-        r'\bcare\s+of\b\s*(?:shri|smt|late)?\s*(.*)',
-    ]
-    father_name, conf_father_name, sec_father_name, page_father_name = contextual_extract(
-        father_patterns, sections, [("claimant_section", 90), ("facts_section", 85), ("memo_of_appeal_section", 80)], type_cast=str,
-        field_name="father_name", debug_info=parser_debug, pages=pages, sections_metadata=sections_metadata, page_importances=page_importances
-    )
-    method_father_name = "Section-Aware Contextual Regex"
-    if father_name: father_name = father_name.title()
+    if block_father_name:
+        father_name = block_father_name
+        conf_father_name = 0.99
+        sec_father_name = "particulars_block"
+        page_father_name = 1
+        method_father_name = "High Court Particulars Block"
+    else:
+        father_patterns = [
+            r'(?:father|husband)\s*(?:s\s*)?name\s*[:\-]\s*(.*)',
+            r'(?:father|husband)\s*[/\\]\s*(?:husband|father)\s*(?:name|s\s*name)?\s*[:\-]\s*(.*)',
+            r'\bs[\./\s\\]*o\b\s*(?:shri|late\s+shri|late)?\s*(.*)',
+            r'\bd[\./\s\\]*o\b\s*(?:shri|smt|kumari|late)?\s*(.*)',
+            r'\bw[\./\s\\]*o\b\s*(?:shri|late\s+shri|late)?\s*(.*)',
+            r'\bh[\./\s\\]*o\b\s*(?:shri|late\s+shri|late)?\s*(.*)',
+            r'\bc[\./\s\\]*o\b\s*(?:shri|smt)?\s*(.*)',
+            r'\bson\s+of\b\s*(?:shri|late)?\s*(.*)',
+            r'\bdaughter\s+of\b\s*(?:shri|smt|late)?\s*(.*)',
+            r'\bwife\s+of\b\s*(?:shri|late)?\s*(.*)',
+            r'\bhusband\s+of\b\s*(?:shri|late)?\s*(.*)',
+            r'\bcare\s+of\b\s*(?:shri|smt|late)?\s*(.*)',
+        ]
+        father_name, conf_father_name, sec_father_name, page_father_name = contextual_extract(
+            father_patterns, sections, [("claimant_section", 90), ("facts_section", 85), ("memo_of_appeal_section", 80)], type_cast=str,
+            field_name="father_name", debug_info=parser_debug, pages=pages, sections_metadata=sections_metadata, page_importances=page_importances
+        )
+        method_father_name = "Section-Aware Contextual Regex"
+        if father_name: father_name = father_name.title()
 
     # Tabular form fallback for father_name
     if not father_name and tabular_fields.get("father_name"):
@@ -3325,8 +3445,13 @@ def parse_extracted_text(text_lines, case_type=None):
             }
 
     # 4. Age only from claimant/petition section or chronological events
-    # 4. Age only from claimant/petition section or chronological events
-    if case_type == "death":
+    if block_age:
+        age = block_age
+        conf_age = 0.99
+        sec_age = "particulars_block"
+        page_age = 1
+        method_age = "High Court Particulars Block"
+    elif case_type == "death":
         age = ""
         conf_age = 0.0
         sec_age = "raw_ocr"
@@ -3555,34 +3680,18 @@ def parse_extracted_text(text_lines, case_type=None):
         }
 
     # 6. Place of accident
-    place_regexes = [
-        r'place\s+of\s+(?:accident|occurrence|incident|mishap)\s*[:\-]\s*(.*)',
-        r'accident\s+(?:occurred|took\s+place)\s+(?:at|near|on)\s+(.*)',
-        r'accident\s+near\s+(.*)',
-        r'on\s+(?:national\s+highway|state\s+highway|nh|sh)\s*(?:no\.?|number)?\s*[\-\s]?\s*\d+[A-Za-z]?\b.*?(?:near|at|between)?\s*(.*)',
-        r'(?:nh|sh)[\-\s]*\d+[A-Za-z]?\s+(?:near|at)\s+(.*)',
-        r'at\s+(?:village|town|city|chowk|crossing|junction)\s+([A-Za-z][\w\s,]+)',
-        r'near\s+(?:village|gram|town|city|hospital|school|police\s+station)\s+([A-Za-z][\w\s,]+)',
-        r'on\s+the\s+(?:road|highway|street)\s+(?:near|at|between|from)\s+(.*)',
-        r'road\s+accident\s+(?:at|near|on)\s+(.*)',
-        r'\baccident\s+took\s+place\s+on\s+(.*)',
-        r'\baccident\s+took\s+place\s+at\s+(.*)',
-        r'\bspot\s+of\s+accident\s*[:\-]\s*(.*)',
-    ]
-    place_of_accident, conf_place_of_accident, sec_place_of_accident, page_place_of_accident = contextual_extract(
-        place_regexes, sections, [("accident_section", 95), ("facts_section", 85), ("chronological_events_section", 90)], default_val="", type_cast=str,
-        field_name="place_of_accident", debug_info=parser_debug, pages=pages, sections_metadata=sections_metadata, page_importances=page_importances
-    )
-    method_place_of_accident = "Section-Aware Contextual Regex"
-    if place_of_accident: place_of_accident = place_of_accident.title()
-
-    # Tabular form fallback for place_of_accident
-    if not place_of_accident and tabular_fields.get("place_of_accident"):
-        place_of_accident = tabular_fields["place_of_accident"].title()
-        conf_place_of_accident = 0.88
-        sec_place_of_accident = "tabular_form"
+    if block_place:
+        place_of_accident = block_place
+        conf_place_of_accident = 0.99
+        sec_place_of_accident = "particulars_block"
         page_place_of_accident = 1
-        method_place_of_accident = "Tabular Form Extraction"
+        method_place_of_accident = "High Court Particulars Block"
+    else:
+        place_of_accident = None
+        conf_place_of_accident = 0.0
+        sec_place_of_accident = "particulars_block"
+        page_place_of_accident = 1
+        method_place_of_accident = "Not Found"
 
     # 7. Dependents only from claimant/petition section
     dependents_patterns = [
@@ -3769,6 +3878,24 @@ def parse_extracted_text(text_lines, case_type=None):
             page_marital_status = 1
             method_marital_status = "Fallback Heuristic (Single Young Deceased with Parent/Sibling Claimants)"
 
+        if case_type == "death" and marital_status not in ["single", "bachelor"]:
+            has_wife_inf = any(w in combined_rel_text for w in ["wife of deceased", "w/o deceased", "w/o the deceased", "widow of", "widow of deceased", "widow of the deceased", "claimant is the widow", "petitioner is the widow"])
+            has_child_inf = any(w in combined_rel_text for w in ["son of deceased", "daughter of deceased", "children of", "minor son", "minor daughter", "daughter of the deceased", "son of the deceased"])
+            has_parents_inf = any(w in combined_rel_text for w in ["mother of deceased", "father of deceased", "mother of the deceased", "father of the deceased", "parents of", "petitioner is the mother", "claimant is the mother", "appellant is the mother"])
+            
+            if has_wife_inf:
+                marital_status = "married"
+                conf_marital_status = 0.90
+                method_marital_status = "Parental/Spousal Context Inference (Wife)"
+            elif has_parents_inf and not (has_wife_inf or has_child_inf):
+                marital_status = "single"
+                conf_marital_status = 0.90
+                method_marital_status = "Parental/Spousal Context Inference (Bachelor)"
+            else:
+                marital_status = "married"
+                conf_marital_status = 0.50
+                method_marital_status = "Parental/Spousal Context Inference (Default)"
+
 
     # 8.2 Future Type from compensation or award section
     future_type_patterns = {
@@ -3808,6 +3935,17 @@ def parse_extracted_text(text_lines, case_type=None):
         sec_meta = sections_metadata.get(found_sec, {})
         page_future_type = find_exact_page(found_kw, sec_meta.get("start_page", 1), sec_meta.get("end_page", 1), pages)
         method_future_type = "Keyword Matching"
+
+    if case_type == "death" and future_type == 2:
+        occ_str = str(block_occupation or occupation or "").lower()
+        if any(kw in occ_str for kw in ["service", "govt", "government", "company", "increment", "increments"]):
+            future_type = 1
+            conf_future_type = 0.90
+            method_future_type = "Occupation Inferred (Service/Govt)"
+        else:
+            future_type = 2
+            conf_future_type = 0.90
+            method_future_type = "Occupation Inferred (Self-Employed/Other)"
 
     # ======================================================
     # QUANTITATIVE AND COMPENSATION TABLE EXTRACTION
@@ -3906,6 +4044,76 @@ def parse_extracted_text(text_lines, case_type=None):
                         sec_monthly_income = "raw_ocr"
                         page_monthly_income = 1
                         method_monthly_income = "Default Fallback"
+
+    if case_type == "death":
+        pri_income = None
+        pri_method = ""
+
+        # 1. Adjudged annual income
+        for m_inc in re.finditer(r'Annual\s+Income\s+(?:of\s+(?:the\s+)?deceased)?', full_text, re.IGNORECASE):
+            start = max(0, m_inc.start() - 50)
+            end = min(len(full_text), m_inc.end() + 200)
+            window = full_text[start:end]
+            if any(kw in window.lower() for kw in ["adjudged", "determined", "assessed", "tribunal"]):
+                pre_match = window[:m_inc.start() - start].lower()
+                if any(kw in pre_match for kw in ["stated", "claimed", "pleaded", "asserted", "contended", "according to", "claim of", "case of"]):
+                    continue
+                amt_m = re.search(r'(?:Rs\.?|INR)?\s*([\d,]+)', window[m_inc.end() - start:], re.IGNORECASE)
+                if amt_m:
+                    try:
+                        adjudged_val = float(amt_m.group(1).replace(",", ""))
+                        pri_income = round(adjudged_val / 12.0, 2)
+                        pri_method = "Adjudged Annual Income / 12"
+                        break
+                    except ValueError:
+                        pass
+
+        # 2. Notional/flat annual from dependency
+        if pri_income is None:
+            for m_dep in re.finditer(r'dependency', full_text, re.IGNORECASE):
+                start = max(0, m_dep.start() - 50)
+                end = min(len(full_text), m_dep.end() + 150)
+                window = full_text[start:end]
+                notional_m = re.search(r'(\d{1,3}(?:,\d{3})+|\d{4,6})\s*[xX*]\s*(\d{1,2})', window, re.IGNORECASE)
+                if notional_m:
+                    try:
+                        notional_val = float(notional_m.group(1).replace(",", ""))
+                        pri_income = round(notional_val / 12.0, 2)
+                        pri_method = "Notional Flat Annual Income / 12"
+                        break
+                    except ValueError:
+                        pass
+
+        # 3. Daily wage
+        if pri_income is None:
+            daily_match = re.search(
+                r'earning.*?([\d,]+).*?(?:per\s+day|daily|/-\s+per\s+day)',
+                full_text,
+                re.IGNORECASE
+            )
+            if daily_match:
+                try:
+                    daily_val = float(daily_match.group(1).replace(",", ""))
+                    pri_income = round(daily_val * 26.0, 2)
+                    pri_method = "Daily Claimed Wage * 26"
+                except ValueError:
+                    pass
+            elif block_earning_daily:
+                daily_m = re.search(r'(?:Rs\.?|INR)?\s*([\d,]+)', block_earning_daily, re.IGNORECASE)
+                if daily_m:
+                    try:
+                        daily_val = float(daily_m.group(1).replace(",", ""))
+                        pri_income = round(daily_val * 26.0, 2)
+                        pri_method = "Daily Claimed Wage (Block) * 26"
+                    except ValueError:
+                        pass
+
+        if pri_income is not None:
+            monthly_income = pri_income
+            conf_monthly_income = 0.99
+            sec_monthly_income = "particulars_block"
+            page_monthly_income = 1
+            method_monthly_income = pri_method
 
     # 9.2 Multiplier
     multiplier = comp_fields["multiplier"]
@@ -4258,28 +4466,35 @@ def parse_extracted_text(text_lines, case_type=None):
     )
     
     # Accident Date
-    date_of_accident = chronology["date_of_accident"]
-    if date_of_accident:
-        conf_date_of_accident = 0.98
-        sec_date_of_accident = "chronological_events_section"
-        sec_meta = sections_metadata.get("chronological_events_section", {})
-        page_date_of_accident = find_exact_page(date_of_accident, sec_meta.get("start_page", 1), sec_meta.get("end_page", 1), pages)
-        method_date_of_accident = "Chronological Event Extraction"
-    else:
-        date_of_accident = ""
-        conf_date_of_accident = 0.40
-        sec_date_of_accident = "raw_ocr"
+    if block_date:
+        date_of_accident = block_date
+        conf_date_of_accident = 0.99
+        sec_date_of_accident = "particulars_block"
         page_date_of_accident = 1
-        method_date_of_accident = "Fallback Contextual Search"
-        
-        acc_dates = extract_dates_with_context(sections.get("claimant_section", "") or full_text)
-        for d_val, ctx in acc_dates:
-            if any(kw in ctx for kw in ["accident", "incident", "occurrence", "happened on", "occurred on", "collision", "crash", "fir"]):
-                date_of_accident = d_val
-                conf_date_of_accident = 0.95
-                sec_date_of_accident = "claimant_section" if d_val in sections.get("claimant_section", "") else "raw_ocr"
-                page_date_of_accident = find_exact_page(d_val, 1, 10, pages)
-                break
+        method_date_of_accident = "High Court Particulars Block"
+    else:
+        date_of_accident = chronology["date_of_accident"]
+        if date_of_accident:
+            conf_date_of_accident = 0.98
+            sec_date_of_accident = "chronological_events_section"
+            sec_meta = sections_metadata.get("chronological_events_section", {})
+            page_date_of_accident = find_exact_page(date_of_accident, sec_meta.get("start_page", 1), sec_meta.get("end_page", 1), pages)
+            method_date_of_accident = "Chronological Event Extraction"
+        else:
+            date_of_accident = ""
+            conf_date_of_accident = 0.40
+            sec_date_of_accident = "raw_ocr"
+            page_date_of_accident = 1
+            method_date_of_accident = "Fallback Contextual Search"
+            
+            acc_dates = extract_dates_with_context(sections.get("claimant_section", "") or full_text)
+            for d_val, ctx in acc_dates:
+                if any(kw in ctx for kw in ["accident", "incident", "occurrence", "happened on", "occurred on", "collision", "crash", "fir"]):
+                    date_of_accident = d_val
+                    conf_date_of_accident = 0.95
+                    sec_date_of_accident = "claimant_section" if d_val in sections.get("claimant_section", "") else "raw_ocr"
+                    page_date_of_accident = find_exact_page(d_val, 1, 10, pages)
+                    break
 
     # Award Date
     award_date = chronology["award_date"]
@@ -5263,6 +5478,34 @@ def parse_extracted_text(text_lines, case_type=None):
                 "consortium_claimants", consortium_claimants, conf_consortium_claimants, method_consortium_claimants, recovered.get("consortium_claimants"), llm_conf_cc
             )
 
+            # Extra normalized fields from LLM recovery
+            llm_conf_fn = recovered.get("confidence_scores", {}).get("father_name", {}).get("confidence", 0.85)
+            father_name, conf_father_name, method_father_name = merge_field(
+                "father_name", father_name, conf_father_name, method_father_name, recovered.get("father_name"), llm_conf_fn
+            )
+
+            llm_conf_doa = recovered.get("confidence_scores", {}).get("date_of_accident", {}).get("confidence", 0.85)
+            date_of_accident, conf_date_of_accident, method_date_of_accident = merge_field(
+                "date_of_accident", date_of_accident, conf_date_of_accident, method_date_of_accident, recovered.get("date_of_accident"), llm_conf_doa
+            )
+
+            llm_conf_poa = recovered.get("confidence_scores", {}).get("place_of_accident", {}).get("confidence", 0.85)
+            place_of_accident, conf_place_of_accident, method_place_of_accident = merge_field(
+                "place_of_accident", place_of_accident, conf_place_of_accident, method_place_of_accident, recovered.get("place_of_accident"), llm_conf_poa
+            )
+
+            llm_future_type = recovered.get("future_type")
+            if isinstance(llm_future_type, str):
+                if any(k in llm_future_type.lower() for k in ["perm", "govt", "service", "company"]):
+                    llm_future_type = 1
+                else:
+                    llm_future_type = 2
+
+            llm_conf_ft = recovered.get("confidence_scores", {}).get("future_type", {}).get("confidence", 0.85)
+            future_type, conf_future_type, method_future_type = merge_field(
+                "future_type", future_type, conf_future_type, method_future_type, llm_future_type, llm_conf_ft
+            )
+
     # ── Post-Merge Validation Pass ──────────────────────────────────────────
     from backend.calculator import get_multiplier, get_future_prospect, get_deduction
     
@@ -5666,6 +5909,39 @@ def parse_extracted_text(text_lines, case_type=None):
     for p in pages:
         page_classifications[str(p["page_number"])] = classify_page_type(p["text"], p["page_number"])
     parser_debug["page_classifications"] = page_classifications
+
+    # ── High Court Death Case Pruning / Exclusions ───────────────────────────
+    if case_type == "death":
+        # 1. Reset excluded fields to None
+        for excl in [
+            "consortium", "funeral_expenses", "loss_estate",
+            "conlum", "conspo", "conpar", "conchil", "conwif",
+            "conmo", "confath", "conhus", "conbro", "consis", "medical_expenses"
+        ]:
+            suggestions[excl] = None
+            if "confidence_scores" in suggestions and excl in suggestions["confidence_scores"]:
+                suggestions["confidence_scores"][excl]["value"] = None
+                suggestions["confidence_scores"][excl]["confidence"] = 0.0
+                suggestions["confidence_scores"][excl]["reason"] = "Excluded for death case autofill"
+
+        # 2. Check required fields and flag if missing
+        required_fields = [
+            ("deceased_name", "Deceased Name not found in document"),
+            ("name", "Deceased Name not found in document"),
+            ("date_of_accident", "Date of accident not found in document"),
+            ("age", "Age of deceased not found in document"),
+            ("monthly_income", "Monthly income not found in document"),
+            ("marital_status", "Marital status not found in document"),
+            ("future_type", "Future prospects type not found in document")
+        ]
+        for field, missing_msg in required_fields:
+            val = suggestions.get(field)
+            if val in (None, "", "None", "null", 0, 0.0):
+                suggestions[field] = None
+                if "confidence_scores" in suggestions and field in suggestions["confidence_scores"]:
+                    suggestions["confidence_scores"][field]["value"] = None
+                    suggestions["confidence_scores"][field]["confidence"] = 0.0
+                    suggestions["confidence_scores"][field]["reason"] = missing_msg
 
     print("[PARSE DEBUG] Final parsed key fields:")
     print(f"  Name: {suggestions.get('name')}")
