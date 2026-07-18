@@ -48,11 +48,14 @@ if __name__ == "__main__":
     print(f"      To change ports/hosts, edit config/ports.py")
     print("======================================================================")
 
-    # Run the Uvicorn server with explicit log_level so OCR logs are never filtered
-    uvicorn.run(
+    # Run the Uvicorn server via Config & Server to allow timeout_notify configuration
+    config = uvicorn.Config(
         "backend.main:app",
         host=HOST,
         port=PORT,
         reload=False,
         log_level="info",
+        timeout_notify=300,
     )
+    server = uvicorn.Server(config)
+    server.run()

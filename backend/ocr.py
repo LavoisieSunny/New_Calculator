@@ -23,6 +23,12 @@ from fastapi.responses import StreamingResponse
 from pypdf import PdfReader
 import pypdfium2 as pdfium
 
+try:
+    from paddleocr import PaddleOCR
+    PADDLEOCR_IMPORTED = True
+except ImportError:
+    PADDLEOCR_IMPORTED = False
+
 from backend.parser_heuristics import parse_extracted_text, HINDI_HEADING_KEYWORDS, parse_hindi_extracted_text, _hi_fuzzy_contains
 from backend.track_detection import detect_case_track
 
@@ -80,7 +86,7 @@ OCR_QUALITY_GATE_THRESHOLD = 0.05
 # path for the common case (clean printed scans).
 OCR_DEVICE                   = os.getenv("OCR_DEVICE", "gpu:0")
 OCR_PADDLE_LANG              = os.getenv("OCR_PADDLE_LANG", "hi")  # "hi" -> PP-OCRv5 devanagari rec model (also covers Latin/English chars)
-OCR_PADDLE_CONF_THRESHOLD    = float(os.getenv("OCR_PADDLE_CONF_THRESHOLD", "0.70"))   # avg per-line rec confidence
+OCR_PADDLE_CONF_THRESHOLD    = float(os.getenv("OCR_PADDLE_CONF_THRESHOLD", "0.85"))   # avg per-line rec confidence
 OCR_PADDLE_QUALITY_THRESHOLD = float(os.getenv("OCR_PADDLE_QUALITY_THRESHOLD", "0.40")) # heuristic legal-text quality score
 OCR_ENABLE_VISION_ESCALATION = os.getenv("OCR_ENABLE_VISION_ESCALATION", "true").lower() == "true"
 OCR_HYBRID_LABEL = f"PaddleOCR+{OCR_VISION_MODEL}"
@@ -373,7 +379,8 @@ def get_ocr_instance(lang: str = None):
 
     with _PADDLE_INIT_LOCK:
         if _PADDLE_INSTANCES[lang] is None:
-            from paddleocr import PaddleOCR
+            if not PADDLEOCR_IMPORTED:
+                raise ImportError("paddleocr is not installed or failed to import at startup.")
             _tlog(f"Loading PaddleOCR singleton (PP-OCRv5, lang={lang})...")
             t0 = time.time()
             _PADDLE_INSTANCES[lang] = _init_paddle_engine(
@@ -384,6 +391,8 @@ def get_ocr_instance(lang: str = None):
                 use_textline_orientation=False,
             )
             _tlog(f"PaddleOCR singleton ({lang}) ready in {time.time() - t0:.1f}s.")
+            import paddle
+            logger.info(f"PaddleOCR confirmed device={paddle.device.get_device()}")
     return _PADDLE_INSTANCES[lang]
 
 
