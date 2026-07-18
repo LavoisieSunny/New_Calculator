@@ -28,3 +28,8 @@ debug_*.png
 # Local databases
 qdrant_db/
 **/qdrant_db/
+
+# Exclude test files and directories from Git
+test_*.py
+tests/
+
