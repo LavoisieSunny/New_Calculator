@@ -14,3 +14,28 @@ qdrant_db
 Dockerfile
 docker-compose.yml
 .dockerignore
+
+# Exclude all root-level test files
+test_*.py
+
+# Exclude entire tests directory (fixtures/test cases)
+tests/
+
+# Exclude scratch/debug scripts
+scratch_*.py
+
+# Exclude loose OCR dump files and raw texts at repo root
+*_ocr_lines.txt
+*_raw_text.txt
+extracted_raw_text.txt
+ma3078_full_ocr.txt
+ma3078_ocr_text.txt
+ma_10076_text.txt
+ma_20_text.txt
+
+# Exclude temp images and test files
+temp_*.png
+temp_*.jpg
+frontend/uploads/*.pdf
+frontend/uploads/*.png
+
