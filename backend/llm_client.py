@@ -743,6 +743,8 @@ def ai_data_recovery(raw_ocr_text: str, track: str = "high_court", case_type: st
                         if val is None:
                             conf = 0.0
 
+            is_blocked = False
+            matched_phrase = None
             if isinstance(val, str):
                 val_stripped = val.strip()
                 val_lower = val_stripped.lower()
@@ -757,8 +759,6 @@ def ai_data_recovery(raw_ocr_text: str, track: str = "high_court", case_type: st
                     "unclear",
                     "not found in text",
                 ]
-                is_blocked = False
-                matched_phrase = None
                 for phrase in blocklist:
                     if phrase == "n/a":
                         import re
@@ -780,6 +780,7 @@ def ai_data_recovery(raw_ocr_text: str, track: str = "high_court", case_type: st
             confidence_scores[key] = {"confidence": conf}
             if is_blocked:
                 confidence_scores[key]["reason"] = f"Document stated non-answer: '{matched_phrase}'"
+
  
         # ── Canonicalise every date field to strict DD-MM-YYYY & verify against raw OCR text ─────────────
         for _date_key in ("dob", "date_of_birth", "accident_date", "date_of_accident", "decision_date"):
