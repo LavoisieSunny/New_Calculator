@@ -11,6 +11,11 @@ __pycache__
 .pytest_cache
 .qodo
 qdrant_db
+paddle_models
+frontend/uploads
+*.pdf
+*.log
 Dockerfile
 docker-compose.yml
 .dockerignore
+
