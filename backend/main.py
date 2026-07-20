@@ -162,9 +162,38 @@ class PDFChatRequest(BaseModel):
     parsed_fields: dict | None = None
     calculator_result: dict | None = None
     is_justify: bool = False
-    history: list[dict] | None = None
+    history: list | None = None
+
+
+def is_case_summary_query(query: str) -> bool:
+
+    if not query:
+        return False
+    q = query.lower().strip()
+    
+    summary_phrases = [
+        "summarize the case", "summarise the case", "summarize case", "summarise case",
+        "explain me about the case", "explain about the case", "explain the case", "explain this case", "explain case",
+        "tell me about the case", "tell about the case", "tell me about case", "tell case",
+        "give summary", "case summary", "summary of the case", "summary of case",
+        "overview of the case", "overview of case", "case overview",
+        "details of the case", "case details", "what is this case about",
+        "what is the case about", "about the case", "brief of the case", "brief the case",
+        "case background", "background of the case", "case info", "case information"
+    ]
+    if any(phrase in q for phrase in summary_phrases):
+        return True
+        
+    import re
+    if re.search(r'\b(summarize|summarise|explain|overview|brief|tell\s+me|details)\b.*\bcase\b', q):
+        return True
+    if re.search(r'\bcase\b.*\b(summary|overview|details|explanation|background)\b', q):
+        return True
+        
+    return False
 
 async def prepare_pdf_chat_prompt(request: PDFChatRequest):
+
     from backend.vector_db import semantic_search_rag
     import json
     question_str = request.question or request.message
@@ -209,6 +238,7 @@ async def prepare_pdf_chat_prompt(request: PDFChatRequest):
         if recalc_response is not None:
             return None, None, [], recalc_response
             
+    is_summary_q = is_case_summary_query(question_str)
     case_filter = None if request.case_type == "all" else request.case_type
     
     # Determine filename filter
@@ -228,6 +258,18 @@ async def prepare_pdf_chat_prompt(request: PDFChatRequest):
         seen_texts = set()
         search_results = []
         for r in results_award + results_grounds:
+            t = r.get("text", "")[:100]
+            if t not in seen_texts:
+                seen_texts.add(t)
+                search_results.append(r)
+    elif is_summary_q:
+        results_court, results_grounds = await asyncio.gather(
+            asyncio.to_thread(semantic_search_rag, query="court tribunal appeal case number appellant respondents claim award", limit=4, filename_filter=filename_filter),
+            asyncio.to_thread(semantic_search_rag, query="grounds of appeal relief prayer enhancement exoneration liability arguments", limit=4, filename_filter=filename_filter),
+        )
+        seen_texts = set()
+        search_results = []
+        for r in results_court + results_grounds:
             t = r.get("text", "")[:100]
             if t not in seen_texts:
                 seen_texts.add(t)
@@ -261,7 +303,7 @@ async def prepare_pdf_chat_prompt(request: PDFChatRequest):
     chunks_combined = retrieved_chunks
     workstation_blocks = []
     if request.ocr_text:
-        if request.is_justify:
+        if request.is_justify or is_summary_q:
             ocr_full = request.ocr_text or ""
             ocr_len = len(ocr_full)
             if ocr_len <= 12000:
@@ -567,6 +609,35 @@ async def prepare_pdf_chat_prompt(request: PDFChatRequest):
             "If not found: write 'Not found in OCR text' — never guess.\n"
         )
 
+    case_summary_instruction = (
+        "\n=== CASE SUMMARY & EXPLANATION QUERY INSTRUCTIONS ===\n"
+        "The user is asking to summarize, explain, or tell about the case.\n"
+        "You MUST respond with a clean, structured analysis strictly using the following bold sections and bullet points:\n\n"
+        "**Court & Case Details:**\n"
+        "- **Court / Tribunal:** [Court or Tribunal name, e.g. High Court of M.P. / MACT Tribunal]\n"
+        "- **Case / Appeal No.:** [Case or Appeal number from PDF, e.g. M.A. No. 2196/2025]\n"
+        "- **Appellant:** [Appellant name/party, e.g. Claimant or Insurance Company]\n"
+        "- **Respondents:** [List respondent parties, e.g. Driver, Owner, Insurance Company]\n\n"
+        "**Case Type & Nature of Dispute:**\n"
+        "- **Case Type:** [Injury / Death]\n"
+        "- **Nature of Appeal:** [Claimant seeking enhancement of compensation / Insurer seeking reduction or exoneration]\n\n"
+        "**Case Overview:**\n"
+        "[A concise 2-3 sentence overview explaining the accident event, nature of injuries/death, tribunal decision, and core dispute.]\n\n"
+        "**Key Grounds of Appeal (in Points):**\n"
+        "- [Point 1: Main ground disputing liability, policy validity, or licence/permit breach]\n"
+        "- [Point 2: Main ground disputing quantum, income assessment, or multiplier]\n"
+        "- [Point 3: Main ground regarding missed heads, disfigurement, or pain & suffering]\n"
+        "- [Point 4: Main ground regarding interest rate or calculation error]\n\n"
+        "**Relief / Prayer Sought (in Points):**\n"
+        "- [Point 1: Primary prayer requested, e.g. setting aside tribunal award or total exoneration of insurer]\n"
+        "- [Point 2: Financial enhancement or reduction amount requested]\n"
+        "- [Point 3: Interest rate or costs requested]\n\n"
+        "**Compensation & Key Parameters:**\n"
+        "- **Awarded Compensation:** ₹[Amount awarded from OCR text]\n"
+        "- **Claim Amount / Enhancement Sought:** ₹[Claimed amount or Enhancement sought]\n"
+        "- **Key Parameters:** [Age, Monthly Income, Disability % (if injury) or Dependents (if death)]\n"
+    )
+
     system_instruction = (
         "You are a Motor Accident Claims Tribunal legal assistant.\n\n"
         "=== STRICTOR GROUNDING INSTRUCTIONS ===\n"
@@ -615,6 +686,8 @@ async def prepare_pdf_chat_prompt(request: PDFChatRequest):
     
     if request.is_justify:
         system_instruction += f"\n{justify_block}"
+    elif is_summary_q:
+        system_instruction += f"\n{case_summary_instruction}"
 
     user_prompt = (
         f"{case_facts_summary}\n"
