@@ -2798,9 +2798,25 @@ async def ai_recover_fields(request: AIRecoverRequest):
                 else:
                     recovered_data["confidence_scores"][field] = {"confidence": 0.85, "reason": "Merged from heuristics parser"}
 
-        from backend.parser_heuristics import format_suggestions_for_calculator
+        from backend.parser_heuristics import format_suggestions_for_calculator, detect_document_sections, classify_enhancement_or_reduction
         formatted = format_suggestions_for_calculator(recovered_data)
-        return {"success": True, "suggestions": formatted, "raw_recovered": recovered_data}
+
+        # Generate or attach grounds & relief summary so autofill preserves it
+        sections_meta = detect_document_sections(full_text, [])
+        sections_dict = {k: v["content"] for k, v in sections_meta.items()}
+        sections_dict["raw_ocr"] = full_text
+        heuristic_signal = heuristics_data.get("case_classification") or classify_enhancement_or_reduction(sections_dict)
+
+        from backend.llm_client import summarize_grounds_and_relief
+        summary_res = summarize_grounds_and_relief(
+            sections_dict,
+            heuristic_signal,
+            recovered_data.get("case_type") or "death"
+        )
+        formatted["grounds_relief_summary"] = summary_res
+        recovered_data["grounds_relief_summary"] = summary_res
+
+        return {"success": True, "suggestions": formatted, "raw_recovered": recovered_data, "grounds_relief_summary": summary_res}
     except HTTPException:
         raise
     except Exception as e:

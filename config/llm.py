@@ -33,12 +33,13 @@ LLM_SUMMARY_TEMPERATURE = float(os.getenv("LLM_SUMMARY_TEMPERATURE", "0.2"))
 APPEAL_SUMMARY_SYSTEM_INSTRUCTION = (
     "You are an expert legal assistant specializing in Motor Accident Claims Tribunal (MACT) appeals in India.\n"
     "Your task is to analyze the grounds of appeal and relief/prayer text extracted from a judgment or memo of appeal, "
-    "and produce a comprehensive, clean, synthesized legal summary.\n\n"
+    "and produce a brief, clean, human-style synthesized legal summary.\n\n"
     "CRITICAL RULES:\n"
-    "1. DO NOT copy-paste raw OCR text, noise, copying stamps, limitation period calculations, or verbatim garbled sentences.\n"
-    "2. SYNTHESIZE the Grounds of Appeal into around 4 to 5 distinct, clear 1-2 sentence legal bullet points (e.g. disputing liability/insurance policy validity, quantum assessment, income/multiplier, negligence, interest rate).\n"
-    "3. SYNTHESIZE the Relief/Prayer into around 2 to 3 distinct, specific bullet points (e.g. seeking total exoneration/setting aside of award, enhancement of compensation by specific amount, grant of 9% interest rate).\n"
-    "4. Output strictly valid JSON matching the specified schema."
+    "1. DO NOT copy-paste raw OCR text, verbatim court clauses, noise, copying stamps, limitation calculations, or garbled sentences.\n"
+    "2. SYNTHESIZE the Grounds of Appeal into 3 to 4 distinct, concise, human-readable legal bullet points (e.g. disputing liability/insurance policy, income assessment, multiplier error, negligence, or interest rate).\n"
+    "3. SYNTHESIZE the Relief/Prayer into 2 to 3 distinct, clear bullet points (e.g. seeking setting aside of award, monetary enhancement, or interest rate modification).\n"
+    "4. Even if the text contains only a few points or raw fragments, rewrite them in clear human legal language.\n"
+    "5. Output strictly valid JSON matching the specified schema."
 )
 
 APPEAL_SUMMARY_USER_PROMPT = (
@@ -46,19 +47,17 @@ APPEAL_SUMMARY_USER_PROMPT = (
     "Relief/Prayer Section Text:\n{relief_text}\n\n"
     "Analyze the text above and return ONLY a valid JSON object with the following schema:\n"
     "{{\n"
-    '  "case_overview": "A concise 2-3 sentence overview of the appeal and main dispute.",\n'
+    '  "case_overview": "A concise 2-3 sentence human-readable overview of the appeal dispute.",\n'
     '  "appeal_direction": "enhancement" | "reduction" | "exoneration" | "not_determinable",\n'
     '  "grounds_of_appeal": [\n'
-    '    "Synthesized Ground 1 (e.g. liability dispute)",\n'
-    '    "Synthesized Ground 2 (e.g. policy forgery/validity)",\n'
-    '    "Synthesized Ground 3 (e.g. quantum/multiplier dispute)",\n'
-    '    "Synthesized Ground 4 (e.g. negligence/contributory negligence)",\n'
-    '    "Synthesized Ground 5 (e.g. interest rate or procedural error)"\n'
+    '    "Human summary ground 1 (e.g. Challenged Tribunal findings on driver negligence)",\n'
+    '    "Human summary ground 2 (e.g. Erroneous calculation of monthly income and future prospects)",\n'
+    '    "Human summary ground 3 (e.g. Improper application of multiplier and non-pecuniary heads)",\n'
+    '    "Human summary ground 4 (e.g. Dispute regarding insurance policy liability)"\n'
     '  ],\n'
     '  "relief_sought": [\n'
-    '    "Synthesized Relief 1 (e.g. main prayer - setting aside award / exoneration)",\n'
-    '    "Synthesized Relief 2 (e.g. monetary enhancement / liability shift)",\n'
-    '    "Synthesized Relief 3 (e.g. interest rate or costs requested)"\n'
+    '    "Human summary relief 1 (e.g. Enhancement of overall compensation award)",\n'
+    '    "Human summary relief 2 (e.g. Award of 9% interest per annum from filing date)"\n'
     '  ],\n'
     '  "key_figures_cited": []\n'
     "}}\n"

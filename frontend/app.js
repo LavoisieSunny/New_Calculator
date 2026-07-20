@@ -2142,15 +2142,21 @@ This cannot be undone.`)) return;
             const { case_type, low_confidence_fields, ocr_quality_insufficient,
                 ocr_warning, partial_extraction_recovery_mode,
                 fallback_source_used, award_amount, total_compensation,
-                ai_recovery_triggered, ...fieldValues } = suggestions;
+                ai_recovery_triggered, grounds_relief_summary, ...fieldValues } = suggestions;
             suggestions = {
                 case_type: case_type,
                 fields: fieldValues,
                 low_confidence_fields: low_confidence_fields || [],
                 ocr_quality_insufficient: ocr_quality_insufficient,
                 ocr_warning: ocr_warning,
-                fallback_source_used: fallback_source_used
+                fallback_source_used: fallback_source_used,
+                grounds_relief_summary: grounds_relief_summary || window.lastGroundsReliefSummary || null
             };
+        }
+        if (suggestions && suggestions.grounds_relief_summary) {
+            window.lastGroundsReliefSummary = suggestions.grounds_relief_summary;
+        } else if (suggestions && window.lastGroundsReliefSummary) {
+            suggestions.grounds_relief_summary = window.lastGroundsReliefSummary;
         }
         updateEnhancementCheck({ suggestions: suggestions });
 
@@ -3240,7 +3246,16 @@ This cannot be undone.`)) return;
                 basisNote = "No case classification details parsed.";
             }
 
-            const summary = data?.grounds_relief_summary || (data?.suggestions && data?.suggestions?.grounds_relief_summary) || null;
+            let summary = data?.grounds_relief_summary ||
+                          (data?.suggestions && data?.suggestions?.grounds_relief_summary) ||
+                          (data?.fields && data?.fields?.grounds_relief_summary) ||
+                          (data?.suggestions && data?.suggestions?.fields && data?.suggestions?.fields?.grounds_relief_summary) ||
+                          window.lastGroundsReliefSummary || null;
+
+            if (summary && (summary.grounds_of_appeal?.length > 0 || summary.relief_sought?.length > 0)) {
+                window.lastGroundsReliefSummary = summary;
+            }
+
             const groundsOfAppeal = summary ? (summary.grounds_of_appeal || []) : [];
             const reliefSought = summary ? (summary.relief_sought || []) : [];
 
