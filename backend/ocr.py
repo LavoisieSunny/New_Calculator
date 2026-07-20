@@ -1211,12 +1211,7 @@ def ocr_page_with_vision(
             page_lang = detect_page_language_from_probe(pil_img, page_num=page_num)
             _tlog(f"Page {page_num}: Dynamic language probe result: {page_lang}")
 
-    force_vision = (
-        track == "lower_court" and
-        page_idx in (0, 1) and
-        vision_available and
-        not _vision_is_paused()
-    )
+    force_vision = False
 
     if force_vision:
         logger.info(f"Page {page_num}: Lower Court Page {page_num} override → using qwen2.5vl:7b directly")
@@ -1270,7 +1265,7 @@ def ocr_page_with_vision(
             engine_used = "Tesseract"
             confidence = 0.70 if lines else 0.0
 
-    # ── 5b. Text/image-heavy → PaddleOCR first, escalate to vision ──
+    # ── 5b. Text/image-heavy → PaddleOCR first, escalate to vision only on low confidence ──
     else:
         paddle_is_tabular = False
         try_structure_first = False
@@ -1296,43 +1291,23 @@ def ocr_page_with_vision(
                 table_mds = extract_tables_via_structure(rendered_img_path, page_num=page_num)
                 structure_duration += time.time() - t0
             
-            # We only escalate to vision on tabular pages if:
-            # 1. Paddle OCR is not good (not paddle_good)
-            # OR
-            # 2. PP-StructureV3 failed or returned empty table_mds on a tabular page
-            is_hc_tabular_escalation = (
-                track == "high_court" and
-                paddle_is_tabular and
-                OCR_ENABLE_VISION_ESCALATION and
-                vision_available and
-                not _vision_is_paused() and
-                (not paddle_good or not table_mds)
-            )
-            should_escalate = (not paddle_good) or is_hc_tabular_escalation
+            # Escalate to vision ONLY if Paddle OCR is low confidence / not trustworthy
+            should_escalate = (not paddle_good)
+
             
             if should_escalate and vision_available and OCR_ENABLE_VISION_ESCALATION and not _vision_is_paused():
-                if is_hc_tabular_escalation:
-                    is_cross_check = True
-                    logger.info(f"Page {page_num}: Tabular page in high_court track -> triggering vision cross-check")
-                else:
-                    logger.info(f"Page {page_num}: PaddleOCR quality low (conf={paddle_conf:.2f}, q={paddle_q:.2f}) -> escalating to qwen2.5vl:7b")
-                
+                logger.info(f"Page {page_num}: PaddleOCR quality low (conf={paddle_conf:.2f}, q={paddle_q:.2f}) -> escalating to vision model ({OCR_VISION_MODEL})")
                 img_b64 = image_to_base64(_get_processed(), quality=85)
                 t0 = time.time()
                 raw_text = call_vision_model(img_b64, page_num=page_num)
                 vision_duration += time.time() - t0
                 del img_b64
                 vis_lines = [l.strip() for l in raw_text.split("\n") if l.strip()] if raw_text and raw_text.strip() != "[BLANK PAGE]" else []
-                
-                if is_cross_check:
-                    lines, chosen_source, meta_discarded = reconcile_paddle_and_vision(paddle_lines, vis_lines)
-                    engine_used = OCR_HYBRID_LABEL
-                    confidence = 0.90 if chosen_source == "qwen2.5vl:7b" else paddle_conf
-                else:
-                    if vis_lines:
-                        lines, engine_used, confidence = vis_lines, "qwen2.5vl:7b", 0.90
-                    elif paddle_lines and paddle_conf > 0.0:
-                        lines, engine_used, confidence = paddle_lines, "PaddleOCR", paddle_conf
+                if vis_lines:
+                    lines, engine_used, confidence = vis_lines, OCR_VISION_MODEL, 0.90
+                elif paddle_lines and paddle_conf > 0.0:
+                    lines, engine_used, confidence = paddle_lines, "PaddleOCR", paddle_conf
+
             else:
                 if paddle_good:
                     lines, engine_used, confidence = paddle_lines, "PaddleOCR", paddle_conf
