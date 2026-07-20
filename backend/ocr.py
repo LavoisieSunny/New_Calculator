@@ -2626,6 +2626,50 @@ async def process_single_file(file: UploadFile = File(...)):
             from backend.parser_heuristics import format_suggestions_for_calculator
             formatted_suggestions = format_suggestions_for_calculator(suggestions)
 
+            yield f"data: {json.dumps({'status': 'summarizing', 'progress': 88, 'message': 'Generating legal appeal summary...'})}\n\n"
+            await asyncio.sleep(0.01)
+
+            # Reconstruct pages and sections for summarizing
+            pages_list = []
+            current_page_num = 1
+            current_page_lines = []
+            for line in text_lines:
+                if line.strip().startswith("--- PAGE"):
+                    if current_page_lines:
+                        pages_list.append({
+                            "page_number": current_page_num,
+                            "lines": current_page_lines,
+                            "text": "\n".join(current_page_lines)
+                        })
+                    current_page_lines = []
+                    import re
+                    m = re.search(r'PAGE\s+(\d+)', line, re.IGNORECASE)
+                    if m:
+                        current_page_num = int(m.group(1))
+                else:
+                    current_page_lines.append(line)
+            if current_page_lines or not pages_list:
+                pages_list.append({
+                    "page_number": current_page_num,
+                    "lines": current_page_lines,
+                    "text": "\n".join(current_page_lines)
+                })
+            
+            from backend.parser_heuristics import detect_document_sections, classify_enhancement_or_reduction
+            sections_meta = detect_document_sections(full_text, pages_list)
+            sections_dict = {k: v["content"] for k, v in sections_meta.items()}
+            sections_dict["raw_ocr"] = full_text
+
+            heuristic_signal = suggestions.get("case_classification") or classify_enhancement_or_reduction(sections_dict)
+
+            from backend.llm_client import summarize_grounds_and_relief
+            summary_res = await asyncio.to_thread(
+                summarize_grounds_and_relief,
+                sections_dict,
+                heuristic_signal,
+                detected_case_type
+            )
+
             # Index document into Qdrant in background so Chat Assistant works for this file
             try:
                 from backend.vector_db import index_document
@@ -2637,7 +2681,8 @@ async def process_single_file(file: UploadFile = File(...)):
                 os.unlink(temp_path)
                 temp_path = None
 
-            yield f"data: {json.dumps({'status': 'done', 'progress': 100, 'success': True, 'filename': file.filename, 'ocr_status': 'loaded', 'fallback_source': fallback_source, 'suggestions': formatted_suggestions, 'case_type': detected_case_type, 'track': active_track, 'raw_text': text_lines, 'ocr_debug': ocr_debug})}\n\n"
+            yield f"data: {json.dumps({'status': 'done', 'progress': 100, 'success': True, 'filename': file.filename, 'ocr_status': 'loaded', 'fallback_source': fallback_source, 'suggestions': formatted_suggestions, 'case_type': detected_case_type, 'track': active_track, 'raw_text': text_lines, 'ocr_debug': ocr_debug, 'grounds_relief_summary': summary_res})}\n\n"
+
 
         except Exception as e:
             logger.error(f"Streaming OCR error: {e}")

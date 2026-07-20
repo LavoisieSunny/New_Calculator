@@ -1113,3 +1113,226 @@ def ai_data_recovery(raw_ocr_text: str, track: str = "high_court", case_type: st
         err_msg = "AI-assisted recovery unavailable for this document — please fill remaining fields manually."
         logger.error(f"Failed to parse AI Data Recovery JSON: {str(e)}. Raw response: {response}")
         return {"ai_recovery_error": err_msg, "raw_response_preview": (response[:300] if response else str(e))}
+
+
+# ======================================================
+# FEATURE 1: APPEAL GROUNDS & RELIEF SUMMARY
+# ======================================================
+
+_SUMMARY_CACHE = {}
+
+def validate_summary_shape(raw_data: dict) -> bool:
+    if not isinstance(raw_data, dict):
+        return False
+    expected_keys = {
+        "case_overview", "appeal_direction", "grounds_of_appeal", "relief_sought", "key_figures_cited"
+    }
+    if not all(k in raw_data for k in expected_keys):
+        return False
+    valid_directions = {"enhancement", "reduction", "exoneration", "not_determinable"}
+    if str(raw_data.get("appeal_direction")).lower() not in valid_directions:
+        return False
+    if not isinstance(raw_data.get("grounds_of_appeal"), list):
+        return False
+    if not isinstance(raw_data.get("relief_sought"), list):
+        return False
+    if not isinstance(raw_data.get("key_figures_cited"), list):
+        return False
+    return True
+
+def _verify_summary_grounding(summary: dict, source_text: str) -> dict:
+    if not summary or not isinstance(summary, dict):
+        return summary
+    source_normalized = source_text.lower().replace(",", "")
+    
+    def extract_numbers(s: str) -> list:
+        tokens = re.findall(r'\b[a-zA-Z]*\d+[\w\d\.,\-%/]*\b|\b\d{1,2}[-/.]\d{1,2}[-/.]\d{2,4}\b', s)
+        numeric_tokens = []
+        for t in tokens:
+            cleaned = re.sub(r'[^\d\.\-]', '', t)
+            if cleaned:
+                numeric_tokens.append((t, cleaned))
+        return numeric_tokens
+
+    # Verify key_figures_cited
+    if "key_figures_cited" in summary and isinstance(summary["key_figures_cited"], list):
+        verified_figures = []
+        for fig in summary["key_figures_cited"]:
+            nums = extract_numbers(fig)
+            fig_valid = True
+            for raw, norm in nums:
+                digits = re.sub(r'\D', '', norm)
+                if not digits:
+                    continue
+                if norm not in source_normalized and digits not in source_normalized:
+                    fig_valid = False
+                    logger.warning(f"[GROUNDING CHECK FAILED] Figure '{raw}' (normalized: '{norm}') from '{fig}' not found in source text.")
+                    break
+            if fig_valid:
+                verified_figures.append(fig)
+        summary["key_figures_cited"] = verified_figures
+
+    # Verify grounds_of_appeal
+    if "grounds_of_appeal" in summary and isinstance(summary["grounds_of_appeal"], list):
+        verified_grounds = []
+        for ground in summary["grounds_of_appeal"]:
+            nums = extract_numbers(ground)
+            ground_valid = True
+            offending_raw = None
+            for raw, norm in nums:
+                digits = re.sub(r'\D', '', norm)
+                if not digits:
+                    continue
+                if norm not in source_normalized and digits not in source_normalized:
+                    ground_valid = False
+                    offending_raw = raw
+                    logger.warning(f"[GROUNDING CHECK FAILED] Numeric figure '{raw}' (normalized: '{norm}') in ground '{ground}' not found in source text.")
+                    break
+            if ground_valid:
+                verified_grounds.append(ground)
+            else:
+                rewritten = ground.replace(offending_raw, "[figure unverified]")
+                logger.warning(f"[GROUNDING REWRITE] Ground bullet rewritten from '{ground}' to '{rewritten}' due to unverified figure '{offending_raw}'")
+                verified_grounds.append(rewritten)
+        summary["grounds_of_appeal"] = verified_grounds
+
+    # Verify relief_sought
+    if "relief_sought" in summary and isinstance(summary["relief_sought"], list):
+        verified_relief = []
+        for relief in summary["relief_sought"]:
+            nums = extract_numbers(relief)
+            relief_valid = True
+            offending_raw = None
+            for raw, norm in nums:
+                digits = re.sub(r'\D', '', norm)
+                if not digits:
+                    continue
+                if norm not in source_normalized and digits not in source_normalized:
+                    relief_valid = False
+                    offending_raw = raw
+                    logger.warning(f"[GROUNDING CHECK FAILED] Numeric figure '{raw}' (normalized: '{norm}') in relief '{relief}' not found in source text.")
+                    break
+            if relief_valid:
+                verified_relief.append(relief)
+            else:
+                rewritten = relief.replace(offending_raw, "[figure unverified]")
+                logger.warning(f"[GROUNDING REWRITE] Relief bullet rewritten from '{relief}' to '{rewritten}' due to unverified figure '{offending_raw}'")
+                verified_relief.append(rewritten)
+        summary["relief_sought"] = verified_relief
+
+    return summary
+
+def summarize_grounds_and_relief(sections: dict, heuristic_signal: dict, case_type: str) -> dict:
+    """
+    Generates an LLM summary of the appeal grounds and prayer.
+    Uses generate_response with JSON mode.
+    """
+    import hashlib
+
+    # 1. Input fallbacks
+    memo_text = sections.get("memo_of_appeal_section", "") or ""
+    grounds_text = sections.get("grounds_section", "") or sections.get("facts_section", "") or ""
+    if not grounds_text.strip():
+        grounds_text = memo_text
+        
+    relief_text = sections.get("relief_section", "") or ""
+    if not relief_text.strip():
+        relief_text = sections.get("facts_section", "") or memo_text
+        
+    if not grounds_text.strip() and not relief_text.strip():
+        grounds_text = sections.get("raw_ocr", "")
+        relief_text = ""
+
+    # 2. Cache check
+    concat_text = f"{grounds_text}|||{relief_text}"
+    h = hashlib.sha256(concat_text.encode("utf-8")).hexdigest()
+    if h in _SUMMARY_CACHE:
+        logger.info("[APPEAL-SUMMARY] Returning cached summary.")
+        return _SUMMARY_CACHE[h]
+
+    # 3. Import prompts and configurations
+    from config.llm import (
+        APPEAL_SUMMARY_SYSTEM_INSTRUCTION, APPEAL_SUMMARY_USER_PROMPT, LLM_SUMMARY_TEMPERATURE
+    )
+
+    # 4. Construct prompt context
+    heuristic_context = ""
+    if heuristic_signal:
+        verdict = heuristic_signal.get("verdict", "unclear")
+        confidence = heuristic_signal.get("confidence", 0.0)
+        basis = heuristic_signal.get("basis", "no_signal")
+        heuristic_context = (
+            f"Pattern Engine Initial Classification (Heuristic Signal):\n"
+            f"- Suggested Verdict: {verdict}\n"
+            f"- Confidence Score: {confidence}\n"
+            f"- Classification Basis: {basis}\n"
+            f"- Grounds matched snippet: {heuristic_signal.get('grounds_signal', {}).get('snippet', 'None')}\n"
+            f"- Relief matched snippet: {heuristic_signal.get('relief_signal', {}).get('snippet', 'None')}\n"
+            f"Please use this pattern engine classification as a supporting sanity check context. Do not blindly trust it."
+        )
+
+    prompt_base = APPEAL_SUMMARY_USER_PROMPT.format(
+        grounds_text=grounds_text[:4000],
+        relief_text=relief_text[:4000]
+    )
+    if heuristic_context:
+        prompt_base += "\n\n" + heuristic_context
+
+    current_prompt = prompt_base
+    attempts = 2
+    success = False
+    result_dict = {}
+
+    for attempt in range(attempts):
+        try:
+            # We override or pass parameters for the LLM if needed.
+            # generate_response uses the global LLM config parameters.
+            response = generate_response(
+                prompt=current_prompt,
+                system_instruction=APPEAL_SUMMARY_SYSTEM_INSTRUCTION,
+                response_format="json"
+            )
+
+            # Direct parse & shape validation
+            start_idx = response.find("{")
+            end_idx = response.rfind("}")
+            if start_idx != -1 and end_idx != -1 and end_idx > start_idx:
+                candidate = response[start_idx:end_idx+1]
+            else:
+                candidate = response
+
+            parsed = json.loads(candidate)
+            if validate_summary_shape(parsed):
+                source_full_text = grounds_text + "\n" + relief_text
+                verified = _verify_summary_grounding(parsed, source_full_text)
+                result_dict = verified
+                result_dict["summary_source"] = "llm_summary"
+                success = True
+                break
+            else:
+                logger.warning(f"[APPEAL-SUMMARY] Attempt {attempt+1} parsed JSON failed shape/enum validation.")
+        except Exception as e:
+            logger.warning(f"[APPEAL-SUMMARY] Attempt {attempt+1} failed: {e}")
+
+        current_prompt = prompt_base + "\n\nREMINDER: your last response was invalid. Return ONLY a valid JSON matching the schema, with strict enum appeal_direction: 'enhancement' | 'reduction' | 'exoneration' | 'not_determinable'."
+
+    if success:
+        _SUMMARY_CACHE[h] = result_dict
+        return result_dict
+    else:
+        # Fallback to heuristic excerpts
+        g_pts = heuristic_signal.get("grounds_points", [])
+        r_pts = heuristic_signal.get("relief_points", [])
+        verdict = heuristic_signal.get("verdict", "not_determinable")
+        
+        fallback_summary = {
+            "case_overview": "Case summary generated using heuristic extraction fallback.",
+            "appeal_direction": verdict,
+            "grounds_of_appeal": g_pts,
+            "relief_sought": r_pts,
+            "key_figures_cited": [],
+            "confidence": heuristic_signal.get("confidence", 0.5),
+            "summary_source": "heuristic_fallback"
+        }
+        _SUMMARY_CACHE[h] = fallback_summary
+        return fallback_summary

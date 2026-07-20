@@ -3253,6 +3253,75 @@ This cannot be undone.`)) return;
                 </ul>`;
             }
 
+            const summary = data?.grounds_relief_summary || (data?.suggestions && data?.suggestions?.grounds_relief_summary) || null;
+            const appealSummaryText = summary ? summary.case_overview : "";
+            const appealDirection = summary ? summary.appeal_direction : "not_determinable";
+            const groundsOfAppeal = summary ? (summary.grounds_of_appeal || []) : [];
+            const reliefSought = summary ? (summary.relief_sought || []) : [];
+            const summarySource = summary ? (summary.summary_source || "heuristic_fallback") : "heuristic_fallback";
+
+            const DIRECTION_LABELS = {
+                enhancement: { text: "Appeal for Enhancement", color: "var(--color-success)" },
+                reduction: { text: "Appeal for Reduction", color: "var(--color-warning)" },
+                exoneration: { text: "Appeal for Exoneration", color: "var(--color-danger)" },
+                not_determinable: { text: "Not Determinable", color: "var(--text-secondary)" }
+            };
+            const dirLabel = DIRECTION_LABELS[appealDirection] || DIRECTION_LABELS.not_determinable;
+
+            let summaryCardHTML = "";
+            if (summarySource === "heuristic_fallback") {
+                summaryCardHTML = `
+                    <div style="padding: 10px; background: rgba(245, 158, 11, 0.08); border-left: 3px solid var(--color-warning); border-radius: var(--radius-sm); font-size: 0.8rem; color: var(--text-secondary); margin-bottom: 12px; line-height: 1.4;">
+                        <i class="fa-solid fa-triangle-exclamation" style="margin-right: 4px; color: var(--color-warning);"></i>
+                        AI summary unavailable — showing extracted source excerpts below.
+                    </div>
+                `;
+            } else {
+                let groundsOfAppealBullets = `<span style="opacity: 0.6; font-size: 0.8rem;">No grounds specified.</span>`;
+                if (groundsOfAppeal.length > 0) {
+                    groundsOfAppealBullets = `<ul style="margin: 4px 0 0 0; padding-left: 16px; display: flex; flex-direction: column; gap: 4px;">
+                        ${groundsOfAppeal.map(g => `<li style="font-size: 0.82rem; line-height: 1.3; color: var(--text-secondary);">${g}</li>`).join('')}
+                    </ul>`;
+                }
+
+                let reliefSoughtBullets = `<span style="opacity: 0.6; font-size: 0.8rem;">No relief specified.</span>`;
+                if (reliefSought.length > 0) {
+                    reliefSoughtBullets = `<ul style="margin: 4px 0 0 0; padding-left: 16px; display: flex; flex-direction: column; gap: 4px;">
+                        ${reliefSought.map(r => `<li style="font-size: 0.82rem; line-height: 1.3; color: var(--text-secondary);">${r}</li>`).join('')}
+                    </ul>`;
+                }
+
+                summaryCardHTML = `
+                    <div class="card" style="padding: 12px; background: rgba(255, 255, 255, 0.02); border: 1px solid rgba(255, 255, 255, 0.06); border-radius: var(--radius-md); display: flex; flex-direction: column; gap: 10px; margin-bottom: 12px;">
+                        <div style="display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid rgba(255,255,255,0.06); padding-bottom: 8px;">
+                            <span style="font-size: 0.82rem; font-weight: 700; color: var(--text-primary); text-transform: uppercase;">Case Summary</span>
+                            <span class="badge" style="background: ${dirLabel.color}; color: #fff; font-weight: 700; padding: 4px 10px; border-radius: var(--radius-sm); font-size: 0.8rem;">
+                                ${dirLabel.text}
+                            </span>
+                        </div>
+                        <p style="font-size: 0.82rem; line-height: 1.4; color: var(--text-secondary); margin: 0;">${appealSummaryText}</p>
+                        
+                        <div style="display: flex; flex-direction: column; gap: 6px; margin-top: 4px;">
+                            <div style="font-size: 0.82rem; font-weight: 600; color: var(--text-primary); display: flex; align-items: center; gap: 6px;">
+                                <i class="fa-solid fa-list-check" style="color: var(--color-primary); font-size: 0.75rem;"></i> Grounds of Appeal
+                            </div>
+                            <div style="padding-left: 4px;">
+                                ${groundsOfAppealBullets}
+                            </div>
+                        </div>
+
+                        <div style="display: flex; flex-direction: column; gap: 6px; margin-top: 4px;">
+                            <div style="font-size: 0.82rem; font-weight: 600; color: var(--text-primary); display: flex; align-items: center; gap: 6px;">
+                                <i class="fa-solid fa-scroll" style="color: var(--color-success); font-size: 0.75rem;"></i> Relief Sought / Prayer
+                            </div>
+                            <div style="padding-left: 4px;">
+                                ${reliefSoughtBullets}
+                            </div>
+                        </div>
+                    </div>
+                `;
+            }
+
             innerHTML = `
                 <div style="display: flex; flex-direction: column; gap: 12px;">
                     <div style="display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid rgba(255,255,255,0.06); padding-bottom: 8px;">
@@ -3269,26 +3338,35 @@ This cannot be undone.`)) return;
                         ${basisNote}
                     </div>
 
-                    <div style="display: flex; flex-direction: column; gap: 6px;">
-                        <div style="font-size: 0.82rem; font-weight: 600; color: var(--text-primary); display: flex; align-items: center; gap: 6px;">
-                            <i class="fa-solid fa-list-check" style="color: var(--color-primary); font-size: 0.75rem;"></i> Grounds of Appeal
-                        </div>
-                        <div style="padding-left: 4px;">
-                            ${groundsListHTML}
-                        </div>
-                    </div>
+                    ${summaryCardHTML}
 
-                    <div style="display: flex; flex-direction: column; gap: 6px; margin-top: 4px;">
-                        <div style="font-size: 0.82rem; font-weight: 600; color: var(--text-primary); display: flex; align-items: center; gap: 6px;">
-                            <i class="fa-solid fa-scroll" style="color: var(--color-success); font-size: 0.75rem;"></i> Relief Claimed / Prayer
+                    <details ${summarySource === "heuristic_fallback" ? "open" : ""} style="cursor: pointer; font-size: 0.82rem; border-top: 1px solid rgba(255,255,255,0.06); padding-top: 10px;">
+                        <summary style="font-weight: 600; color: var(--text-muted); outline: none; margin-bottom: 8px; font-size: 0.8rem; text-transform: uppercase;">
+                            Extracted source excerpts (for verification)
+                        </summary>
+                        <div style="display: flex; flex-direction: column; gap: 8px; padding-left: 6px; cursor: default;">
+                            <div style="display: flex; flex-direction: column; gap: 4px;">
+                                <div style="font-size: 0.8rem; font-weight: 600; color: var(--text-primary); display: flex; align-items: center; gap: 6px;">
+                                    <i class="fa-solid fa-list-check" style="color: var(--color-primary); font-size: 0.72rem;"></i> Raw Grounds Excerpts
+                                </div>
+                                <div style="padding-left: 4px;">
+                                    ${groundsListHTML}
+                                </div>
+                            </div>
+                            <div style="display: flex; flex-direction: column; gap: 4px; margin-top: 4px;">
+                                <div style="font-size: 0.8rem; font-weight: 600; color: var(--text-primary); display: flex; align-items: center; gap: 6px;">
+                                    <i class="fa-solid fa-scroll" style="color: var(--color-success); font-size: 0.72rem;"></i> Raw Prayer Excerpts
+                                </div>
+                                <div style="padding-left: 4px;">
+                                    ${reliefListHTML}
+                                </div>
+                            </div>
                         </div>
-                        <div style="padding-left: 4px;">
-                            ${reliefListHTML}
-                        </div>
-                    </div>
+                    </details>
                 </div>
             `;
         }
+
 
         // Always append Auto-fill button at the bottom
         innerHTML += `
