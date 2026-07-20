@@ -2010,7 +2010,29 @@ This cannot be undone.`)) return;
                 return;
             }
 
-            // Direct Auto-fill (no confidence gate / suggestion badge for other fields)
+            // Check confidence score before populating field value
+            const conf = lastExtractedConfidences[cacheKey];
+            const threshold = parseFloat(localStorage.getItem("autofill_confidence_threshold") || "0.75");
+            if (conf !== undefined && conf !== null && conf < threshold) {
+                el.value = "";
+                el.classList.add("low-confidence-input");
+                
+                const parent = el.closest(".form-group");
+                if (parent && !parent.querySelector(".verification-warning")) {
+                    const warning = document.createElement("span");
+                    warning.className = "verification-warning";
+                    warning.style.color = "#f59e0b";
+                    warning.style.fontSize = "0.75rem";
+                    warning.style.fontWeight = "600";
+                    warning.style.marginTop = "4px";
+                    warning.style.display = "block";
+                    warning.innerHTML = `<i class="fa-solid fa-circle-info"></i> Low confidence (${Math.round(conf * 100)}%) — left blank for manual entry`;
+                    parent.appendChild(warning);
+                }
+                return;
+            }
+
+            // Direct Auto-fill only when confidence is high (>= threshold)
             if (inputId === "date-of-birth" || inputId === "date-of-accident") {
                 const htmlDate = toHtmlDateValue(val);
                 if (htmlDate) {
@@ -2029,25 +2051,6 @@ This cannot be undone.`)) return;
                 collapsibleParent.classList.remove("hidden-section");
             }
 
-            // Check confidence score
-            const conf = lastExtractedConfidences[cacheKey];
-            const threshold = parseFloat(localStorage.getItem("autofill_confidence_threshold") || "0.75");
-            if (conf !== undefined && conf !== null && conf < threshold) {
-                el.classList.add("low-confidence-input");
-                
-                const parent = el.closest(".form-group");
-                if (parent && !parent.querySelector(".verification-warning")) {
-                    const warning = document.createElement("span");
-                    warning.className = "verification-warning";
-                    warning.style.color = "#f59e0b";
-                    warning.style.fontSize = "0.75rem";
-                    warning.style.fontWeight = "600";
-                    warning.style.marginTop = "4px";
-                    warning.style.display = "block";
-                    warning.innerHTML = `<i class="fa-solid fa-triangle-exclamation"></i> Check Once — ${Math.round(conf * 100)}% confidence`;
-                    parent.appendChild(warning);
-                }
-            }
         }
         // Run population for all common fields
         Object.keys(commonMapping).forEach(cacheKey => {

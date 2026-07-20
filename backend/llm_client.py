@@ -781,14 +781,39 @@ def ai_data_recovery(raw_ocr_text: str, track: str = "high_court", case_type: st
             if is_blocked:
                 confidence_scores[key]["reason"] = f"Document stated non-answer: '{matched_phrase}'"
  
-        # ── Canonicalise every date field to strict DD-MM-YYYY ─────────────
-        # (see normalize_date_to_ddmmyyyy docstring for why this matters —
-        # without it, LLM dates that aren't already exactly DD-MM-YYYY get
-        # silently rejected by the frontend's <input type="date"> and the
-        # field appears to "not fill" at all.)
+        # ── Canonicalise every date field to strict DD-MM-YYYY & verify against raw OCR text ─────────────
         for _date_key in ("dob", "date_of_birth", "accident_date", "date_of_accident", "decision_date"):
             if data.get(_date_key):
-                data[_date_key] = normalize_date_to_ddmmyyyy(data[_date_key])
+                norm_date = normalize_date_to_ddmmyyyy(data[_date_key])
+                orig_date = str(data[_date_key]).strip()
+                # Strict verification: date of birth must appear in source text to prevent guessing
+                if _date_key in ("dob", "date_of_birth") and raw_ocr_text:
+                    if norm_date not in raw_ocr_text and orig_date not in raw_ocr_text:
+                        logger.info(f"[DOB-HALLUCINATION-GUARD] Discarding unverified DOB '{orig_date}' (norm: '{norm_date}') not present in OCR text.")
+                        data[_date_key] = None
+                        confidence_scores[_date_key] = {"confidence": 0.0}
+                    else:
+                        data[_date_key] = norm_date
+                else:
+                    data[_date_key] = norm_date
+
+        # ── Disability anti-hallucination & case-type guard ──────────────
+        dis_val = data.get("disability_percentage") or data.get("disability")
+        if case_type == "death":
+            data["disability_percentage"] = None
+            data["disability"] = None
+            confidence_scores["disability_percentage"] = {"confidence": 0.0}
+            confidence_scores["disability"] = {"confidence": 0.0}
+        elif dis_val is not None and raw_ocr_text:
+            dis_str = str(dis_val).strip()
+            # If numerical disability value does not appear anywhere in source text, clear it
+            if dis_str not in raw_ocr_text and f"{dis_str}%" not in raw_ocr_text and "disability" not in raw_ocr_text.lower():
+                logger.info(f"[DISABILITY-HALLUCINATION-GUARD] Discarding unverified disability '{dis_str}' not present in OCR text.")
+                data["disability_percentage"] = None
+                data["disability"] = None
+                confidence_scores["disability_percentage"] = {"confidence": 0.0}
+                confidence_scores["disability"] = {"confidence": 0.0}
+
  
         # ── Case type deterministic override ──────────────────────────────
         ocr_evidence_case = case_type or classify_case_type_by_ocr_text(raw_ocr_text)
