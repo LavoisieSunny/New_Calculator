@@ -1129,9 +1129,21 @@ def validate_summary_shape(raw_data: dict) -> bool:
     }
     if not all(k in raw_data for k in expected_keys):
         return False
+
+    direction_str = str(raw_data.get("appeal_direction", "")).lower().strip()
+    if "enhance" in direction_str or "increase" in direction_str:
+        raw_data["appeal_direction"] = "enhancement"
+    elif "reduc" in direction_str or "decrease" in direction_str or "lower" in direction_str:
+        raw_data["appeal_direction"] = "reduction"
+    elif "exonerat" in direction_str or "set aside" in direction_str or "no liability" in direction_str:
+        raw_data["appeal_direction"] = "exoneration"
+    elif "not" in direction_str or "unclear" in direction_str or "unknown" in direction_str:
+        raw_data["appeal_direction"] = "not_determinable"
+    
     valid_directions = {"enhancement", "reduction", "exoneration", "not_determinable"}
-    if str(raw_data.get("appeal_direction")).lower() not in valid_directions:
+    if raw_data.get("appeal_direction") not in valid_directions:
         return False
+
     if not isinstance(raw_data.get("grounds_of_appeal"), list):
         return False
     if not isinstance(raw_data.get("relief_sought"), list):
@@ -1139,6 +1151,7 @@ def validate_summary_shape(raw_data: dict) -> bool:
     if not isinstance(raw_data.get("key_figures_cited"), list):
         return False
     return True
+
 
 def _verify_summary_grounding(summary: dict, source_text: str) -> dict:
     if not summary or not isinstance(summary, dict):
