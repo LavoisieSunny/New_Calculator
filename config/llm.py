@@ -31,18 +31,32 @@ LLM_API_ENDPOINT = os.getenv("LLM_API_ENDPOINT", "http://localhost:11434")
 LLM_SUMMARY_TEMPERATURE = float(os.getenv("LLM_SUMMARY_TEMPERATURE", "0.2"))
 
 APPEAL_SUMMARY_SYSTEM_INSTRUCTION = (
-    "You are an expert legal assistant specializing in Motor Accident Claims Tribunal (MACT) appeals in India. "
-    "Your task is to read the grounds of appeal and the relief claimed (prayer) and generate a concise, "
-    "professional summary in English.\n"
-    "Focus on:\n"
-    "1. The core grounds raised by the appellant (e.g., liability disputation, quantum enhancement, negligence, multiplier/interest dispute).\n"
-    "2. The specific prayer/relief sought (e.g., enhancement of compensation, setting aside the award, exoneration, reduction).\n"
-    "Keep it generalizable and objective, avoiding any hardcoded assumptions. Write in clean, professional legal English."
+    "You are an expert legal assistant specializing in Motor Accident Claims Tribunal (MACT) appeals in India.\n"
+    "Your task is to analyze the grounds of appeal and relief/prayer text extracted from a judgment or memo of appeal, "
+    "and produce a clean, synthesized legal summary.\n\n"
+    "CRITICAL RULES:\n"
+    "1. DO NOT copy-paste raw OCR text, noise, copying stamps, limitation period calculations, or verbatim garbled sentences.\n"
+    "2. SYNTHESIZE each ground into a clear, concise 1-2 sentence legal argument (e.g. 'Claims the insurance cover note was forged/manipulated to alter the policy validity period.').\n"
+    "3. SYNTHESIZE the prayer/relief into clear, specific bullet points (e.g. 'Seeking total exoneration of insurer liability', 'Seeking enhancement of compensation by Rs. 2,00,000/-').\n"
+    "4. Output strictly valid JSON matching the specified schema."
 )
 
 APPEAL_SUMMARY_USER_PROMPT = (
     "Grounds Section Text:\n{grounds_text}\n\n"
     "Relief/Prayer Section Text:\n{relief_text}\n\n"
-    "Generate a concise, professional summary (1-2 paragraphs) of the grounds of appeal and the relief claimed."
+    "Analyze the text above and return ONLY a valid JSON object with the following schema:\n"
+    "{{\n"
+    '  "case_overview": "A concise 2-3 sentence overview of the appeal and main dispute.",\n'
+    '  "appeal_direction": "enhancement" | "reduction" | "exoneration" | "not_determinable",\n'
+    '  "grounds_of_appeal": [\n'
+    '    "Synthesized, clean bullet point for Ground 1",\n'
+    '    "Synthesized, clean bullet point for Ground 2"\n'
+    '  ],\n'
+    '  "relief_sought": [\n'
+    '    "Synthesized, clean bullet point for Relief 1"\n'
+    '  ],\n'
+    '  "key_figures_cited": []\n'
+    "}}\n"
 )
+
 

@@ -1333,19 +1333,33 @@ def summarize_grounds_and_relief(sections: dict, heuristic_signal: dict, case_ty
         _SUMMARY_CACHE[h] = result_dict
         return result_dict
     else:
-        # Fallback to heuristic excerpts
-        g_pts = heuristic_signal.get("grounds_points", [])
-        r_pts = heuristic_signal.get("relief_points", [])
+        # Fallback to heuristic excerpts with cleaning
+        g_pts_raw = heuristic_signal.get("grounds_points", [])
+        r_pts_raw = heuristic_signal.get("relief_points", [])
+
+        cleaned_grounds = []
+        for line in g_pts_raw:
+            cleaned = re.sub(r'^(That,?\s*|1\.\s*|2\.\s*|3\.\s*|\([a-z0-9]+\)\s*)+', '', line, flags=re.IGNORECASE).strip()
+            if cleaned and not re.search(r'limitation period|copying|total days|compliance period|order\)\s*\d', cleaned, re.IGNORECASE):
+                cleaned_grounds.append(cleaned)
+
+        cleaned_relief = []
+        for line in r_pts_raw:
+            cleaned = re.sub(r'^(That,?\s*|1\.\s*|2\.\s*|\([a-z0-9]+\)\s*)+', '', line, flags=re.IGNORECASE).strip()
+            if cleaned and not re.search(r'limitation period|copying|total days|compliance period|order\)\s*\d', cleaned, re.IGNORECASE):
+                cleaned_relief.append(cleaned)
+
         verdict = heuristic_signal.get("verdict", "not_determinable")
-        
+
         fallback_summary = {
             "case_overview": "Case summary generated using heuristic extraction fallback.",
             "appeal_direction": verdict,
-            "grounds_of_appeal": g_pts,
-            "relief_sought": r_pts,
+            "grounds_of_appeal": cleaned_grounds if cleaned_grounds else g_pts_raw,
+            "relief_sought": cleaned_relief if cleaned_relief else r_pts_raw,
             "key_figures_cited": [],
             "confidence": heuristic_signal.get("confidence", 0.5),
             "summary_source": "heuristic_fallback"
         }
         _SUMMARY_CACHE[h] = fallback_summary
-        return fallback_summary
+        return fallback_summary
+

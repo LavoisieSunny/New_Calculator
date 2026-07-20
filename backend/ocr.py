@@ -2644,6 +2644,8 @@ async def process_single_file(file: UploadFile = File(...)):
                 heuristic_signal,
                 detected_case_type
             )
+            formatted_suggestions["grounds_relief_summary"] = summary_res
+
 
             # Index document into Qdrant in background so Chat Assistant works for this file
             try:
