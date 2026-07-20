@@ -1354,12 +1354,13 @@ def summarize_grounds_and_relief(sections: dict, heuristic_signal: dict, case_ty
         fallback_summary = {
             "case_overview": "Case summary generated using heuristic extraction fallback.",
             "appeal_direction": verdict,
-            "grounds_of_appeal": cleaned_grounds if cleaned_grounds else g_pts_raw,
-            "relief_sought": cleaned_relief if cleaned_relief else r_pts_raw,
+            "grounds_of_appeal": (cleaned_grounds if cleaned_grounds else g_pts_raw)[:5],
+            "relief_sought": (cleaned_relief if cleaned_relief else r_pts_raw)[:3],
             "key_figures_cited": [],
             "confidence": heuristic_signal.get("confidence", 0.5),
             "summary_source": "heuristic_fallback"
         }
+
         _SUMMARY_CACHE[h] = fallback_summary
         return fallback_summary
 
