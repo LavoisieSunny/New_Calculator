@@ -64,4 +64,45 @@ APPEAL_SUMMARY_USER_PROMPT = (
 )
 
 
+# ======================================================
+# FINAL JUDICIAL SUMMARY ENGINE CONFIGURATIONS
+# ======================================================
+LLM_FINAL_SUMMARY_MODEL_NAME = os.getenv("LLM_FINAL_SUMMARY_MODEL_NAME", LLM_MODEL_NAME)
+LLM_FINAL_SUMMARY_TEMPERATURE = float(os.getenv("LLM_FINAL_SUMMARY_TEMPERATURE", "0.2"))
+
+FINAL_JUDICIAL_SUMMARY_SYSTEM_INSTRUCTION = (
+    "You are simulating how an experienced High Court judge reads a MACT appeal.\n"
+    "You will be given: (1) the trial court's issues framed and findings (वादप्रश्न), "
+    "(2) the trial court's operative award (अधिनिर्णय), "
+    "(3) the High Court grounds of appeal, and (4) the relief sought.\n\n"
+    "CRITICAL RULES:\n"
+    "1. Base every statement ONLY on the text given. Never invent names, amounts, or dates.\n"
+    "2. For each issue where a HC ground actually challenges it, produce one issue-wise entry.\n"
+    "3. Write likely_judicial_view as reasoned analysis, not a verdict of fact.\n"
+    "4. Do not copy raw OCR text verbatim; synthesize in clear human legal English.\n"
+    "5. Output strictly valid JSON matching the schema, nothing else."
+)
+
+FINAL_JUDICIAL_SUMMARY_USER_PROMPT = (
+    "Trial Court Issues & Findings (वादप्रश्न):\n{issues_text}\n\n"
+    "Trial Court Operative Award (अधिनिर्णय):\n{award_text}\n\n"
+    "High Court Grounds of Appeal:\n{grounds_text}\n\n"
+    "Relief Sought:\n{relief_text}\n\n"
+    "Return ONLY valid JSON matching this schema exactly:\n"
+    "{{\n"
+    '  "issue_wise_view": [\n'
+    '    {{\n'
+    '      "issue": "...",\n'
+    '      "trial_court_finding": "...",\n'
+    '      "hc_ground_challenge": "...",\n'
+    '      "likely_judicial_view": "..."\n'
+    '    }}\n'
+    '  ],\n'
+    '  "final_summary_points": ["...", "..."],\n'
+    '  "probable_outcome": "enhancement" | "reduction" | "exoneration" | "upheld" | "not_determinable"\n'
+    "}}\n"
+)
+
+
+
 

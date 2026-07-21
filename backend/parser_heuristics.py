@@ -63,6 +63,14 @@ HEADING_KEYWORDS = {
         "other relevant facts", "(vii) other relevant facts", "relevant facts",
         "अन्य सुसंगत तथ्य", "तथ्य", "प्रकरण के तथ्य",
         "otherrelevantfacts", "relevantfacts"
+    ],
+    "award_operative_section": [
+        "अधिनिर्णय", "अवार्ड", "अधिकरण द्वारा पारित", "अधिकरण द्वारा पारित अधिनिर्णय",
+        "operative part of award", "operative award", "final order", "award decree", "award_operative"
+    ],
+    "issues_findings_section": [
+        "वाद प्रश्न", "वादप्रश्न", "निष्कर्ष", "निर्णयार्थ बिंदु",
+        "issues and findings", "issues framed", "points for determination", "issues_findings"
     ]
 }
 
@@ -1163,7 +1171,39 @@ def classify_page_fallback(page_text, section_name):
     elif section_name == "facts_section":
         return any(w in text_lower for w in ["other relevant facts", "relevant facts", "सुसंगत तथ्य", "तथ्य", "case of", "facts of the case"])
         
+    elif section_name == "award_operative_section":
+        aw_kws = ["अधिनिर्णय", "अवार्ड", "award", "judgment", "operative part", "compensation is awarded"]
+        return sum(1 for kw in aw_kws if kw in text_lower) >= 1
+        
+    elif section_name == "issues_findings_section":
+        iss_kws = ["वाद प्रश्न", "वादप्रश्न", "निष्कर्ष", "issues", "findings", "issue no", "point for determination"]
+        return sum(1 for kw in iss_kws if kw in text_lower) >= 1
+        
     return False
+
+
+def normalize_issues_table(raw_section_text: str) -> list:
+    """
+    Converts raw issues_findings_section text (pipe-joined OCR rows or markdown table
+    from PP-StructureV3) into [{"issue": ..., "finding": ...}, ...].
+    Falls back to returning the raw text as a single unstructured row if no clear tabular
+    delimiter is found -- never raises, never fabricates rows.
+    """
+    if not raw_section_text or not raw_section_text.strip():
+        return []
+        
+    rows = []
+    lines = [line.strip().strip("|") for line in raw_section_text.splitlines() if line.strip()]
+    for line in lines:
+        cells = [c.strip() for c in re.split(r"\s*\|\s*", line) if c.strip()]
+        if len(cells) >= 2:
+            rows.append({"issue": cells[0], "finding": " | ".join(cells[1:])})
+            
+    if not rows and raw_section_text.strip():
+        rows.append({"issue": "Trial Court Issues / Findings", "finding": raw_section_text.strip()})
+        
+    return rows
+
 
 
 def classify_page_type(page_text, page_number):

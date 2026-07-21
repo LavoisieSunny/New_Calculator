@@ -2637,14 +2637,23 @@ async def process_single_file(file: UploadFile = File(...)):
 
             heuristic_signal = suggestions.get("case_classification") or classify_enhancement_or_reduction(sections_dict)
 
-            from backend.llm_client import summarize_grounds_and_relief
-            summary_res = await asyncio.to_thread(
-                summarize_grounds_and_relief,
-                sections_dict,
-                heuristic_signal,
-                detected_case_type
+            from backend.llm_client import summarize_grounds_and_relief, generate_final_judicial_summary
+            summary_res, final_judicial_res = await asyncio.gather(
+                asyncio.to_thread(
+                    summarize_grounds_and_relief,
+                    sections_dict,
+                    heuristic_signal,
+                    detected_case_type
+                ),
+                asyncio.to_thread(
+                    generate_final_judicial_summary,
+                    sections_dict,
+                    heuristic_signal,
+                    detected_case_type
+                )
             )
             formatted_suggestions["grounds_relief_summary"] = summary_res
+            formatted_suggestions["final_judicial_summary"] = final_judicial_res
 
 
             # Index document into Qdrant in background so Chat Assistant works for this file
@@ -2658,7 +2667,8 @@ async def process_single_file(file: UploadFile = File(...)):
                 os.unlink(temp_path)
                 temp_path = None
 
-            yield f"data: {json.dumps({'status': 'done', 'progress': 100, 'success': True, 'filename': file.filename, 'ocr_status': 'loaded', 'fallback_source': fallback_source, 'suggestions': formatted_suggestions, 'case_type': detected_case_type, 'track': active_track, 'raw_text': text_lines, 'ocr_debug': ocr_debug, 'grounds_relief_summary': summary_res})}\n\n"
+            yield f"data: {json.dumps({'status': 'done', 'progress': 100, 'success': True, 'filename': file.filename, 'ocr_status': 'loaded', 'fallback_source': fallback_source, 'suggestions': formatted_suggestions, 'case_type': detected_case_type, 'track': active_track, 'raw_text': text_lines, 'ocr_debug': ocr_debug, 'grounds_relief_summary': summary_res, 'final_judicial_summary': final_judicial_res})}\n\n"
+
 
 
         except Exception as e:
@@ -2807,16 +2817,24 @@ async def ai_recover_fields(request: AIRecoverRequest):
         sections_dict["raw_ocr"] = full_text
         heuristic_signal = heuristics_data.get("case_classification") or classify_enhancement_or_reduction(sections_dict)
 
-        from backend.llm_client import summarize_grounds_and_relief
-        summary_res = summarize_grounds_and_relief(
-            sections_dict,
-            heuristic_signal,
-            recovered_data.get("case_type") or "death"
-        )
-        formatted["grounds_relief_summary"] = summary_res
-        recovered_data["grounds_relief_summary"] = summary_res
+        from backend.llm_client import summarize_grounds_and_relief, generate_final_judicial_summary
+        case_tp = recovered_data.get("case_type") or "death"
+        summary_res = summarize_grounds_and_relief(sections_dict, heuristic_signal, case_tp)
+        final_judicial_res = generate_final_judicial_summary(sections_dict, heuristic_signal, case_tp)
 
-        return {"success": True, "suggestions": formatted, "raw_recovered": recovered_data, "grounds_relief_summary": summary_res}
+        formatted["grounds_relief_summary"] = summary_res
+        formatted["final_judicial_summary"] = final_judicial_res
+        recovered_data["grounds_relief_summary"] = summary_res
+        recovered_data["final_judicial_summary"] = final_judicial_res
+
+        return {
+            "success": True,
+            "suggestions": formatted,
+            "raw_recovered": recovered_data,
+            "grounds_relief_summary": summary_res,
+            "final_judicial_summary": final_judicial_res
+        }
+
     except HTTPException:
         raise
     except Exception as e:

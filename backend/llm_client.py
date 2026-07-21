@@ -1145,7 +1145,95 @@ def ai_data_recovery(raw_ocr_text: str, track: str = "high_court", case_type: st
 # FEATURE 1: APPEAL GROUNDS & RELIEF SUMMARY
 # ======================================================
 
-_SUMMARY_CACHE = {}
+class BoundedCache(dict):
+    """Size-bounded in-memory LRU cache to prevent memory growth and retain PII ephemerally."""
+    def __init__(self, maxsize=200):
+        super().__init__()
+        self.maxsize = maxsize
+        self._keys = []
+
+    def __setitem__(self, key, value):
+        if key not in self:
+            self._keys.append(key)
+            if len(self._keys) > self.maxsize:
+                oldest = self._keys.pop(0)
+                super().pop(oldest, None)
+        super().__setitem__(key, value)
+
+
+_SUMMARY_CACHE = BoundedCache(maxsize=200)
+_FINAL_SUMMARY_CACHE = BoundedCache(maxsize=200)
+
+
+def validate_final_summary_shape(raw_data: dict) -> bool:
+    if not isinstance(raw_data, dict):
+        return False
+    if not all(k in raw_data for k in ("issue_wise_view", "final_summary_points", "probable_outcome")):
+        return False
+    if not isinstance(raw_data["issue_wise_view"], list):
+        return False
+    if not isinstance(raw_data["final_summary_points"], list):
+        return False
+        
+    valid_outcomes = {"enhancement", "reduction", "exoneration", "upheld", "not_determinable"}
+    outcome = str(raw_data.get("probable_outcome", "")).lower().strip()
+    if outcome not in valid_outcomes:
+        if "enhance" in outcome or "increase" in outcome:
+            raw_data["probable_outcome"] = "enhancement"
+        elif "reduc" in outcome or "lower" in outcome:
+            raw_data["probable_outcome"] = "reduction"
+        elif "exonerat" in outcome or "set aside" in outcome:
+            raw_data["probable_outcome"] = "exoneration"
+        elif "upheld" in outcome or "dismiss" in outcome:
+            raw_data["probable_outcome"] = "upheld"
+        else:
+            raw_data["probable_outcome"] = "not_determinable"
+            
+    for entry in raw_data["issue_wise_view"]:
+        if not isinstance(entry, dict):
+            return False
+        for k in ("issue", "trial_court_finding", "hc_ground_challenge", "likely_judicial_view"):
+            entry.setdefault(k, "")
+            
+    return True
+
+
+def _verify_final_summary_grounding(summary: dict, source_text: str) -> dict:
+    """Same numeric-grounding check as _verify_summary_grounding(), applied to
+    likely_judicial_view / trial_court_finding / final_summary_points."""
+    if not summary or not isinstance(summary, dict):
+        return summary
+        
+    source_normalized = (source_text or "").lower().replace(",", "")
+    
+    def _numbers(s: str) -> list:
+        return re.findall(r"\b[a-zA-Z]*\d+[\w\d\.,\-%/]*\b", s or "")
+        
+    def _clean_list(items: list) -> list:
+        out = []
+        for item in items:
+            bad = None
+            for raw in _numbers(item):
+                digits = re.sub(r"\D", "", raw)
+                if digits and len(digits) >= 2 and digits not in source_normalized and raw.lower() not in source_normalized:
+                    bad = raw
+                    logger.warning(f"[FINAL-SUMMARY GROUNDING CHECK] Unverified number '{raw}' in text snippet.")
+                    break
+            out.append(item.replace(bad, "[figure unverified]") if bad else item)
+        return out
+
+    if "final_summary_points" in summary and isinstance(summary["final_summary_points"], list):
+        summary["final_summary_points"] = _clean_list(summary["final_summary_points"])
+        
+    if "issue_wise_view" in summary and isinstance(summary["issue_wise_view"], list):
+        for entry in summary["issue_wise_view"]:
+            if isinstance(entry, dict):
+                for fld in ("trial_court_finding", "hc_ground_challenge", "likely_judicial_view"):
+                    if entry.get(fld):
+                        entry[fld] = _clean_list([entry[fld]])[0]
+                        
+    return summary
+
 
 def validate_summary_shape(raw_data: dict) -> bool:
     if not isinstance(raw_data, dict):
@@ -1455,4 +1543,89 @@ def summarize_grounds_and_relief(sections: dict, heuristic_signal: dict, case_ty
 
         _SUMMARY_CACHE[h] = fallback_summary
         return fallback_summary
+
+
+def generate_final_judicial_summary(sections: dict, heuristic_signal: dict = None, case_type: str = "death") -> dict:
+    """
+    Generates a High Court judge-style issue-wise judicial summary comparing trial court
+    findings (अधिनिर्णय + वादप्रश्न) against High Court grounds of appeal.
+    """
+    import hashlib
+    from backend.parser_heuristics import normalize_issues_table
+    from config.llm import (
+        FINAL_JUDICIAL_SUMMARY_SYSTEM_INSTRUCTION,
+        FINAL_JUDICIAL_SUMMARY_USER_PROMPT,
+        LLM_FINAL_SUMMARY_TEMPERATURE
+    )
+
+    issues_raw = (sections.get("issues_findings_section", "") or "").strip()
+    award_text = (sections.get("award_operative_section", "") or sections.get("award_copy_section", "") or "").strip()
+    grounds_text = (sections.get("grounds_section", "") or sections.get("memo_of_appeal_section", "") or "").strip()
+    relief_text = (sections.get("relief_section", "") or "").strip()
+
+    if not issues_raw and not award_text:
+        # FR-7: Graceful degradation -- missing trial-court findings
+        return {
+            "issue_wise_view": [],
+            "final_summary_points": [
+                "Trial court issues/award section could not be located in the uploaded document -- summary limited to appeal-side grounds only."
+            ],
+            "probable_outcome": heuristic_signal.get("verdict", "not_determinable") if heuristic_signal else "not_determinable",
+            "summary_source": "insufficient_input"
+        }
+
+    issues_rows = normalize_issues_table(issues_raw)
+    issues_text = "\n".join(f"{r.get('issue', '')}: {r.get('finding', '')}" for r in issues_rows) or issues_raw
+
+    concat = f"{issues_text}|||{award_text}|||{grounds_text}|||{relief_text}"
+    h = hashlib.sha256(concat.encode("utf-8")).hexdigest()
+    if h in _FINAL_SUMMARY_CACHE:
+        logger.info("[FINAL-JUDICIAL-SUMMARY] Returning cached summary.")
+        return _FINAL_SUMMARY_CACHE[h]
+
+    prompt = FINAL_JUDICIAL_SUMMARY_USER_PROMPT.format(
+        issues_text=issues_text[:4000],
+        award_text=award_text[:3000],
+        grounds_text=grounds_text[:4000],
+        relief_text=relief_text[:2000]
+    )
+
+    result_dict = {}
+    success = False
+
+    for attempt in range(2):
+        try:
+            response = generate_response(
+                prompt=prompt,
+                system_instruction=FINAL_JUDICIAL_SUMMARY_SYSTEM_INSTRUCTION,
+                response_format="json"
+            )
+            s = response.find("{")
+            e = response.rfind("}")
+            candidate = response[s:e+1] if s != -1 and e != -1 and e > s else response
+            parsed = json.loads(candidate)
+
+            if validate_final_summary_shape(parsed):
+                full_source = f"{issues_text}\n{award_text}\n{grounds_text}\n{relief_text}"
+                result_dict = _verify_final_summary_grounding(parsed, full_source)
+                result_dict["summary_source"] = "llm_summary"
+                success = True
+                break
+        except Exception as e:
+            logger.warning(f"[FINAL-JUDICIAL-SUMMARY] Attempt {attempt + 1} failed: {e}")
+            prompt += "\n\nREMINDER: return ONLY valid JSON matching the schema exactly."
+
+    if not success:
+        result_dict = {
+            "issue_wise_view": [],
+            "final_summary_points": [
+                "Automated issue-wise comparison could not be generated for this document; please review the trial court award and HC grounds manually."
+            ],
+            "probable_outcome": heuristic_signal.get("verdict", "not_determinable") if heuristic_signal else "not_determinable",
+            "summary_source": "fallback"
+        }
+
+    _FINAL_SUMMARY_CACHE[h] = result_dict
+    return result_dict
+
 

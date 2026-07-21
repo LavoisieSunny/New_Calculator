@@ -3298,6 +3298,97 @@ This cannot be undone.`)) return;
                 </div>
             `;
 
+            // Render AI-Assisted Judicial Summary Engine Block (Trial Court vs HC Appeal grounds)
+            const finalJudicial = data?.final_judicial_summary || (data?.suggestions && data?.suggestions?.final_judicial_summary) || null;
+            if (finalJudicial) {
+                const issueWise = finalJudicial.issue_wise_view || [];
+                const finalPoints = finalJudicial.final_summary_points || [];
+                const probableOutcome = finalJudicial.probable_outcome || "not_determinable";
+                const summarySource = finalJudicial.summary_source || "llm_summary";
+
+                let outcomeBadgeColor = "#6c757d";
+                let outcomeLabel = "Not Determinable";
+                if (probableOutcome === "enhancement") { outcomeBadgeColor = "#22c55e"; outcomeLabel = "Enhancement Likely"; }
+                else if (probableOutcome === "reduction") { outcomeBadgeColor = "#eab308"; outcomeLabel = "Reduction Likely"; }
+                else if (probableOutcome === "exoneration") { outcomeBadgeColor = "#a855f7"; outcomeLabel = "Exoneration / Set Aside"; }
+                else if (probableOutcome === "upheld") { outcomeBadgeColor = "#3b82f6"; outcomeLabel = "Award Upheld"; }
+
+                let degradationNotice = "";
+                if (summarySource === "insufficient_input" || summarySource === "fallback") {
+                    const msg = finalPoints.length > 0 ? finalPoints[0] : "Limited automated analysis -- trial court section not fully detected.";
+                    degradationNotice = `
+                        <div style="padding: 8px 12px; background: rgba(234,179,8,0.1); border: 1px solid rgba(234,179,8,0.3); border-radius: var(--radius-sm); font-size: 0.78rem; color: #eab308; margin-top: 4px; display: flex; align-items: center; gap: 8px;">
+                            <i class="fa-solid fa-triangle-exclamation"></i>
+                            <span>${msg}</span>
+                        </div>
+                    `;
+                }
+
+                let issueCardsHTML = "";
+                if (issueWise.length > 0) {
+                    issueCardsHTML = issueWise.map((item, idx) => `
+                        <div style="padding: 10px; background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.08); border-radius: var(--radius-sm); display: flex; flex-direction: column; gap: 6px;">
+                            <div style="font-size: 0.82rem; font-weight: 700; color: var(--color-primary); display: flex; align-items: center; gap: 6px;">
+                                <i class="fa-solid fa-gavel" style="font-size: 0.75rem;"></i> Issue ${idx + 1}: ${item.issue || 'Point for Determination'}
+                            </div>
+                            ${item.trial_court_finding ? `
+                                <div style="font-size: 0.78rem; color: var(--text-secondary); background: rgba(255,255,255,0.02); padding: 6px 8px; border-radius: 4px; border-left: 3px solid var(--color-primary);">
+                                    <strong style="color: var(--text-primary);">Trial Court Finding:</strong> ${item.trial_court_finding}
+                                </div>
+                            ` : ''}
+                            ${item.hc_ground_challenge ? `
+                                <div style="font-size: 0.78rem; color: var(--text-secondary); background: rgba(255,255,255,0.02); padding: 6px 8px; border-radius: 4px; border-left: 3px solid #eab308;">
+                                    <strong style="color: var(--text-primary);">HC Challenge:</strong> ${item.hc_ground_challenge}
+                                </div>
+                            ` : ''}
+                            ${item.likely_judicial_view ? `
+                                <div style="font-size: 0.78rem; color: var(--text-secondary); background: rgba(34,197,94,0.05); padding: 6px 8px; border-radius: 4px; border-left: 3px solid #22c55e;">
+                                    <strong style="color: #22c55e;">Likely Judicial View:</strong> ${item.likely_judicial_view}
+                                </div>
+                            ` : ''}
+                        </div>
+                    `).join('');
+                }
+
+                let finalBulletsHTML = "";
+                if (finalPoints.length > 0 && summarySource === "llm_summary") {
+                    finalBulletsHTML = `
+                        <ul style="margin: 4px 0 0 0; padding-left: 16px; display: flex; flex-direction: column; gap: 4px;">
+                            ${finalPoints.map(p => `<li style="font-size: 0.82rem; line-height: 1.3; color: var(--text-secondary);">${p}</li>`).join('')}
+                        </ul>
+                    `;
+                }
+
+                innerHTML += `
+                    <div id="final-judicial-summary-block" style="margin-top: 12px; padding: 12px; background: rgba(255,255,255,0.02); border: 1px solid rgba(255,255,255,0.08); border-radius: var(--radius-sm); display: flex; flex-direction: column; gap: 10px;">
+                        <div style="display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid rgba(255,255,255,0.06); padding-bottom: 6px;">
+                            <span style="font-size: 0.85rem; font-weight: 700; color: var(--text-primary); text-transform: uppercase; display: flex; align-items: center; gap: 6px;">
+                                <i class="fa-solid fa-scale-balanced" style="color: var(--color-primary);"></i> High Court Judicial Analysis
+                            </span>
+                            <span class="badge" style="background: ${outcomeBadgeColor}; color: #fff; font-weight: 700; padding: 3px 8px; border-radius: var(--radius-sm); font-size: 0.75rem;">
+                                ${outcomeLabel}
+                            </span>
+                        </div>
+
+                        ${degradationNotice}
+
+                        ${issueCardsHTML ? `
+                            <div style="display: flex; flex-direction: column; gap: 8px;">
+                                ${issueCardsHTML}
+                            </div>
+                        ` : ''}
+
+                        ${finalBulletsHTML ? `
+                            <div style="display: flex; flex-direction: column; gap: 6px; padding: 8px; background: rgba(255,255,255,0.01); border-radius: 4px;">
+                                <div style="font-size: 0.8rem; font-weight: 700; color: var(--text-primary);">Synthesized Judicial Summary</div>
+                                ${finalBulletsHTML}
+                            </div>
+                        ` : ''}
+                    </div>
+                `;
+            }
+
+
         }
 
 
