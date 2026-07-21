@@ -11,10 +11,13 @@ __pycache__
 .pytest_cache
 .qodo
 qdrant_db
+paddle_models
+frontend/uploads
+*.pdf
+*.log
 Dockerfile
 docker-compose.yml
 .dockerignore
-
 # Exclude all root-level test files
 test_*.py
 
@@ -38,4 +41,3 @@ temp_*.png
 temp_*.jpg
 frontend/uploads/*.pdf
 frontend/uploads/*.png
-

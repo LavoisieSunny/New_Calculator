@@ -2010,7 +2010,29 @@ This cannot be undone.`)) return;
                 return;
             }
 
-            // Direct Auto-fill (no confidence gate / suggestion badge for other fields)
+            // Check confidence score before populating field value
+            const conf = lastExtractedConfidences[cacheKey];
+            const threshold = parseFloat(localStorage.getItem("autofill_confidence_threshold") || "0.75");
+            if (conf !== undefined && conf !== null && conf < threshold) {
+                el.value = "";
+                el.classList.add("low-confidence-input");
+                
+                const parent = el.closest(".form-group");
+                if (parent && !parent.querySelector(".verification-warning")) {
+                    const warning = document.createElement("span");
+                    warning.className = "verification-warning";
+                    warning.style.color = "#f59e0b";
+                    warning.style.fontSize = "0.75rem";
+                    warning.style.fontWeight = "600";
+                    warning.style.marginTop = "4px";
+                    warning.style.display = "block";
+                    warning.innerHTML = `<i class="fa-solid fa-circle-info"></i> Low confidence (${Math.round(conf * 100)}%) — left blank for manual entry`;
+                    parent.appendChild(warning);
+                }
+                return;
+            }
+
+            // Direct Auto-fill only when confidence is high (>= threshold)
             if (inputId === "date-of-birth" || inputId === "date-of-accident") {
                 const htmlDate = toHtmlDateValue(val);
                 if (htmlDate) {
@@ -2029,25 +2051,6 @@ This cannot be undone.`)) return;
                 collapsibleParent.classList.remove("hidden-section");
             }
 
-            // Check confidence score
-            const conf = lastExtractedConfidences[cacheKey];
-            const threshold = parseFloat(localStorage.getItem("autofill_confidence_threshold") || "0.75");
-            if (conf !== undefined && conf !== null && conf < threshold) {
-                el.classList.add("low-confidence-input");
-                
-                const parent = el.closest(".form-group");
-                if (parent && !parent.querySelector(".verification-warning")) {
-                    const warning = document.createElement("span");
-                    warning.className = "verification-warning";
-                    warning.style.color = "#f59e0b";
-                    warning.style.fontSize = "0.75rem";
-                    warning.style.fontWeight = "600";
-                    warning.style.marginTop = "4px";
-                    warning.style.display = "block";
-                    warning.innerHTML = `<i class="fa-solid fa-triangle-exclamation"></i> Check Once — ${Math.round(conf * 100)}% confidence`;
-                    parent.appendChild(warning);
-                }
-            }
         }
         // Run population for all common fields
         Object.keys(commonMapping).forEach(cacheKey => {
@@ -3237,19 +3240,25 @@ This cannot be undone.`)) return;
                 basisNote = "No case classification details parsed.";
             }
 
-            const groundsPoints = (classification && classification.grounds_points) || [];
+            const summary = data?.grounds_relief_summary || (data?.suggestions && data?.suggestions?.grounds_relief_summary) || null;
+            const groundsOfAppeal = summary ? (summary.grounds_of_appeal || []) : [];
+            const reliefSought = summary ? (summary.relief_sought || []) : [];
+
+            // Use summarized grounds if available, otherwise raw extracted points
+            const effectiveGrounds = groundsOfAppeal.length > 0 ? groundsOfAppeal : ((classification && classification.grounds_points) || []);
             let groundsListHTML = `<span style="opacity: 0.6; font-size: 0.8rem;">No matching grounds statement found.</span>`;
-            if (groundsPoints.length > 0) {
+            if (effectiveGrounds.length > 0) {
                 groundsListHTML = `<ul style="margin: 4px 0 0 0; padding-left: 16px; display: flex; flex-direction: column; gap: 4px;">
-                    ${groundsPoints.map(p => `<li style="font-size: 0.82rem; line-height: 1.3; color: var(--text-secondary);">${p}</li>`).join('')}
+                    ${effectiveGrounds.map(p => `<li style="font-size: 0.82rem; line-height: 1.3; color: var(--text-secondary);">${p}</li>`).join('')}
                 </ul>`;
             }
 
-            const reliefPoints = (classification && classification.relief_points) || [];
+            // Use summarized relief if available, otherwise raw extracted points
+            const effectiveRelief = reliefSought.length > 0 ? reliefSought : ((classification && classification.relief_points) || []);
             let reliefListHTML = `<span style="opacity: 0.6; font-size: 0.8rem;">No matching prayer/relief clause found.</span>`;
-            if (reliefPoints.length > 0) {
+            if (effectiveRelief.length > 0) {
                 reliefListHTML = `<ul style="margin: 4px 0 0 0; padding-left: 16px; display: flex; flex-direction: column; gap: 4px;">
-                    ${reliefPoints.map(p => `<li style="font-size: 0.82rem; line-height: 1.3; color: var(--text-secondary);">${p}</li>`).join('')}
+                    ${effectiveRelief.map(p => `<li style="font-size: 0.82rem; line-height: 1.3; color: var(--text-secondary);">${p}</li>`).join('')}
                 </ul>`;
             }
 
@@ -3269,8 +3278,8 @@ This cannot be undone.`)) return;
                         ${basisNote}
                     </div>
 
-                    <div style="display: flex; flex-direction: column; gap: 6px;">
-                        <div style="font-size: 0.82rem; font-weight: 600; color: var(--text-primary); display: flex; align-items: center; gap: 6px;">
+                    <div style="display: flex; flex-direction: column; gap: 6px; padding: 10px; background: rgba(255,255,255,0.02); border: 1px solid rgba(255,255,255,0.06); border-radius: var(--radius-sm);">
+                        <div style="font-size: 0.82rem; font-weight: 700; color: var(--text-primary); display: flex; align-items: center; gap: 6px;">
                             <i class="fa-solid fa-list-check" style="color: var(--color-primary); font-size: 0.75rem;"></i> Grounds of Appeal
                         </div>
                         <div style="padding-left: 4px;">
@@ -3278,8 +3287,8 @@ This cannot be undone.`)) return;
                         </div>
                     </div>
 
-                    <div style="display: flex; flex-direction: column; gap: 6px; margin-top: 4px;">
-                        <div style="font-size: 0.82rem; font-weight: 600; color: var(--text-primary); display: flex; align-items: center; gap: 6px;">
+                    <div style="display: flex; flex-direction: column; gap: 6px; padding: 10px; background: rgba(255,255,255,0.02); border: 1px solid rgba(255,255,255,0.06); border-radius: var(--radius-sm);">
+                        <div style="font-size: 0.82rem; font-weight: 700; color: var(--text-primary); display: flex; align-items: center; gap: 6px;">
                             <i class="fa-solid fa-scroll" style="color: var(--color-success); font-size: 0.75rem;"></i> Relief Claimed / Prayer
                         </div>
                         <div style="padding-left: 4px;">
@@ -3288,7 +3297,9 @@ This cannot be undone.`)) return;
                     </div>
                 </div>
             `;
+
         }
+
 
         // Always append Auto-fill button at the bottom
         innerHTML += `

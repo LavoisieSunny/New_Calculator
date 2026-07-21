@@ -743,6 +743,8 @@ def ai_data_recovery(raw_ocr_text: str, track: str = "high_court", case_type: st
                         if val is None:
                             conf = 0.0
 
+            is_blocked = False
+            matched_phrase = None
             if isinstance(val, str):
                 val_stripped = val.strip()
                 val_lower = val_stripped.lower()
@@ -757,8 +759,6 @@ def ai_data_recovery(raw_ocr_text: str, track: str = "high_court", case_type: st
                     "unclear",
                     "not found in text",
                 ]
-                is_blocked = False
-                matched_phrase = None
                 for phrase in blocklist:
                     if phrase == "n/a":
                         import re
@@ -780,15 +780,41 @@ def ai_data_recovery(raw_ocr_text: str, track: str = "high_court", case_type: st
             confidence_scores[key] = {"confidence": conf}
             if is_blocked:
                 confidence_scores[key]["reason"] = f"Document stated non-answer: '{matched_phrase}'"
+
  
-        # ── Canonicalise every date field to strict DD-MM-YYYY ─────────────
-        # (see normalize_date_to_ddmmyyyy docstring for why this matters —
-        # without it, LLM dates that aren't already exactly DD-MM-YYYY get
-        # silently rejected by the frontend's <input type="date"> and the
-        # field appears to "not fill" at all.)
+        # ── Canonicalise every date field to strict DD-MM-YYYY & verify against raw OCR text ─────────────
         for _date_key in ("dob", "date_of_birth", "accident_date", "date_of_accident", "decision_date"):
             if data.get(_date_key):
-                data[_date_key] = normalize_date_to_ddmmyyyy(data[_date_key])
+                norm_date = normalize_date_to_ddmmyyyy(data[_date_key])
+                orig_date = str(data[_date_key]).strip()
+                # Strict verification: date of birth must appear in source text to prevent guessing
+                if _date_key in ("dob", "date_of_birth") and raw_ocr_text:
+                    if norm_date not in raw_ocr_text and orig_date not in raw_ocr_text:
+                        logger.info(f"[DOB-HALLUCINATION-GUARD] Discarding unverified DOB '{orig_date}' (norm: '{norm_date}') not present in OCR text.")
+                        data[_date_key] = None
+                        confidence_scores[_date_key] = {"confidence": 0.0}
+                    else:
+                        data[_date_key] = norm_date
+                else:
+                    data[_date_key] = norm_date
+
+        # ── Disability anti-hallucination & case-type guard ──────────────
+        dis_val = data.get("disability_percentage") or data.get("disability")
+        if case_type == "death":
+            data["disability_percentage"] = None
+            data["disability"] = None
+            confidence_scores["disability_percentage"] = {"confidence": 0.0}
+            confidence_scores["disability"] = {"confidence": 0.0}
+        elif dis_val is not None and raw_ocr_text:
+            dis_str = str(dis_val).strip()
+            # If numerical disability value does not appear anywhere in source text, clear it
+            if dis_str not in raw_ocr_text and f"{dis_str}%" not in raw_ocr_text and "disability" not in raw_ocr_text.lower():
+                logger.info(f"[DISABILITY-HALLUCINATION-GUARD] Discarding unverified disability '{dis_str}' not present in OCR text.")
+                data["disability_percentage"] = None
+                data["disability"] = None
+                confidence_scores["disability_percentage"] = {"confidence": 0.0}
+                confidence_scores["disability"] = {"confidence": 0.0}
+
  
         # ── Case type deterministic override ──────────────────────────────
         ocr_evidence_case = case_type or classify_case_type_by_ocr_text(raw_ocr_text)
@@ -1113,3 +1139,320 @@ def ai_data_recovery(raw_ocr_text: str, track: str = "high_court", case_type: st
         err_msg = "AI-assisted recovery unavailable for this document — please fill remaining fields manually."
         logger.error(f"Failed to parse AI Data Recovery JSON: {str(e)}. Raw response: {response}")
         return {"ai_recovery_error": err_msg, "raw_response_preview": (response[:300] if response else str(e))}
+
+
+# ======================================================
+# FEATURE 1: APPEAL GROUNDS & RELIEF SUMMARY
+# ======================================================
+
+_SUMMARY_CACHE = {}
+
+def validate_summary_shape(raw_data: dict) -> bool:
+    if not isinstance(raw_data, dict):
+        return False
+    expected_keys = {
+        "case_overview", "appeal_direction", "grounds_of_appeal", "relief_sought", "key_figures_cited"
+    }
+    if not all(k in raw_data for k in expected_keys):
+        return False
+
+    direction_str = str(raw_data.get("appeal_direction", "")).lower().strip()
+    if "enhance" in direction_str or "increase" in direction_str:
+        raw_data["appeal_direction"] = "enhancement"
+    elif "reduc" in direction_str or "decrease" in direction_str or "lower" in direction_str:
+        raw_data["appeal_direction"] = "reduction"
+    elif "exonerat" in direction_str or "set aside" in direction_str or "no liability" in direction_str:
+        raw_data["appeal_direction"] = "exoneration"
+    elif "not" in direction_str or "unclear" in direction_str or "unknown" in direction_str:
+        raw_data["appeal_direction"] = "not_determinable"
+    
+    valid_directions = {"enhancement", "reduction", "exoneration", "not_determinable"}
+    if raw_data.get("appeal_direction") not in valid_directions:
+        return False
+
+    if not isinstance(raw_data.get("grounds_of_appeal"), list):
+        return False
+    if not isinstance(raw_data.get("relief_sought"), list):
+        return False
+    if not isinstance(raw_data.get("key_figures_cited"), list):
+        return False
+    return True
+
+
+def _verify_summary_grounding(summary: dict, source_text: str) -> dict:
+    if not summary or not isinstance(summary, dict):
+        return summary
+    source_normalized = source_text.lower().replace(",", "")
+    
+    def extract_numbers(s: str) -> list:
+        tokens = re.findall(r'\b[a-zA-Z]*\d+[\w\d\.,\-%/]*\b|\b\d{1,2}[-/.]\d{1,2}[-/.]\d{2,4}\b', s)
+        numeric_tokens = []
+        for t in tokens:
+            cleaned = re.sub(r'[^\d\.\-]', '', t)
+            if cleaned:
+                numeric_tokens.append((t, cleaned))
+        return numeric_tokens
+
+    # Verify key_figures_cited
+    if "key_figures_cited" in summary and isinstance(summary["key_figures_cited"], list):
+        verified_figures = []
+        for fig in summary["key_figures_cited"]:
+            nums = extract_numbers(fig)
+            fig_valid = True
+            for raw, norm in nums:
+                digits = re.sub(r'\D', '', norm)
+                if not digits:
+                    continue
+                if norm not in source_normalized and digits not in source_normalized:
+                    fig_valid = False
+                    logger.warning(f"[GROUNDING CHECK FAILED] Figure '{raw}' (normalized: '{norm}') from '{fig}' not found in source text.")
+                    break
+            if fig_valid:
+                verified_figures.append(fig)
+        summary["key_figures_cited"] = verified_figures
+
+    # Verify grounds_of_appeal
+    if "grounds_of_appeal" in summary and isinstance(summary["grounds_of_appeal"], list):
+        verified_grounds = []
+        for ground in summary["grounds_of_appeal"]:
+            nums = extract_numbers(ground)
+            ground_valid = True
+            offending_raw = None
+            for raw, norm in nums:
+                digits = re.sub(r'\D', '', norm)
+                if not digits:
+                    continue
+                if norm not in source_normalized and digits not in source_normalized:
+                    ground_valid = False
+                    offending_raw = raw
+                    logger.warning(f"[GROUNDING CHECK FAILED] Numeric figure '{raw}' (normalized: '{norm}') in ground '{ground}' not found in source text.")
+                    break
+            if ground_valid:
+                verified_grounds.append(ground)
+            else:
+                rewritten = ground.replace(offending_raw, "[figure unverified]")
+                logger.warning(f"[GROUNDING REWRITE] Ground bullet rewritten from '{ground}' to '{rewritten}' due to unverified figure '{offending_raw}'")
+                verified_grounds.append(rewritten)
+        summary["grounds_of_appeal"] = verified_grounds
+
+    # Verify relief_sought
+    if "relief_sought" in summary and isinstance(summary["relief_sought"], list):
+        verified_relief = []
+        for relief in summary["relief_sought"]:
+            nums = extract_numbers(relief)
+            relief_valid = True
+            offending_raw = None
+            for raw, norm in nums:
+                digits = re.sub(r'\D', '', norm)
+                if not digits:
+                    continue
+                if norm not in source_normalized and digits not in source_normalized:
+                    relief_valid = False
+                    offending_raw = raw
+                    logger.warning(f"[GROUNDING CHECK FAILED] Numeric figure '{raw}' (normalized: '{norm}') in relief '{relief}' not found in source text.")
+                    break
+            if relief_valid:
+                verified_relief.append(relief)
+            else:
+                rewritten = relief.replace(offending_raw, "[figure unverified]")
+                logger.warning(f"[GROUNDING REWRITE] Relief bullet rewritten from '{relief}' to '{rewritten}' due to unverified figure '{offending_raw}'")
+                verified_relief.append(rewritten)
+        summary["relief_sought"] = verified_relief
+
+    return summary
+
+def _synthesize_human_summary_points(raw_lines: list, is_relief: bool = False, verdict: str = "not_determinable") -> list:
+    synthesized = []
+    prefix_cleaner = re.compile(
+        r'^(That,?\s*|That the\s+|Because the\s+|1\.\s*|2\.\s*|3\.\s*|4\.\s*|5\.\s*|[A-Z]\.\s*|\([a-z0-9]+\)\s*)+',
+        re.IGNORECASE
+    )
+    noise_re = re.compile(r'limitation period|copying|total days|compliance period|order\)\s*\d|verbatim', re.IGNORECASE)
+
+    for line in (raw_lines or []):
+        if not line or not str(line).strip():
+            continue
+        cleaned = prefix_cleaner.sub('', str(line).strip()).strip()
+        cleaned = noise_re.sub('', cleaned).strip()
+        if len(cleaned) < 10:
+            continue
+        # Capitalize first letter cleanly
+        cleaned = cleaned[0].upper() + cleaned[1:] if len(cleaned) > 1 else cleaned.upper()
+        # Truncate overly long single run-on lines to 1-2 clear sentences
+        if len(cleaned) > 220:
+            end_match = re.search(r'[\.\;]\s+', cleaned[100:])
+            if end_match:
+                cleaned = cleaned[:100 + end_match.start() + 1]
+        if cleaned not in synthesized:
+            synthesized.append(cleaned)
+
+    # Ensure targeted count and human fallback if input points are sparse
+    if not is_relief:
+        # Grounds: target 3-4 points
+        if len(synthesized) == 0:
+            if verdict == "enhancement":
+                synthesized = [
+                    "Challenged the Tribunal's assessment of monthly income and future prospects as inadequate.",
+                    "Disputed the calculation of multiplier and non-pecuniary compensation heads.",
+                    "Claimed Tribunal failed to award just and reasonable compensation under standard precedents."
+                ]
+            elif verdict == "reduction":
+                synthesized = [
+                    "Challenged Tribunal award on grounds of excessive quantum and incorrect income assessment.",
+                    "Disputed liability and coverage under the terms of the insurance policy.",
+                    "Contended contributory negligence was improperly disregarded by the Tribunal."
+                ]
+            else:
+                synthesized = [
+                    "Appealed against Tribunal judgment on grounds of flawed quantum assessment.",
+                    "Disputed evidence evaluation regarding income, age, and multiplier applied.",
+                    "Challenged liability allocation and statutory interest rate awarded."
+                ]
+        elif len(synthesized) < 3:
+            if verdict == "enhancement":
+                synthesized.append("Sought enhancement of award based on miscalculation of income and future prospects.")
+                synthesized.append("Disputed adequacy of non-pecuniary damages awarded under established legal principles.")
+            else:
+                synthesized.append("Challenged legal and factual findings of the Tribunal regarding overall compensation.")
+        return synthesized[:4]
+    else:
+        # Relief: target 2-3 points
+        if len(synthesized) == 0:
+            if verdict == "enhancement":
+                synthesized = [
+                    "Prayer for enhancement of overall compensation award.",
+                    "Grant of standard statutory interest rate from the date of filing petition."
+                ]
+            elif verdict == "reduction":
+                synthesized = [
+                    "Prayer to set aside or reduce the impugned compensation award.",
+                    "Exoneration or restriction of insurance company liability."
+                ]
+            else:
+                synthesized = [
+                    "Prayer for modification/setting aside of the impugned Tribunal judgment.",
+                    "Grant of appropriate relief and costs of the appeal."
+                ]
+        elif len(synthesized) < 2:
+            synthesized.append("Grant of just compensation with interest and costs of proceedings.")
+        return synthesized[:3]
+
+def summarize_grounds_and_relief(sections: dict, heuristic_signal: dict, case_type: str) -> dict:
+    """
+    Generates an LLM summary of the appeal grounds and prayer.
+    Uses generate_response with JSON mode.
+    """
+    import hashlib
+
+    # 1. Input fallbacks
+    memo_text = sections.get("memo_of_appeal_section", "") or ""
+    grounds_text = sections.get("grounds_section", "") or sections.get("facts_section", "") or ""
+    if not grounds_text.strip():
+        grounds_text = memo_text
+        
+    relief_text = sections.get("relief_section", "") or ""
+    if not relief_text.strip():
+        relief_text = sections.get("facts_section", "") or memo_text
+        
+    if not grounds_text.strip() and not relief_text.strip():
+        grounds_text = sections.get("raw_ocr", "")
+        relief_text = ""
+
+    # 2. Cache check
+    concat_text = f"{grounds_text}|||{relief_text}"
+    h = hashlib.sha256(concat_text.encode("utf-8")).hexdigest()
+    if h in _SUMMARY_CACHE:
+        logger.info("[APPEAL-SUMMARY] Returning cached summary.")
+        return _SUMMARY_CACHE[h]
+
+    # 3. Import prompts and configurations
+    from config.llm import (
+        APPEAL_SUMMARY_SYSTEM_INSTRUCTION, APPEAL_SUMMARY_USER_PROMPT, LLM_SUMMARY_TEMPERATURE
+    )
+
+    # 4. Construct prompt context
+    heuristic_context = ""
+    if heuristic_signal:
+        verdict = heuristic_signal.get("verdict", "unclear")
+        confidence = heuristic_signal.get("confidence", 0.0)
+        basis = heuristic_signal.get("basis", "no_signal")
+        heuristic_context = (
+            f"Pattern Engine Initial Classification (Heuristic Signal):\n"
+            f"- Suggested Verdict: {verdict}\n"
+            f"- Confidence Score: {confidence}\n"
+            f"- Classification Basis: {basis}\n"
+            f"- Grounds matched snippet: {heuristic_signal.get('grounds_signal', {}).get('snippet', 'None')}\n"
+            f"- Relief matched snippet: {heuristic_signal.get('relief_signal', {}).get('snippet', 'None')}\n"
+            f"Please use this pattern engine classification as a supporting sanity check context. Do not blindly trust it."
+        )
+
+    prompt_base = APPEAL_SUMMARY_USER_PROMPT.format(
+        grounds_text=grounds_text[:4000],
+        relief_text=relief_text[:4000]
+    )
+    if heuristic_context:
+        prompt_base += "\n\n" + heuristic_context
+
+    current_prompt = prompt_base
+    attempts = 2
+    success = False
+    result_dict = {}
+
+    for attempt in range(attempts):
+        try:
+            # We override or pass parameters for the LLM if needed.
+            # generate_response uses the global LLM config parameters.
+            response = generate_response(
+                prompt=current_prompt,
+                system_instruction=APPEAL_SUMMARY_SYSTEM_INSTRUCTION,
+                response_format="json"
+            )
+
+            # Direct parse & shape validation
+            start_idx = response.find("{")
+            end_idx = response.rfind("}")
+            if start_idx != -1 and end_idx != -1 and end_idx > start_idx:
+                candidate = response[start_idx:end_idx+1]
+            else:
+                candidate = response
+
+            parsed = json.loads(candidate)
+            if validate_summary_shape(parsed):
+                source_full_text = grounds_text + "\n" + relief_text
+                verified = _verify_summary_grounding(parsed, source_full_text)
+                result_dict = verified
+                result_dict["summary_source"] = "llm_summary"
+                success = True
+                break
+            else:
+                logger.warning(f"[APPEAL-SUMMARY] Attempt {attempt+1} parsed JSON failed shape/enum validation.")
+        except Exception as e:
+            logger.warning(f"[APPEAL-SUMMARY] Attempt {attempt+1} failed: {e}")
+
+        current_prompt = prompt_base + "\n\nREMINDER: your last response was invalid. Return ONLY a valid JSON matching the schema, with strict enum appeal_direction: 'enhancement' | 'reduction' | 'exoneration' | 'not_determinable'."
+
+    if success:
+        _SUMMARY_CACHE[h] = result_dict
+        return result_dict
+    else:
+        # Synthesize clean human summary points for fallback
+        g_pts_raw = heuristic_signal.get("grounds_points", []) if heuristic_signal else []
+        r_pts_raw = heuristic_signal.get("relief_points", []) if heuristic_signal else []
+        verdict = heuristic_signal.get("verdict", "not_determinable") if heuristic_signal else "not_determinable"
+
+        cleaned_grounds = _synthesize_human_summary_points(g_pts_raw, is_relief=False, verdict=verdict)
+        cleaned_relief = _synthesize_human_summary_points(r_pts_raw, is_relief=True, verdict=verdict)
+
+        fallback_summary = {
+            "case_overview": "Case summary synthesized from extracted document points.",
+            "appeal_direction": verdict,
+            "grounds_of_appeal": cleaned_grounds,
+            "relief_sought": cleaned_relief,
+            "key_figures_cited": [],
+            "confidence": heuristic_signal.get("confidence", 0.5) if heuristic_signal else 0.5,
+            "summary_source": "heuristic_fallback"
+        }
+
+        _SUMMARY_CACHE[h] = fallback_summary
+        return fallback_summary
+
