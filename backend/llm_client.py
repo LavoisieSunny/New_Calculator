@@ -7,6 +7,7 @@ import socket
 import re
 import time
 from datetime import datetime
+from rapidfuzz import fuzz
  
 from config.llm import LLM_PROVIDER, LLM_MODEL_NAME, LLM_API_KEY, LLM_API_ENDPOINT
  
@@ -1217,6 +1218,7 @@ class BoundedCache(dict):
 
 
 _SUMMARY_CACHE = BoundedCache(maxsize=200)
+_TRANSLATION_CACHE = BoundedCache(maxsize=200)
 _FINAL_SUMMARY_CACHE = BoundedCache(maxsize=200)
 
 
@@ -1250,6 +1252,11 @@ def validate_final_summary_shape(raw_data: dict) -> bool:
         for k in ("issue", "trial_court_finding", "hc_ground_challenge", "likely_judicial_view"):
             entry.setdefault(k, "")
             
+    if "factual_discrepancies" not in raw_data or not isinstance(raw_data.get("factual_discrepancies"), list):
+        raw_data["factual_discrepancies"] = []
+    if not isinstance(raw_data.get("rejected_candidate_claims"), list):
+        raw_data["rejected_candidate_claims"] = []
+        
     return True
 
 
@@ -1287,6 +1294,10 @@ def _verify_final_summary_grounding(summary: dict, source_text: str) -> dict:
                     if entry.get(fld):
                         entry[fld] = _clean_list([entry[fld]])[0]
                         
+    if "factual_discrepancies" in summary and isinstance(summary["factual_discrepancies"], list):
+        for entry in summary["factual_discrepancies"]:
+            if isinstance(entry, dict) and entry.get("note"):
+                entry["note"] = _clean_list([entry["note"]])[0]
     return summary
 
 
@@ -1600,11 +1611,151 @@ def summarize_grounds_and_relief(sections: dict, heuristic_signal: dict, case_ty
         return fallback_summary
 
 
+def validate_factual_discrepancies_shape(items) -> list:
+    if not isinstance(items, list):
+        return []
+    cleaned = []
+    for it in items:
+        if not isinstance(it, dict) or not it.get("claim"):
+            continue
+        cleaned.append({
+            "claim": str(it.get("claim", "")),
+            "found_in_grounds": bool(it.get("found_in_grounds", True)),
+            "found_in_trial_court": bool(it.get("found_in_trial_court", False)),
+            "note": str(it.get("note", "")),
+        })
+    return cleaned
+
+
+def translate_trial_court_text(issues_text: str, award_text: str) -> dict:
+    """One LLM call: translates Hindi/mixed trial-court text into precise legal
+    English. This is what replaces the fixed bilingual keyword dictionary --
+    everything downstream (claim extraction, matching) now works on plain
+    English, so it isn't limited to a hardcoded synonym list."""
+    import hashlib
+    from config.llm import (
+        TRIAL_COURT_TRANSLATION_SYSTEM_INSTRUCTION, TRIAL_COURT_TRANSLATION_USER_PROMPT,
+        LLM_TRANSLATION_MODEL_NAME, LLM_TRANSLATION_TEMPERATURE
+    )
+    issues_text = (issues_text or "").strip()
+    award_text = (award_text or "").strip()
+    if not issues_text and not award_text:
+        return {"issues_en": "", "award_en": ""}
+
+    h = hashlib.sha256(f"{issues_text}|||{award_text}".encode("utf-8")).hexdigest()
+    if h in _TRANSLATION_CACHE:
+        return _TRANSLATION_CACHE[h]
+
+    prompt = TRIAL_COURT_TRANSLATION_USER_PROMPT.format(
+        issues_text=issues_text[:4000], award_text=award_text[:3000]
+    )
+    # Safe fallback: if translation fails twice, downstream code still gets the
+    # original text rather than an empty string -- degrades to "no translation"
+    # instead of "no data".
+    result = {"issues_en": issues_text, "award_en": award_text}
+    for attempt in range(2):
+        try:
+            response = generate_response(
+                prompt=prompt,
+                system_instruction=TRIAL_COURT_TRANSLATION_SYSTEM_INSTRUCTION,
+                response_format="json",
+                model=LLM_TRANSLATION_MODEL_NAME,
+                temperature=LLM_TRANSLATION_TEMPERATURE
+            )
+            s = response.find("{"); e = response.rfind("}")
+            candidate = response[s:e+1] if s != -1 and e != -1 and e > s else response
+            parsed = json.loads(candidate)
+            if isinstance(parsed, dict) and parsed.get("issues_en") and parsed.get("award_en"):
+                result = {"issues_en": parsed["issues_en"], "award_en": parsed["award_en"]}
+                break
+        except Exception as ex:
+            logger.warning(f"[TRIAL-COURT-TRANSLATION] attempt {attempt + 1} failed: {ex}")
+
+    _TRANSLATION_CACHE[h] = result
+    return result
+
+
+def validate_claims_shape(items) -> list:
+    if not isinstance(items, list):
+        return []
+    valid_categories = {"injury", "death", "vehicle_damage", "income", "disability", "dependency", "other"}
+    cleaned = []
+    for it in items:
+        if not isinstance(it, dict) or not it.get("claim"):
+            continue
+        cat = str(it.get("category", "other")).strip().lower()
+        if cat not in valid_categories:
+            cat = "other"
+        cleaned.append({
+            "claim": str(it.get("claim", "")).strip(),
+            "category": cat,
+            "text_span": str(it.get("text_span", "")).strip(),
+        })
+    return cleaned
+
+
+def extract_claims(text: str, case_type: str = "death", source_label: str = "") -> dict:
+    """Replaces the fixed injury dictionary's job of 'what facts are we even
+    looking for'. Works for injury, death, vehicle-damage, income, dependency
+    claims -- whatever's actually in this document -- instead of a fixed list."""
+    from config.llm import (
+        CLAIM_EXTRACTION_SYSTEM_INSTRUCTION, CLAIM_EXTRACTION_USER_PROMPT,
+        LLM_CLAIM_EXTRACTION_MODEL_NAME, LLM_CLAIM_EXTRACTION_TEMPERATURE
+    )
+    text = (text or "").strip()
+    if not text:
+        return {"claims": []}
+
+    prompt = CLAIM_EXTRACTION_USER_PROMPT.format(
+        case_type=case_type, source_label=source_label, text=text[:6000]
+    )
+    for attempt in range(2):
+        try:
+            response = generate_response(
+                prompt=prompt,
+                system_instruction=CLAIM_EXTRACTION_SYSTEM_INSTRUCTION,
+                response_format="json",
+                model=LLM_CLAIM_EXTRACTION_MODEL_NAME,
+                temperature=LLM_CLAIM_EXTRACTION_TEMPERATURE
+            )
+            s = response.find("{"); e = response.rfind("}")
+            candidate = response[s:e+1] if s != -1 and e != -1 and e > s else response
+            parsed = json.loads(candidate)
+            if isinstance(parsed, dict) and isinstance(parsed.get("claims"), list):
+                return parsed
+        except Exception as ex:
+            logger.warning(f"[CLAIM-EXTRACTION] attempt {attempt + 1} failed ({source_label}): {ex}")
+    return {"claims": []}
+
+
+def find_missing_claims(grounds_claims: list, trial_claims: list, threshold: int = 70) -> list:
+    """Deterministic, cheap, English-only fuzzy matching -- this is what the
+    bilingual keyword dict used to try to do, except now it doesn't need to
+    know every possible Hindi spelling variant because translation already
+    normalized everything to English."""
+    trial_texts = [c.get("claim", "") for c in trial_claims if isinstance(c, dict) and c.get("claim")]
+    missing = []
+    for gc in grounds_claims:
+        claim_text = gc.get("claim", "")
+        if not claim_text:
+            continue
+        best = max((fuzz.token_set_ratio(claim_text, tc) for tc in trial_texts), default=0)
+        if best < threshold:
+            missing.append({
+                "claim": claim_text,
+                "category": gc.get("category", "other"),
+                "found_in_grounds": True,
+                "found_in_trial_court": False,
+                "note": (
+                    f"'{claim_text}' is asserted in the High Court grounds of appeal / relief "
+                    f"clause, but no corresponding mention was found in the trial court's "
+                    f"translated issues, findings, or operative award text."
+                )
+            })
+    return missing
+
+
 def generate_final_judicial_summary(sections: dict, heuristic_signal: dict = None, case_type: str = "death") -> dict:
-    """
-    Generates a High Court judge-style issue-wise judicial summary comparing trial court
-    findings (अधिनिर्णय + वादप्रश्न) against High Court grounds of appeal.
-    """
     import hashlib
     from backend.parser_heuristics import normalize_issues_table
     from config.llm import (
@@ -1615,35 +1766,57 @@ def generate_final_judicial_summary(sections: dict, heuristic_signal: dict = Non
     )
 
     issues_raw = (sections.get("issues_findings_section", "") or "").strip()
-    award_text = (sections.get("award_operative_section", "") or sections.get("award_copy_section", "") or "").strip()
+    award_text_raw = (sections.get("award_operative_section", "") or sections.get("award_copy_section", "") or "").strip()
     grounds_text = (sections.get("grounds_section", "") or sections.get("memo_of_appeal_section", "") or "").strip()
     relief_text = (sections.get("relief_section", "") or "").strip()
 
-    if not issues_raw and not award_text:
-        # FR-7: Graceful degradation -- missing trial-court findings
+    if not issues_raw and not award_text_raw:
         return {
             "issue_wise_view": [],
             "final_summary_points": [
                 "Trial court issues/award section could not be located in the uploaded document -- summary limited to appeal-side grounds only."
             ],
             "probable_outcome": heuristic_signal.get("verdict", "not_determinable") if heuristic_signal else "not_determinable",
+            "factual_discrepancies": [],
             "summary_source": "insufficient_input"
         }
 
     issues_rows = normalize_issues_table(issues_raw)
-    issues_text = "\n".join(f"{r.get('issue', '')}: {r.get('finding', '')}" for r in issues_rows) or issues_raw
+    issues_text_hi = "\n".join(f"{r.get('issue', '')}: {r.get('finding', '')}" for r in issues_rows) or issues_raw
 
-    concat = f"{issues_text}|||{award_text}|||{grounds_text}|||{relief_text}"
+    # Step 1: translate trial court text to English once (replaces the bilingual dict)
+    translation = translate_trial_court_text(issues_text_hi, award_text_raw)
+    issues_text_en = translation.get("issues_en") or issues_text_hi
+    award_text_en = translation.get("award_en") or award_text_raw
+
+    concat = f"{issues_text_en}|||{award_text_en}|||{grounds_text}|||{relief_text}"
     h = hashlib.sha256(concat.encode("utf-8")).hexdigest()
     if h in _FINAL_SUMMARY_CACHE:
         logger.info("[FINAL-JUDICIAL-SUMMARY] Returning cached summary.")
         return _FINAL_SUMMARY_CACHE[h]
 
+    # Step 2: extract structured claims from both sides (generalizes to any case_type)
+    grounds_claims = validate_claims_shape(
+        extract_claims(f"{grounds_text}\n{relief_text}", case_type=case_type,
+                       source_label="HC grounds of appeal / relief").get("claims", [])
+    )
+    trial_claims = validate_claims_shape(
+        extract_claims(f"{issues_text_en}\n{award_text_en}", case_type=case_type,
+                       source_label="trial court issues/award (translated)").get("claims", [])
+    )
+
+    # Step 3: deterministic fuzzy matcher -> candidate list for the LLM to verify
+    candidate_discrepancies = find_missing_claims(grounds_claims, trial_claims)
+    candidate_hint = "\n".join(
+        f"- {d['claim']} ({d['category']})" for d in candidate_discrepancies
+    ) or "(none flagged by automated matcher)"
+
     prompt = FINAL_JUDICIAL_SUMMARY_USER_PROMPT.format(
-        issues_text=issues_text[:4000],
-        award_text=award_text[:3000],
+        issues_text=issues_text_en[:4000],
+        award_text=award_text_en[:3000],
         grounds_text=grounds_text[:4000],
-        relief_text=relief_text[:2000]
+        relief_text=relief_text[:2000],
+        candidate_discrepancies=candidate_hint
     )
 
     result_dict = {}
@@ -1664,9 +1837,26 @@ def generate_final_judicial_summary(sections: dict, heuristic_signal: dict = Non
             parsed = json.loads(candidate)
 
             if validate_final_summary_shape(parsed):
-                full_source = f"{issues_text}\n{award_text}\n{grounds_text}\n{relief_text}"
+                full_source = f"{issues_text_en}\n{award_text_en}\n{grounds_text}\n{relief_text}"
                 result_dict = _verify_final_summary_grounding(parsed, full_source)
                 result_dict["summary_source"] = "llm_summary"
+
+                # Union, not override: the LLM's reviewed list is authoritative for
+                # anything it actually commented on; any matcher candidate the LLM's
+                # JSON silently omitted (rather than explicitly rejecting) still gets
+                # included, so a weak model can't silently wipe out a real hit just
+                # by forgetting to echo it back.
+                llm_discrepancies = validate_factual_discrepancies_shape(parsed.get("factual_discrepancies"))
+                rejected = {c.strip().lower() for c in parsed.get("rejected_candidate_claims", []) if isinstance(c, str)}
+                seen = {d["claim"].strip().lower() for d in llm_discrepancies}
+
+                merged = list(llm_discrepancies)
+                for d in candidate_discrepancies:
+                    key = d["claim"].strip().lower()
+                    if key not in seen and key not in rejected:
+                        merged.append(d)
+
+                result_dict["factual_discrepancies"] = merged
                 success = True
                 break
         except Exception as e:
@@ -1680,6 +1870,7 @@ def generate_final_judicial_summary(sections: dict, heuristic_signal: dict = Non
                 "Automated issue-wise comparison could not be generated for this document; please review the trial court award and HC grounds manually."
             ],
             "probable_outcome": heuristic_signal.get("verdict", "not_determinable") if heuristic_signal else "not_determinable",
+            "factual_discrepancies": candidate_discrepancies,
             "summary_source": "fallback"
         }
 
