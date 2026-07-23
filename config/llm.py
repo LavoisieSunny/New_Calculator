@@ -28,7 +28,7 @@ LLM_API_ENDPOINT = os.getenv("LLM_API_ENDPOINT", "http://localhost:11434")
 # ======================================================
 # APPEAL SUMMARY LLM CONFIGURATIONS
 # ======================================================
-LLM_SUMMARY_TEMPERATURE = float(os.getenv("LLM_SUMMARY_TEMPERATURE", "0.2"))
+LLM_SUMMARY_TEMPERATURE = float(os.getenv("LLM_SUMMARY_TEMPERATURE", "0.0"))
 
 APPEAL_SUMMARY_SYSTEM_INSTRUCTION = (
     "You are an expert legal assistant specializing in Motor Accident Claims Tribunal (MACT) appeals in India.\n"
@@ -131,7 +131,7 @@ CLAIM_EXTRACTION_USER_PROMPT = (
 # FINAL JUDICIAL SUMMARY ENGINE CONFIGURATIONS  (REPLACES old block)
 # ======================================================
 LLM_FINAL_SUMMARY_MODEL_NAME = os.getenv("LLM_FINAL_SUMMARY_MODEL_NAME", LLM_MODEL_NAME)
-LLM_FINAL_SUMMARY_TEMPERATURE = float(os.getenv("LLM_FINAL_SUMMARY_TEMPERATURE", "0.2"))
+LLM_FINAL_SUMMARY_TEMPERATURE = float(os.getenv("LLM_FINAL_SUMMARY_TEMPERATURE", "0.0"))
 
 FINAL_JUDICIAL_SUMMARY_SYSTEM_INSTRUCTION = (
     "You are simulating how an experienced High Court judge reads a MACT appeal.\n"

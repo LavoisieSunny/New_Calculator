@@ -18,6 +18,8 @@ document.addEventListener("DOMContentLoaded", () => {
     let currentCalculationAmount = 0;
     let currentCalculationBreakdown = {};
     let currentOcrRawText = []; // Recover raw text from the last successful single OCR
+    let lastAiRecoverySignature = null;
+    let lastAiRecoveryResult = null;
 
     // Global Cache for Extracted Field Population (Part 5)
     let lastExtractedFields = {};
@@ -2391,6 +2393,21 @@ This cannot be undone.`)) return;
     async function runAiRecovery(rawTextLines, track = "high_court") {
         if (!rawTextLines || rawTextLines.length === 0) return;
 
+        // Idempotency guard: the LLM calls behind /ai-recover aren't temperature-0,
+        // so a fresh call on the SAME document can legitimately come back worded
+        // differently each time. Rather than relying on the backend's cache
+        // (which only helps if the process never restarts/evicts), just don't
+        // ask again for text we've already summarized in this session.
+        const signature = rawTextLines.join("\n");
+        if (lastAiRecoverySignature === signature && lastAiRecoveryResult) {
+            const data = lastAiRecoveryResult;
+            const confidenceScores = data.raw_recovered ? data.raw_recovered.confidence_scores : null;
+            const ocrEvidence = data.raw_recovered ? data.raw_recovered.ocr_evidence_case : null;
+            applyAllOcrSuggestions(data.suggestions, confidenceScores, ocrEvidence, data.raw_recovered, true);
+            showToast("Using the previously generated summary for this document — it won't change on re-click.", "info");
+            return true;
+        }
+
         const formPanel = document.querySelector("#tab-calculator .panel.scroll-y");
         const loader = document.createElement("div");
         loader.className = "form-ocr-loader";
@@ -2426,6 +2443,11 @@ This cannot be undone.`)) return;
                 const confidenceScores = data.raw_recovered ? data.raw_recovered.confidence_scores : null;
                 const ocrEvidence = data.raw_recovered ? data.raw_recovered.ocr_evidence_case : null;
                 applyAllOcrSuggestions(data.suggestions, confidenceScores, ocrEvidence, data.raw_recovered, true);
+
+                // Memoize so a repeat click on the same document reuses this result
+                lastAiRecoverySignature = signature;
+                lastAiRecoveryResult = data;
+
                 showToast("Case analyzed — fields auto-filled and refined by AI.", "success");
                 return true;
             } else {
