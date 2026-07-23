@@ -5,12 +5,24 @@ import urllib.request
 import urllib.error
 import socket
 import re
+import time
 from datetime import datetime
  
 from config.llm import LLM_PROVIDER, LLM_MODEL_NAME, LLM_API_KEY, LLM_API_ENDPOINT
  
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("LLMClient")
+
+import os as _os
+LOG_VERBOSE_GROUNDING_FAILURES = _os.getenv("LOG_VERBOSE_GROUNDING_FAILURES", "false").strip().lower() == "true"
+
+def _redact(text: str, n: int = 24) -> str:
+    if LOG_VERBOSE_GROUNDING_FAILURES:
+        return text
+    text = text or ""
+    if len(text) <= n * 2:
+        return text
+    return f"{text[:n]}...[REDACTED]...{text[-n:]}"
  
 _MONTHS = {
     "jan": 1, "january": 1, "feb": 2, "february": 2, "mar": 3, "march": 3,
@@ -123,8 +135,10 @@ def validate_ollama_setup() -> dict:
         logger.error(f"Ollama startup connection failed at {base_url}: {str(e)}")
     return stats
  
-def generate_response(prompt: str, system_instruction: str = None, response_format: str = None, history: list[dict] | None = None) -> str:
-    logger.info(f"Generating LLM response using provider '{LLM_PROVIDER}', model '{LLM_MODEL_NAME}'")
+def generate_response(prompt: str, system_instruction: str = None, response_format: str = None, history: list[dict] | None = None, model: str = None, temperature: float = None) -> str:
+    effective_model = model or LLM_MODEL_NAME
+    effective_temperature = 0.2 if temperature is None else temperature
+    logger.info(f"Generating LLM response using provider '{LLM_PROVIDER}', model '{effective_model}', temperature {effective_temperature}")
     
     char_count = len(prompt)
     token_est = int(char_count / 4)
@@ -143,7 +157,7 @@ def generate_response(prompt: str, system_instruction: str = None, response_form
 
     try:
         if LLM_PROVIDER == "gemini":
-            url = f"https://generativelanguage.googleapis.com/v1beta/models/{LLM_MODEL_NAME}:generateContent?key={LLM_API_KEY}"
+            url = f"https://generativelanguage.googleapis.com/v1beta/models/{effective_model}:generateContent?key={LLM_API_KEY}"
             headers = {"Content-Type": "application/json"}
             if history_sliced:
                 contents = []
@@ -158,9 +172,15 @@ def generate_response(prompt: str, system_instruction: str = None, response_form
                 payload = {"contents": [{"parts": [{"text": final_prompt}]}]}
                 if system_instruction:
                     payload["systemInstruction"] = {"parts": [{"text": system_instruction}]}
-                    payload["contents"][0]["parts"][0]["text"] = prompt
+            
+            generation_config = {}
             if response_format == "json":
-                payload["generationConfig"] = {"responseMimeType": "application/json"}
+                generation_config["responseMimeType"] = "application/json"
+            if effective_temperature is not None:
+                generation_config["temperature"] = effective_temperature
+            if generation_config:
+                payload["generationConfig"] = generation_config
+                
             req_body = json.dumps(payload).encode("utf-8")
         elif LLM_PROVIDER == "ollama":
             if "v1" in LLM_API_ENDPOINT:
@@ -172,10 +192,10 @@ def generate_response(prompt: str, system_instruction: str = None, response_form
                     messages.extend(history_sliced)
                 messages.append({"role": "user", "content": prompt})
                 payload = {
-                    "model": LLM_MODEL_NAME, 
+                    "model": effective_model, 
                     "messages": messages, 
-                    "temperature": 0.2,
-                    "options": {"temperature": 0.2, "keep_alive": "10m", "num_ctx": 16384}
+                    "temperature": effective_temperature,
+                    "options": {"temperature": effective_temperature, "keep_alive": "10m", "num_ctx": 16384}
                 }
                 if response_format == "json":
                     payload["response_format"] = {"type": "json_object"}
@@ -188,10 +208,10 @@ def generate_response(prompt: str, system_instruction: str = None, response_form
                     messages.extend(history_sliced)
                 messages.append({"role": "user", "content": prompt})
                 payload = {
-                    "model": LLM_MODEL_NAME, 
+                    "model": effective_model, 
                     "messages": messages, 
                     "stream": False, 
-                    "options": {"temperature": 0.2, "keep_alive": "10m", "num_ctx": 16384}
+                    "options": {"temperature": effective_temperature, "keep_alive": "10m", "num_ctx": 16384}
                 }
                 if response_format == "json":
                     payload["format"] = "json"
@@ -208,7 +228,7 @@ def generate_response(prompt: str, system_instruction: str = None, response_form
             if history_sliced:
                 messages.extend(history_sliced)
             messages.append({"role": "user", "content": prompt})
-            payload = {"model": LLM_MODEL_NAME, "messages": messages, "temperature": 0.2}
+            payload = {"model": effective_model, "messages": messages, "temperature": effective_temperature}
             if response_format == "json":
                 payload["response_format"] = {"type": "json_object"}
             req_body = json.dumps(payload).encode("utf-8")
@@ -1146,19 +1166,54 @@ def ai_data_recovery(raw_ocr_text: str, track: str = "high_court", case_type: st
 # ======================================================
 
 class BoundedCache(dict):
-    """Size-bounded in-memory LRU cache to prevent memory growth and retain PII ephemerally."""
-    def __init__(self, maxsize=200):
+    """Size-bounded in-memory LRU cache to prevent memory growth and retain PII ephemerally, with TTL."""
+    def __init__(self, maxsize=200, ttl=3600):
         super().__init__()
         self.maxsize = maxsize
+        self.ttl = ttl
         self._keys = []
 
     def __setitem__(self, key, value):
-        if key not in self:
-            self._keys.append(key)
-            if len(self._keys) > self.maxsize:
-                oldest = self._keys.pop(0)
-                super().pop(oldest, None)
-        super().__setitem__(key, value)
+        if key in self:
+            self._keys.remove(key)
+        self._keys.append(key)
+        if len(self._keys) > self.maxsize:
+            oldest = self._keys.pop(0)
+            super().pop(oldest, None)
+        super().__setitem__(key, (time.time(), value))
+
+    def __getitem__(self, key):
+        self._prune_key_if_expired(key)
+        _, value = super().__getitem__(key)
+        # Move to end to maintain LRU
+        self._keys.remove(key)
+        self._keys.append(key)
+        return value
+
+    def __contains__(self, key):
+        self._prune_key_if_expired(key)
+        return super().__contains__(key)
+
+    def get(self, key, default=None):
+        if key in self:
+            return self[key]
+        return default
+
+    def pop(self, key, default=None):
+        self._prune_key_if_expired(key)
+        if key in self:
+            self._keys.remove(key)
+            _, val = super().pop(key)
+            return val
+        return default
+
+    def _prune_key_if_expired(self, key):
+        if super().__contains__(key):
+            timestamp, _ = super().__getitem__(key)
+            if time.time() - timestamp > self.ttl:
+                if key in self._keys:
+                    self._keys.remove(key)
+                super().pop(key, None)
 
 
 _SUMMARY_CACHE = BoundedCache(maxsize=200)
@@ -1217,7 +1272,7 @@ def _verify_final_summary_grounding(summary: dict, source_text: str) -> dict:
                 digits = re.sub(r"\D", "", raw)
                 if digits and len(digits) >= 2 and digits not in source_normalized and raw.lower() not in source_normalized:
                     bad = raw
-                    logger.warning(f"[FINAL-SUMMARY GROUNDING CHECK] Unverified number '{raw}' in text snippet.")
+                    logger.warning(f"[FINAL-SUMMARY GROUNDING CHECK] Unverified number '{raw}' in text snippet: {_redact(item)}")
                     break
             out.append(item.replace(bad, "[figure unverified]") if bad else item)
         return out
@@ -1293,7 +1348,7 @@ def _verify_summary_grounding(summary: dict, source_text: str) -> dict:
                     continue
                 if norm not in source_normalized and digits not in source_normalized:
                     fig_valid = False
-                    logger.warning(f"[GROUNDING CHECK FAILED] Figure '{raw}' (normalized: '{norm}') from '{fig}' not found in source text.")
+                    logger.warning(f"[GROUNDING CHECK FAILED] Figure '{raw}' (normalized: '{norm}') from: {_redact(fig)}")
                     break
             if fig_valid:
                 verified_figures.append(fig)
@@ -1313,13 +1368,13 @@ def _verify_summary_grounding(summary: dict, source_text: str) -> dict:
                 if norm not in source_normalized and digits not in source_normalized:
                     ground_valid = False
                     offending_raw = raw
-                    logger.warning(f"[GROUNDING CHECK FAILED] Numeric figure '{raw}' (normalized: '{norm}') in ground '{ground}' not found in source text.")
+                    logger.warning(f"[GROUNDING CHECK FAILED] Numeric figure '{raw}' (normalized: '{norm}') in ground: {_redact(ground)}")
                     break
             if ground_valid:
                 verified_grounds.append(ground)
             else:
                 rewritten = ground.replace(offending_raw, "[figure unverified]")
-                logger.warning(f"[GROUNDING REWRITE] Ground bullet rewritten from '{ground}' to '{rewritten}' due to unverified figure '{offending_raw}'")
+                logger.warning(f"[GROUNDING REWRITE] Ground bullet rewritten from: {_redact(ground)} to: {_redact(rewritten)} due to unverified figure '{offending_raw}'")
                 verified_grounds.append(rewritten)
         summary["grounds_of_appeal"] = verified_grounds
 
@@ -1337,13 +1392,13 @@ def _verify_summary_grounding(summary: dict, source_text: str) -> dict:
                 if norm not in source_normalized and digits not in source_normalized:
                     relief_valid = False
                     offending_raw = raw
-                    logger.warning(f"[GROUNDING CHECK FAILED] Numeric figure '{raw}' (normalized: '{norm}') in relief '{relief}' not found in source text.")
+                    logger.warning(f"[GROUNDING CHECK FAILED] Numeric figure '{raw}' (normalized: '{norm}') in relief: {_redact(relief)}")
                     break
             if relief_valid:
                 verified_relief.append(relief)
             else:
                 rewritten = relief.replace(offending_raw, "[figure unverified]")
-                logger.warning(f"[GROUNDING REWRITE] Relief bullet rewritten from '{relief}' to '{rewritten}' due to unverified figure '{offending_raw}'")
+                logger.warning(f"[GROUNDING REWRITE] Relief bullet rewritten from: {_redact(relief)} to: {_redact(rewritten)} due to unverified figure '{offending_raw}'")
                 verified_relief.append(rewritten)
         summary["relief_sought"] = verified_relief
 
@@ -1555,7 +1610,8 @@ def generate_final_judicial_summary(sections: dict, heuristic_signal: dict = Non
     from config.llm import (
         FINAL_JUDICIAL_SUMMARY_SYSTEM_INSTRUCTION,
         FINAL_JUDICIAL_SUMMARY_USER_PROMPT,
-        LLM_FINAL_SUMMARY_TEMPERATURE
+        LLM_FINAL_SUMMARY_TEMPERATURE,
+        LLM_FINAL_SUMMARY_MODEL_NAME
     )
 
     issues_raw = (sections.get("issues_findings_section", "") or "").strip()
@@ -1598,7 +1654,9 @@ def generate_final_judicial_summary(sections: dict, heuristic_signal: dict = Non
             response = generate_response(
                 prompt=prompt,
                 system_instruction=FINAL_JUDICIAL_SUMMARY_SYSTEM_INSTRUCTION,
-                response_format="json"
+                response_format="json",
+                model=LLM_FINAL_SUMMARY_MODEL_NAME,
+                temperature=LLM_FINAL_SUMMARY_TEMPERATURE
             )
             s = response.find("{")
             e = response.rfind("}")

@@ -1172,12 +1172,24 @@ def classify_page_fallback(page_text, section_name):
         return any(w in text_lower for w in ["other relevant facts", "relevant facts", "सुसंगत तथ्य", "तथ्य", "case of", "facts of the case"])
         
     elif section_name == "award_operative_section":
-        aw_kws = ["अधिनिर्णय", "अवार्ड", "award", "judgment", "operative part", "compensation is awarded"]
-        return sum(1 for kw in aw_kws if kw in text_lower) >= 1
+        strong_aw_kws = [
+            "अधिनिर्णय", "अवार्ड", "अधिकरण द्वारा पारित",
+            "operative part of award", "operative award", "final order",
+            "award decree", "compensation is awarded", "award is passed",
+            "award passed by", "date of award",
+        ]
+        if any(kw in text_lower for kw in ["grounds of appeal", "memorandum of appeal", "memo of appeal"]):
+            return False
+        return sum(1 for kw in strong_aw_kws if kw in text_lower) >= 1
         
     elif section_name == "issues_findings_section":
-        iss_kws = ["वाद प्रश्न", "वादप्रश्न", "निष्कर्ष", "issues", "findings", "issue no", "point for determination"]
-        return sum(1 for kw in iss_kws if kw in text_lower) >= 1
+        strong_iss_kws = [
+            "वाद प्रश्न", "वादप्रश्न", "निर्णयार्थ बिंदु",
+            "issues framed", "issues and findings", "issue no", "point for determination",
+        ]
+        if any(kw in text_lower for kw in ["grounds of appeal", "memorandum of appeal", "memo of appeal"]):
+            return False
+        return sum(1 for kw in strong_iss_kws if kw in text_lower) >= 1
         
     return False
 
@@ -2075,7 +2087,6 @@ def detect_document_sections(full_text, pages):
     Dynamically identifies sections of the document using semantic heading matching
     and layout fallbacks.
     """
-    is_hindi_doc = _is_predominantly_devanagari(full_text, threshold=0.15)
     doc_lines = []
     for p in pages:
         p_num = p["page_number"]
@@ -2125,9 +2136,11 @@ def detect_document_sections(full_text, pages):
             end_page = pages[-1]["page_number"] if pages else start_page
             end_idx = total_lines - 1
             
+        raw_candidate_lines = [doc_lines[idx]["text"] for idx in range(start_idx + 1, end_idx + 1)]
+        section_is_hindi = _is_predominantly_devanagari("\n".join(raw_candidate_lines), threshold=0.15)
         content_lines = [
-            doc_lines[idx]["text"] for idx in range(start_idx + 1, end_idx + 1)
-            if is_hindi_doc or not _is_predominantly_devanagari(doc_lines[idx]["text"])
+            line for line in raw_candidate_lines
+            if section_is_hindi or not _is_predominantly_devanagari(line)
         ]
         content = "\n".join(content_lines)
         
@@ -2157,10 +2170,13 @@ def detect_document_sections(full_text, pages):
             if fallback_pages:
                 start_p = fallback_pages[0]["page_number"]
                 end_p = fallback_pages[-1]["page_number"]
+                raw_fallback_lines = [
+                    line for p in fallback_pages for line in p["text"].splitlines()
+                ]
+                section_is_hindi = _is_predominantly_devanagari("\n".join(raw_fallback_lines), threshold=0.15)
                 content = "\n".join(
-                    line for p in fallback_pages
-                    for line in p["text"].splitlines()
-                    if is_hindi_doc or not _is_predominantly_devanagari(line)
+                    line for line in raw_fallback_lines
+                    if section_is_hindi or not _is_predominantly_devanagari(line)
                 )
                 sections[sec_name] = {
                     "section_name": sec_name,

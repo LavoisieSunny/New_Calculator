@@ -33,3 +33,8 @@ qdrant_db/
 test_*.py
 tests/
 
+# Ungitignored PII case files
+ma3078_raw_text.txt
+ma_10076_ocr_lines.txt
+ma_20_ocr_lines.txt
+
