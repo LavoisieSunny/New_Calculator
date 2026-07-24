@@ -978,6 +978,62 @@ document.addEventListener("DOMContentLoaded", () => {
         singleFileInput.click();
     });
 
+    // --- DRAGGABLE PANEL RESIZER (Case Parameters <-> PDF Preview) ---
+    function initCalculatorPanelResizer() {
+        const grid = document.querySelector("#tab-calculator .workspace-grid.split-55-45");
+        const resizer = document.getElementById("calculator-panel-resizer");
+        if (!grid || !resizer) return;
+
+        const MIN_LEFT_PERCENT = 25;
+        const MAX_LEFT_PERCENT = 75;
+
+        function setLeftPercent(percent) {
+            const clamped = Math.min(MAX_LEFT_PERCENT, Math.max(MIN_LEFT_PERCENT, percent));
+            grid.style.setProperty("--split-left", clamped + "%");
+        }
+
+        function resetSplit() {
+            grid.style.removeProperty("--split-left");
+        }
+
+        let dragging = false;
+
+        function onPointerDown(e) {
+            dragging = true;
+            resizer.classList.add("resizing");
+            document.body.classList.add("panel-resize-active");
+            e.preventDefault();
+        }
+
+        function onPointerMove(e) {
+            if (!dragging) return;
+            const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+            const rect = grid.getBoundingClientRect();
+            const percent = ((clientX - rect.left) / rect.width) * 100;
+            setLeftPercent(percent);
+        }
+
+        function onPointerUp() {
+            if (!dragging) return;
+            dragging = false;
+            resizer.classList.remove("resizing");
+            document.body.classList.remove("panel-resize-active");
+        }
+
+        resizer.addEventListener("mousedown", onPointerDown);
+        resizer.addEventListener("touchstart", onPointerDown, { passive: false });
+        window.addEventListener("mousemove", onPointerMove);
+        window.addEventListener("touchmove", onPointerMove, { passive: false });
+        window.addEventListener("mouseup", onPointerUp);
+        window.addEventListener("touchend", onPointerUp);
+
+        resizer.addEventListener("dblclick", (e) => {
+            e.preventDefault();
+            resetSplit();
+        });
+    }
+    initCalculatorPanelResizer();
+
     singleFileInput.addEventListener("click", (e) => {
         e.stopPropagation();
     });
@@ -998,10 +1054,31 @@ document.addEventListener("DOMContentLoaded", () => {
             return;
         }
 
+        // Show the PDF immediately, before OCR even starts, so the person has
+        // something useful to read/scroll while extraction runs in the background.
+        const immediateBlobUrl = URL.createObjectURL(file);
+        if (singlePreviewFilename) {
+            singlePreviewFilename.innerHTML = `${file.name} <span class="badge source-badge" id="single-preview-source-badge" style="margin-left: 8px; background: rgba(251, 191, 36, 0.2); color: #f59e0b; border: 1px solid rgba(251, 191, 36, 0.3); font-size: 0.7rem; padding: 2px 6px; border-radius: 4px; display: inline-block;"><i class="fa-solid fa-spinner fa-spin"></i> Extracting...</span>`;
+        }
+        if (singlePreviewContainer) {
+            singlePreviewContainer.innerHTML = `
+                <iframe class="pdf-iframe" src="${immediateBlobUrl}#toolbar=0" width="100%" height="100%"></iframe>
+            `;
+        }
+        if (singlePreviewCard) {
+            singlePreviewCard.classList.remove("hidden-section");
+            singlePreviewCard.classList.add("show");
+        }
+        const earlyPdfTabBtn = document.querySelector('.pane-tab-btn[data-pane-tab="pdf"]');
+        if (earlyPdfTabBtn) {
+            earlyPdfTabBtn.click();
+        }
+
         // Start the Live OCR timer
         startOcrTimer();
 
-        // Show a premium glassmorphic loading spinner inside the form panel
+        // Show a slim, non-blocking OCR progress banner pinned to the top of the
+        // form panel (see .form-ocr-loader in style.css).
         const formPanel = document.querySelector("#tab-calculator .panel.scroll-y");
         const loader = document.createElement("div");
         loader.className = "form-ocr-loader";
@@ -1026,7 +1103,7 @@ document.addEventListener("DOMContentLoaded", () => {
             </div>
         `;
         formPanel.style.position = "relative";
-        formPanel.appendChild(loader);
+        formPanel.insertBefore(loader, formPanel.firstChild);
 
         // Per-page monitor state
         const _ocrPages = {};
@@ -1179,14 +1256,15 @@ document.addEventListener("DOMContentLoaded", () => {
                                 }
                             }
 
-                            // Load high-fidelity PDF preview in the right pane!
-                            const blobUrl = URL.createObjectURL(file);
-                            if (singlePreviewFilename) {
-                                singlePreviewFilename.innerHTML = `${file.name} <span class="badge source-badge" style="margin-left: 8px; background: rgba(59, 130, 246, 0.2); color: #60a5fa; border: 1px solid rgba(59, 130, 246, 0.3); font-size: 0.7rem; padding: 2px 6px; border-radius: 4px; display: inline-block;">Source: ${data.fallback_source}</span>`;
+                            // The PDF preview was already rendered the moment the file was
+                            // selected, so just refresh the little status badge (no re-render).
+                            const sourceBadge = document.getElementById("single-preview-source-badge");
+                            if (sourceBadge) {
+                                sourceBadge.innerHTML = `<i class="fa-solid fa-check"></i> Source: ${data.fallback_source}`;
+                                sourceBadge.style.background = "rgba(59, 130, 246, 0.2)";
+                                sourceBadge.style.color = "#60a5fa";
+                                sourceBadge.style.borderColor = "rgba(59, 130, 246, 0.3)";
                             }
-                            singlePreviewContainer.innerHTML = `
-                                <iframe class="pdf-iframe" src="${blobUrl}#toolbar=0" width="100%" height="100%"></iframe>
-                            `;
                             singlePreviewCard.classList.remove("hidden-section");
                             singlePreviewCard.classList.add("show");
 
