@@ -828,9 +828,25 @@ def ai_data_recovery(raw_ocr_text: str, track: str = "high_court", case_type: st
             confidence_scores["disability"] = {"confidence": 0.0}
         elif dis_val is not None and raw_ocr_text:
             dis_str = str(dis_val).strip()
-            # If numerical disability value does not appear anywhere in source text, clear it
-            if dis_str not in raw_ocr_text and f"{dis_str}%" not in raw_ocr_text and "disability" not in raw_ocr_text.lower():
-                logger.info(f"[DISABILITY-HALLUCINATION-GUARD] Discarding unverified disability '{dis_str}' not present in OCR text.")
+            # Normalize "35.0" / "35" so both forms are checked
+            try:
+                dis_str_int = str(int(float(dis_str)))
+            except (ValueError, TypeError):
+                dis_str_int = dis_str
+            # STRICT CHECK: the exact percentage figure itself must appear literally in
+            # the OCR text. Previously this also allowed the value through if the mere
+            # word "disability" appeared anywhere in the document -- but that word is
+            # almost always present somewhere (statute references, boilerplate, headers)
+            # even when no percentage was ever stated, which let hallucinated numbers
+            # (e.g. a stray "35") slip through untouched. Require the actual figure.
+            number_present = (
+                dis_str in raw_ocr_text
+                or dis_str_int in raw_ocr_text
+                or f"{dis_str}%" in raw_ocr_text
+                or f"{dis_str_int}%" in raw_ocr_text
+            )
+            if not number_present:
+                logger.info(f"[DISABILITY-HALLUCINATION-GUARD] Discarding unverified disability '{dis_str}' -- this exact figure was not found anywhere in the OCR text.")
                 data["disability_percentage"] = None
                 data["disability"] = None
                 confidence_scores["disability_percentage"] = {"confidence": 0.0}
