@@ -88,6 +88,12 @@
                             <span>⏱</span>
                             <span id="header-ocr-timer-elapsed">Ready</span>
                         </span>
+                        <!-- Small non-blocking processing indicator: hidden by default, shown only
+                             while OCR is running. The person can scroll/interact with the page freely. -->
+                        <span class="header-badge" id="header-ocr-processing-badge" style="display: none; align-items: center; gap: 8px; font-family: 'Inter', sans-serif; font-weight: 500; font-size: 0.85rem; color: var(--color-primary); background: rgba(11, 58, 114, 0.06); border: 1px solid var(--border-glass);">
+                            <i class="fa-solid fa-spinner fa-spin" style="font-size: 0.8rem;"></i>
+                            <span>Please wait while we are processing the document</span>
+                        </span>
                     </div>
                     <!-- Connection and Server Status display -->
                     <div style="display: flex; align-items: center; gap: 10px;">

@@ -1077,33 +1077,14 @@ document.addEventListener("DOMContentLoaded", () => {
         // Start the Live OCR timer
         startOcrTimer();
 
-        // Show a slim, non-blocking OCR progress banner pinned to the top of the
-        // form panel (see .form-ocr-loader in style.css).
-        const formPanel = document.querySelector("#tab-calculator .panel.scroll-y");
-        const loader = document.createElement("div");
-        loader.className = "form-ocr-loader";
-        loader.innerHTML = `
-            <div class="spinner-glow"></div>
-            <p id="ocr-loader-message">Analyzing document with legal OCR...</p>
-            <span id="ocr-loader-phase" style="font-size: 0.8rem; color: var(--text-secondary); opacity: 0.8;">Extracting Judgment, Petition, &amp; Prayer sections</span>
-            <div style="margin-top: 12px; font-family: monospace; font-size: 1.15rem; font-weight: 700; color: var(--color-primary); display: flex; align-items: center; gap: 8px; justify-content: center;">
-                <span>⏱</span>
-                <span id="ocr-loader-timer">00:00</span>
-            </div>
-            <div id="ocr-page-monitor" style="display:none; margin-top:16px; width:100%; max-width:520px; text-align:left;">
-                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
-                    <span style="font-size:0.75rem; font-weight:600; color:var(--text-secondary); text-transform:uppercase; letter-spacing:0.05em;">Page Processing</span>
-                    <span id="ocr-page-counter" style="font-size:0.75rem; font-family:monospace; color:var(--color-primary);">0 / ?</span>
-                </div>
-                <div style="width:100%; background:rgba(255,255,255,0.08); border-radius:4px; height:5px; margin-bottom:10px; overflow:hidden;">
-                    <div id="ocr-page-bar" style="height:100%; width:0%; background:var(--color-primary); border-radius:4px; transition:width 0.3s ease;"></div>
-                </div>
-                <div id="ocr-page-grid" style="display:grid; grid-template-columns:repeat(auto-fill,minmax(62px,1fr)); gap:5px; max-height:160px; overflow-y:auto;"></div>
-                <div id="ocr-recent-log" style="margin-top:10px; font-size:0.7rem; font-family:monospace; color:var(--text-secondary); line-height:1.6; max-height:60px; overflow:hidden;"></div>
-            </div>
-        `;
-        formPanel.style.position = "relative";
-        formPanel.insertBefore(loader, formPanel.firstChild);
+        // Show a small, non-blocking "processing" indicator next to the header
+        // timer badge. There is no overlay/card over the form anymore — the
+        // person can freely scroll the page while OCR runs in the background.
+        const headerProcessingBadge = document.getElementById("header-ocr-processing-badge");
+        if (headerProcessingBadge) {
+            headerProcessingBadge.style.display = "inline-flex";
+        }
+        const loader = null; // Defined as null to prevent ReferenceErrors in subsequent loader blocks.
 
         // Per-page monitor state
         const _ocrPages = {};
@@ -1143,81 +1124,16 @@ document.addEventListener("DOMContentLoaded", () => {
                     const payload = cleanLine.slice(6);
                     const data = JSON.parse(payload);
 
-                    // Update loader visual progress message and submessage
-                    if (loader) {
-                        const messageEl = loader.querySelector("#ocr-loader-message");
-                        const phaseEl = loader.querySelector("#ocr-loader-phase");
-
-                        if (data.status === "page_progress" && data.page_info) {
-                            const pg = data.page_info;
-                            _ocrTotalPages = pg.total_pages;
-
-                            // Show the page monitor panel on first page event
-                            const monitor = loader.querySelector("#ocr-page-monitor");
-                            if (monitor) monitor.style.display = "block";
-
-                            // Update progress bar and counter
-                            const bar = loader.querySelector("#ocr-page-bar");
-                            const counter = loader.querySelector("#ocr-page-counter");
-                            if (bar) bar.style.width = Math.round((pg.pages_done / pg.total_pages) * 100) + "%";
-                            if (counter) counter.textContent = `${pg.pages_done} / ${pg.total_pages}`;
-
-                            // Engine colour coding
-                            const engineColor = pg.engine === "PaddleOCR" || pg.engine === "PaddleOCR-Retry"
-                                ? "#34d399" : pg.engine === "PyMuPDF"
-                                    ? "#60a5fa" : pg.engine === "Tesseract"
-                                        ? "#fbbf24" : pg.engine === "Skipped-blank"
-                                            ? "#6b7280" : "#a78bfa";
-
-                            // Add or update page chip in the grid
-                            const grid = loader.querySelector("#ocr-page-grid");
-                            if (grid) {
-                                const chipId = "ocr-chip-p" + pg.page;
-                                let chip = loader.querySelector("#" + chipId);
-                                if (!chip) {
-                                    chip = document.createElement("div");
-                                    chip.id = chipId;
-                                    chip.style.cssText = `border-radius:4px; padding:3px 4px; font-size:0.62rem; font-family:monospace; text-align:center; border:1px solid rgba(255,255,255,0.12); line-height:1.4;`;
-                                    grid.appendChild(chip);
-                                }
-                                const confPct = Math.round((pg.confidence || 0) * 100);
-                                chip.style.background = engineColor + "22";
-                                chip.style.borderColor = engineColor + "55";
-                                chip.style.color = engineColor;
-                                chip.title = `Page ${pg.page} | ${pg.engine} | conf:${confPct}% | lines:${pg.lines} | ${pg.total_page_time}s`;
-                                chip.innerHTML = `<span style="font-weight:700;">P${pg.page}</span><br>${pg.engine ? pg.engine.replace("PaddleOCR", "Paddle").replace("Tesseract", "Tess").replace("PyMuPDF", "Fitz").replace("Skipped-blank", "Skip").replace("-Retry", "↺") : "?"}<br>${confPct}%`;
-                                // Scroll newest chip into view
-                                chip.scrollIntoView({ block: "nearest" });
-                            }
-
-                            // Append to recent log (keep last 3 lines)
-                            const logEl = loader.querySelector("#ocr-recent-log");
-                            if (logEl) {
-                                const logLine = document.createElement("div");
-                                const engShort = (pg.engine || "?").replace("PaddleOCR-Retry", "Paddle↺");
-                                logLine.textContent = `[P${String(pg.page).padStart(2, "0")}] ${engShort.padEnd(10)} conf:${String(Math.round((pg.confidence || 0) * 100)).padStart(3)}%  lines:${String(pg.lines).padStart(3)}  ${pg.total_page_time}s`;
-                                logEl.prepend(logLine);
-                                while (logEl.children.length > 4) logEl.removeChild(logEl.lastChild);
-                            }
-
-                            if (messageEl) messageEl.textContent = `OCR: page ${pg.pages_done} of ${pg.total_pages} (${pg.engine || "??"})`;
-                            if (phaseEl) phaseEl.textContent = `${pg.total_pages - pg.pages_done} page(s) remaining`;
-
-                        } else {
-                            if (messageEl && data.message) messageEl.textContent = data.message;
-                            if (phaseEl && data.status) phaseEl.textContent = `Phase: ${data.status} (${data.progress}%)`;
-                        }
-                    }
-
-                    // Update local form panel timer status text
+                    // Update local form panel timer status text (this element already
+                    // existed in the form — no separate loader card needed anymore).
                     const statusText = document.getElementById("ocr-timer-status-text");
                     if (statusText && data.message) {
                         statusText.textContent = data.message;
                     }
 
                     if (data.status === "done") {
-                        // Remove spinner after processing is fully complete
-                        loader.remove();
+                        // Processing finished — hide the small header indicator
+                        if (headerProcessingBadge) headerProcessingBadge.style.display = "none";
 
                         if (data.success) {
                             // Stop timer on success
@@ -1299,14 +1215,14 @@ document.addEventListener("DOMContentLoaded", () => {
                             showToast("Failed to extract data from the PDF: " + (data.message || "Unknown OCR error."), "error");
                         }
                     } else if (data.status === "failed") {
-                        loader.remove();
+                        if (headerProcessingBadge) headerProcessingBadge.style.display = "none";
                         stopOcrTimerFailure();
                         showToast("Failed to extract data from the PDF: " + (data.message || "Unknown OCR error."), "error");
                     }
                 }
             }
         } catch (error) {
-            loader.remove();
+            if (headerProcessingBadge) headerProcessingBadge.style.display = "none";
             stopOcrTimerFailure();
             console.error("Single PDF OCR error:", error);
             showToast(`OCR processing failed: ${error.message}. Please verify the central FastAPI server is fully initialized.`, "error");
