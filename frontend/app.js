@@ -44,6 +44,13 @@ document.addEventListener("DOMContentLoaded", () => {
     let lastAiRecoveryResult = null;
     let currentCaseSessionId = null;
 
+    function ensureCaseSessionId() {
+        if (!currentCaseSessionId) {
+            currentCaseSessionId = generateCaseSessionId();
+        }
+        return currentCaseSessionId;
+    }
+
     // Global Cache for Extracted Field Population (Part 5)
     let lastExtractedFields = {};
     let lastExtractedConfidences = {};
@@ -1088,10 +1095,9 @@ document.addEventListener("DOMContentLoaded", () => {
         // something useful to read/scroll while extraction runs in the background.
         const immediateBlobUrl = URL.createObjectURL(file);
         try {
-            currentCaseSessionId = generateCaseSessionId();
+            ensureCaseSessionId();
         } catch (e) {
-            console.error("Failed to generate case session id, continuing without it:", e);
-            currentCaseSessionId = null;
+            console.error("Failed to ensure case session id:", e);
         }
         if (singlePreviewFilename) {
             singlePreviewFilename.innerHTML = `${file.name} <span class="badge source-badge" id="single-preview-source-badge" style="margin-left: 8px; background: rgba(251, 191, 36, 0.2); color: #f59e0b; border: 1px solid rgba(251, 191, 36, 0.3); font-size: 0.7rem; padding: 2px 6px; border-radius: 4px; display: inline-block;"><i class="fa-solid fa-spinner fa-spin"></i> Extracting...</span>`;
@@ -4742,9 +4748,7 @@ This cannot be undone.`)) return;
         const formData = new FormData();
         formData.append("file", file);
         formData.append("doc_type", doc_type);
-        if (currentCaseSessionId) {
-            formData.append("case_session_id", currentCaseSessionId);
-        }
+        formData.append("case_session_id", ensureCaseSessionId());
         formData.append("enhance_ocr", enhance_ocr);
 
         try {

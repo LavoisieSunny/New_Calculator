@@ -138,13 +138,12 @@
                             <!-- Single PDF Drag & Drop Uploader (shown after case type selection)
                                  Directly feeds a PDF judgment or claim sheet into the local PaddleOCR pipeline. -->
                             <div id="single-upload-section" class="form-group full-width show-flex">
-                                <label class="main-label">Upload Case PDF for AI Auto-Fill</label>
-                                <div id="single-drop-zone" class="single-drop-zone">
-                                    <div class="single-drop-zone-content full-only">
-                                        <i class="fa-solid fa-file-pdf single-drop-icon" style="color: var(--color-danger); font-size: 2.2rem; margin-bottom: 8px;"></i>
-                                        <p class="single-drop-title">Drag & Drop case PDF here or click to browse</p>
-                                        <p class="single-drop-subtitle">Runs PaddleOCR to autofill previous judgment, petition, and prayer details</p>
-                                        <span class="btn btn-small btn-secondary" style="margin-top: 6px;">Select Document</span>
+                                <label class="main-label">Case Documents</label>
+                                <div style="display: flex; gap: 10px; align-items: stretch; margin-bottom: 4px;">
+                                <div id="single-drop-zone" class="single-drop-zone" style="flex: 1; min-height: 0; padding: 14px 16px;">
+                                    <div class="single-drop-zone-content full-only" style="flex-direction: row; gap: 10px; padding: 0; margin: 0;">
+                                        <i class="fa-solid fa-file-pdf single-drop-icon" style="color: var(--color-danger); font-size: 1.3rem; margin: 0;"></i>
+                                        <span style="font-weight: 700; font-size: 0.88rem; color: var(--text-primary);">Upload Court File</span>
                                     </div>
                                     <div class="compact-only" style="display: none;">
                                         <div style="display: flex; align-items: center; justify-content: space-between; width: 100%; gap: 12px; padding: 12px 16px;">
@@ -160,16 +159,14 @@
                                     <input type="file" id="single-file-input" accept="application/pdf" style="display: none;">
                                 </div>
 
-                                <!-- Supporting Documents Section -->
-                                <div id="supporting-docs-section" style="display: none;">
-                                    <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px;">
-                                        <span style="font-size: 0.85rem; font-weight: 700; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 0.5px; display: inline-flex; align-items: center; gap: 6px;">
-                                            <i class="fa-solid fa-folder-open" style="color: var(--color-primary);"></i> Supporting Documents
-                                        </span>
-                                        <button type="button" id="add-supporting-docs-btn" class="btn btn-secondary btn-small" style="display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; font-size: 0.78rem;">
-                                            <i class="fa-solid fa-file-circle-plus"></i> + Add Supporting Documents
-                                        </button>
-                                    </div>
+                                <button type="button" id="add-supporting-docs-btn" class="btn btn-secondary" style="flex: 1; display: inline-flex; align-items: center; justify-content: center; gap: 8px; padding: 14px 16px; font-size: 0.88rem; font-weight: 700; border-radius: var(--radius-sm);">
+                                    <i class="fa-solid fa-folder-open"></i> Upload Supporting Document
+                                </button>
+                                </div>
+
+                                <!-- Supporting Documents Section: always visible now, no longer
+                                     gated behind the main court file finishing first. -->
+                                <div id="supporting-docs-section" style="display: block;">
                                     <input type="file" id="supporting-docs-input" accept="application/pdf,image/png,image/jpeg" multiple style="display: none;">
                                     <div id="supporting-docs-chips" class="supporting-docs-chips-container" style="display: flex; flex-direction: column; gap: 8px; margin-bottom: 12px;"></div>
                                 </div>
