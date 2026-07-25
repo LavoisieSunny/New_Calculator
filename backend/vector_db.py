@@ -782,12 +782,12 @@ def get_supporting_doc_text(case_session_id: str, doc_type: str) -> str:
                     FieldCondition(key="case_session_id", match=MatchValue(value=case_session_id)),
                     FieldCondition(key="doc_type", match=MatchValue(value=doc_type))
                 ])
-                search_res = client.search(
+                search_res = client.query_points(
                     collection_name=COLLECTION_NAME,
-                    query_vector=query_vector,
+                    query=query_vector,
                     query_filter=query_filter,
                     limit=10
-                )
+                ).points
                 full_text = "\n\n".join(hit.payload.get("text") or "" for hit in search_res)
                 _FULL_TEXT_CACHE[cache_key] = full_text
                 return full_text
