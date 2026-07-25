@@ -51,6 +51,9 @@ document.addEventListener("DOMContentLoaded", () => {
         return currentCaseSessionId;
     }
 
+    // Generate session ID up-front on page load
+    ensureCaseSessionId();
+
     // Global Cache for Extracted Field Population (Part 5)
     let lastExtractedFields = {};
     let lastExtractedConfidences = {};
