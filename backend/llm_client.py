@@ -1794,9 +1794,20 @@ def generate_final_judicial_summary(sections: dict, heuristic_signal: dict = Non
 
     if supporting_docs and supporting_docs.get("lower_court"):
         lower_court_text = supporting_docs["lower_court"]
-        translation = translate_trial_court_text(lower_court_text, "")
-        issues_text_en = translation.get("issues_en") or lower_court_text
-        award_text_en = ""
+        from backend.parser_heuristics import detect_document_sections
+        lc_sections_meta = detect_document_sections(lower_court_text, [])
+        lc_sections = {k: v["content"] for k, v in lc_sections_meta.items()}
+        lc_issues_raw = (lc_sections.get("issues_findings_section", "") or "").strip()
+        lc_award_raw = (lc_sections.get("award_operative_section", "") or lc_sections.get("award_copy_section", "") or "").strip()
+        if not lc_issues_raw and not lc_award_raw:
+            # Section headers weren't detected — fall back to a crude split:
+            # operative orders are almost always at the end of the judgment.
+            split_point = int(len(lower_court_text) * 0.7)
+            lc_issues_raw = lower_court_text[:split_point]
+            lc_award_raw = lower_court_text[split_point:]
+        translation = translate_trial_court_text(lc_issues_raw, lc_award_raw)
+        issues_text_en = translation.get("issues_en") or lc_issues_raw
+        award_text_en = translation.get("award_en") or lc_award_raw
     else:
         if not issues_raw and not award_text_raw:
             return {
