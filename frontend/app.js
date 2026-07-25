@@ -4791,13 +4791,17 @@ This cannot be undone.`)) return;
         refreshBtn.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i> Refreshing...`;
 
         try {
-            const response = await fetch("/api/ocr/ai-recover", {
+            const caseTypeSelect = document.getElementById("case-type");
+            const caseType = caseTypeSelect ? caseTypeSelect.value : "death";
+
+            const response = await fetch("/api/ocr/refresh-judicial-summary", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ 
                     raw_text: currentOcrRawText,
                     track: window.detectedTrack || "high_court",
-                    case_session_id: currentCaseSessionId
+                    case_session_id: currentCaseSessionId,
+                    case_type: caseType
                 })
             });
 

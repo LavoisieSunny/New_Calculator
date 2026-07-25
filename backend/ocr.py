@@ -3218,6 +3218,57 @@ async def ai_recover_fields(request: AIRecoverRequest):
         raise HTTPException(status_code=500, detail=f"AI recovery failed: {e}")
 
 
+class RefreshJudicialSummaryRequest(BaseModel):
+    raw_text: list[str]
+    case_session_id: str
+    track: str = None
+    case_type: str = "death"
+
+
+@router.post("/refresh-judicial-summary")
+async def refresh_judicial_summary(request: RefreshJudicialSummaryRequest):
+    """
+    Lightweight endpoint to refresh the final judicial summary without re-running 
+    full AI fields recovery.
+    """
+    try:
+        full_text = "\n".join(request.raw_text)
+        track = request.track
+        if not track:
+            from backend.track_detection import _devanagari_ratio
+            track = "lower_court" if _devanagari_ratio(full_text) >= 0.30 else "high_court"
+
+        from backend.parser_heuristics import detect_document_sections, classify_enhancement_or_reduction
+        sections_meta = detect_document_sections(full_text, [])
+        sections_dict = {k: v["content"] for k, v in sections_meta.items()}
+        sections_dict["raw_ocr"] = full_text
+
+        from backend.vector_db import get_supporting_doc_text
+        supporting_docs = {
+            "lower_court": get_supporting_doc_text(request.case_session_id, "lower_court"),
+            "hospital_record": get_supporting_doc_text(request.case_session_id, "hospital_record")
+        }
+
+        from backend.llm_client import generate_final_judicial_summary
+        heuristic_signal = classify_enhancement_or_reduction(sections_dict)
+
+        final_judicial_res = generate_final_judicial_summary(
+            sections_dict,
+            heuristic_signal,
+            request.case_type,
+            supporting_docs=supporting_docs
+        )
+
+        return {
+            "success": True,
+            "final_judicial_summary": final_judicial_res,
+            "case_classification": heuristic_signal
+        }
+    except Exception as e:
+        logger.error(f"Error in refresh-judicial-summary: {e}")
+        raise HTTPException(status_code=500, detail=f"Refresh failed: {e}")
+
+
 class SuggestCaseTypeRequest(BaseModel):
     raw_text: str
     selected_case_type: str
