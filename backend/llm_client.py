@@ -1771,7 +1771,7 @@ def find_missing_claims(grounds_claims: list, trial_claims: list, threshold: int
     return missing
 
 
-def generate_final_judicial_summary(sections: dict, heuristic_signal: dict = None, case_type: str = "death") -> dict:
+def generate_final_judicial_summary(sections: dict, heuristic_signal: dict = None, case_type: str = "death", supporting_docs: dict = None) -> dict:
     import hashlib
     from backend.parser_heuristics import normalize_issues_table
     from config.llm import (
@@ -1786,26 +1786,37 @@ def generate_final_judicial_summary(sections: dict, heuristic_signal: dict = Non
     grounds_text = (sections.get("grounds_section", "") or sections.get("memo_of_appeal_section", "") or "").strip()
     relief_text = (sections.get("relief_section", "") or "").strip()
 
-    if not issues_raw and not award_text_raw:
-        return {
-            "issue_wise_view": [],
-            "final_summary_points": [
-                "Trial court issues/award section could not be located in the uploaded document -- summary limited to appeal-side grounds only."
-            ],
-            "probable_outcome": heuristic_signal.get("verdict", "not_determinable") if heuristic_signal else "not_determinable",
-            "factual_discrepancies": [],
-            "summary_source": "insufficient_input"
-        }
+    medical_evidence_text = ""
+    if supporting_docs and supporting_docs.get("hospital_record"):
+        medical_evidence_text = supporting_docs["hospital_record"]
+    else:
+        medical_evidence_text = "(No medical evidence from hospital records provided.)"
 
-    issues_rows = normalize_issues_table(issues_raw)
-    issues_text_hi = "\n".join(f"{r.get('issue', '')}: {r.get('finding', '')}" for r in issues_rows) or issues_raw
+    if supporting_docs and supporting_docs.get("lower_court"):
+        lower_court_text = supporting_docs["lower_court"]
+        translation = translate_trial_court_text(lower_court_text, "")
+        issues_text_en = translation.get("issues_en") or lower_court_text
+        award_text_en = ""
+    else:
+        if not issues_raw and not award_text_raw:
+            return {
+                "issue_wise_view": [],
+                "final_summary_points": [
+                    "Trial court issues/award section could not be located in the uploaded document -- summary limited to appeal-side grounds only."
+                ],
+                "probable_outcome": heuristic_signal.get("verdict", "not_determinable") if heuristic_signal else "not_determinable",
+                "factual_discrepancies": [],
+                "summary_source": "insufficient_input"
+            }
 
-    # Step 1: translate trial court text to English once (replaces the bilingual dict)
-    translation = translate_trial_court_text(issues_text_hi, award_text_raw)
-    issues_text_en = translation.get("issues_en") or issues_text_hi
-    award_text_en = translation.get("award_en") or award_text_raw
+        issues_rows = normalize_issues_table(issues_raw)
+        issues_text_hi = "\n".join(f"{r.get('issue', '')}: {r.get('finding', '')}" for r in issues_rows) or issues_raw
 
-    concat = f"{issues_text_en}|||{award_text_en}|||{grounds_text}|||{relief_text}"
+        translation = translate_trial_court_text(issues_text_hi, award_text_raw)
+        issues_text_en = translation.get("issues_en") or issues_text_hi
+        award_text_en = translation.get("award_en") or award_text_raw
+
+    concat = f"{issues_text_en}|||{award_text_en}|||{grounds_text}|||{relief_text}|||{medical_evidence_text}"
     h = hashlib.sha256(concat.encode("utf-8")).hexdigest()
     if h in _FINAL_SUMMARY_CACHE:
         logger.info("[FINAL-JUDICIAL-SUMMARY] Returning cached summary.")
@@ -1832,6 +1843,7 @@ def generate_final_judicial_summary(sections: dict, heuristic_signal: dict = Non
         award_text=award_text_en[:3000],
         grounds_text=grounds_text[:4000],
         relief_text=relief_text[:2000],
+        medical_evidence_text=medical_evidence_text[:4000],
         candidate_discrepancies=candidate_hint
     )
 

@@ -159,6 +159,20 @@
                                     </div>
                                     <input type="file" id="single-file-input" accept="application/pdf" style="display: none;">
                                 </div>
+
+                                <!-- Supporting Documents Section -->
+                                <div id="supporting-docs-section" style="display: none;">
+                                    <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px;">
+                                        <span style="font-size: 0.85rem; font-weight: 700; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 0.5px; display: inline-flex; align-items: center; gap: 6px;">
+                                            <i class="fa-solid fa-folder-open" style="color: var(--color-primary);"></i> Supporting Documents
+                                        </span>
+                                        <button type="button" id="add-supporting-docs-btn" class="btn btn-secondary btn-small" style="display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; font-size: 0.78rem;">
+                                            <i class="fa-solid fa-file-circle-plus"></i> + Add Supporting Documents
+                                        </button>
+                                    </div>
+                                    <input type="file" id="supporting-docs-input" accept="application/pdf,image/png,image/jpeg" multiple style="display: none;">
+                                    <div id="supporting-docs-chips" class="supporting-docs-chips-container" style="display: flex; flex-direction: column; gap: 8px; margin-bottom: 12px;"></div>
+                                </div>
                                 
                                 <!-- Premium Live OCR Timer Container
                                      Tracks and monitors real-time text extraction latency inside the workstation. -->

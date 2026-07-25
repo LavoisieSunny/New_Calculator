@@ -325,12 +325,17 @@ def chunk_paragraphs_with_page_info(page_paragraphs: list, chunk_size: int = 100
         
     return chunks_with_page
 
-def index_document(filename: str, text_lines: list, suggestions: dict) -> bool:
+def index_document(filename: str, text_lines: list, suggestions: dict = None, case_session_id: str = None, doc_type: str = None) -> bool:
     """
     Chunks document text, generates vector embeddings using Ollama nomic-embed-text, 
     and inserts them into Qdrant collection with rich metadata.
     Prevents duplicate uploads by matching file hashes.
     """
+    if suggestions is None:
+        suggestions = {}
+    if doc_type is None:
+        doc_type = suggestions.get("document_type") or "hc_judgment"
+
     client = get_qdrant_client()
     
     if client is None:
@@ -416,7 +421,9 @@ def index_document(filename: str, text_lines: list, suggestions: dict) -> bool:
                 "disability": suggestions.get("disability", ""),
                 "dependents": suggestions.get("dependents", ""),
                 "marital_status": suggestions.get("marital_status", "married"),
-                "award_amount": suggestions.get("award_amount", "")
+                "award_amount": suggestions.get("award_amount", ""),
+                "case_session_id": case_session_id,
+                "doc_type": doc_type
             }
             
             points.append(PointStruct(
@@ -435,6 +442,8 @@ def index_document(filename: str, text_lines: list, suggestions: dict) -> bool:
             points=points
         )
         logger.info(f"Indexed {len(points)} points for document '{filename}' in Qdrant successfully!")
+        if case_session_id and doc_type:
+            _FULL_TEXT_CACHE[(case_session_id, doc_type)] = full_raw_text
         return True
     except Exception as e:
         logger.error(f"Error during Qdrant indexing: {str(e)}")
@@ -444,10 +453,10 @@ def index_document(filename: str, text_lines: list, suggestions: dict) -> bool:
 # SEMANTIC QUERY SEARCH
 # ======================================================
 
-def semantic_search(query: str, limit: int = 5, case_type_filter: str = None, filename_filter: str = None) -> list:
+def semantic_search(query: str, limit: int = 5, case_type_filter: str = None, filename_filter: str = None, case_session_id_filter: str = None, doc_type_filter = None) -> list:
     """
     Performs semantic vector search across all indexed PDFs.
-    Optionally filters by case type ('injury' or 'death') and/or filename.
+    Optionally filters by case type ('injury' or 'death'), filename, case_session_id, and/or doc_type.
     """
     client = get_qdrant_client()
     
@@ -482,6 +491,32 @@ def semantic_search(query: str, limit: int = 5, case_type_filter: str = None, fi
                     match=MatchValue(value=filename_filter)
                 )
             )
+
+        if case_session_id_filter:
+            from qdrant_client.models import FieldCondition, MatchValue
+            must_conditions.append(
+                FieldCondition(
+                    key="case_session_id",
+                    match=MatchValue(value=case_session_id_filter)
+                )
+            )
+
+        if doc_type_filter:
+            from qdrant_client.models import FieldCondition, MatchValue, MatchAny
+            if isinstance(doc_type_filter, list):
+                must_conditions.append(
+                    FieldCondition(
+                        key="doc_type",
+                        match=MatchAny(any=doc_type_filter)
+                    )
+                )
+            else:
+                must_conditions.append(
+                    FieldCondition(
+                        key="doc_type",
+                        match=MatchValue(value=doc_type_filter)
+                    )
+                )
             
         search_filter = None
         if must_conditions:
@@ -517,7 +552,9 @@ def semantic_search(query: str, limit: int = 5, case_type_filter: str = None, fi
                     "award_amount": res.payload.get("award_amount", ""),
                     "page_number": res.payload.get("page_number", 1),
                     "chunk_index": res.payload.get("chunk_index", 0),
-                    "file_hash": res.payload.get("file_hash", "")
+                    "file_hash": res.payload.get("file_hash", ""),
+                    "case_session_id": res.payload.get("case_session_id", ""),
+                    "doc_type": res.payload.get("doc_type", "")
                 }
             })
             
@@ -526,14 +563,14 @@ def semantic_search(query: str, limit: int = 5, case_type_filter: str = None, fi
         logger.error(f"Error during semantic vector search: {str(e)}")
         return []
 
-def semantic_search_rag(query: str, limit: int = 5, filename_filter: str = None) -> list:
+def semantic_search_rag(query: str, limit: int = 5, filename_filter: str = None, case_session_id_filter: str = None, doc_type_filter = None) -> list:
     """
     Retrieves relevant text chunks from the vector database.
     If filename_filter exists: search only that PDF
     Else: search entire library
     """
-    logger.info(f"RAG search query='{query}', limit={limit}, filename_filter='{filename_filter}'")
-    return semantic_search(query, limit=limit, filename_filter=filename_filter)
+    logger.info(f"RAG search query='{query}', limit={limit}, filename_filter='{filename_filter}', case_session_id_filter='{case_session_id_filter}', doc_type_filter='{doc_type_filter}'")
+    return semantic_search(query, limit=limit, filename_filter=filename_filter, case_session_id_filter=case_session_id_filter, doc_type_filter=doc_type_filter)
 
 def scroll_documents_by_case_type(case_type: str = None, limit: int = 200) -> list:
     """
@@ -667,3 +704,73 @@ def delete_document(filename: str) -> bool:
     except Exception as e:
         logger.error(f"Error deleting document '{filename}' from Qdrant: {str(e)}")
         return False
+
+
+_FULL_TEXT_CACHE = {}  # (case_session_id, doc_type) -> text
+
+def get_supporting_doc_text(case_session_id: str, doc_type: str) -> str:
+    """
+    Retrieves supporting document text from memory cache or Qdrant points.
+    - If doc_type == "lower_court", prefers concatenated full text of the OCR.
+    - If doc_type == "hospital_record", retrieves chunks via semantic search or scroll.
+    """
+    if not case_session_id:
+        return ""
+    
+    cache_key = (case_session_id, doc_type)
+    if cache_key in _FULL_TEXT_CACHE:
+        logger.info(f"Retrieved full text for {doc_type} from memory cache.")
+        return _FULL_TEXT_CACHE[cache_key]
+
+    client = get_qdrant_client()
+    if client is None:
+        return ""
+
+    try:
+        from qdrant_client.models import Filter, FieldCondition, MatchValue
+
+        # For hospital_record, run semantic search on top chunks
+        if doc_type == "hospital_record":
+            query_text = "medical evidence hospital records injury disability treatment surgery bills admission discharge summary"
+            query_vector = get_ollama_embedding(query_text)
+            if query_vector is not None:
+                query_filter = Filter(must=[
+                    FieldCondition(key="case_session_id", match=MatchValue(value=case_session_id)),
+                    FieldCondition(key="doc_type", match=MatchValue(value=doc_type))
+                ])
+                search_res = client.search(
+                    collection_name=COLLECTION_NAME,
+                    query_vector=query_vector,
+                    query_filter=query_filter,
+                    limit=10
+                )
+                full_text = "\n\n".join(hit.payload.get("text") or "" for hit in search_res)
+                _FULL_TEXT_CACHE[cache_key] = full_text
+                return full_text
+
+        # For lower_court and default fallback, scroll and concatenate in chunk order
+        scroll_filter = Filter(must=[
+            FieldCondition(key="case_session_id", match=MatchValue(value=case_session_id)),
+            FieldCondition(key="doc_type", match=MatchValue(value=doc_type))
+        ])
+
+        scroll_res, _ = client.scroll(
+            collection_name=COLLECTION_NAME,
+            scroll_filter=scroll_filter,
+            limit=100,
+            with_payload=True
+        )
+
+        if not scroll_res:
+            return ""
+
+        # Sort chunks by chunk_index to ensure they are in order
+        points_sorted = sorted(scroll_res, key=lambda p: p.payload.get("chunk_index") or 0)
+        full_text = "\n".join(p.payload.get("text") or "" for p in points_sorted)
+        
+        _FULL_TEXT_CACHE[cache_key] = full_text
+        return full_text
+
+    except Exception as e:
+        logger.error(f"Error reassembling supporting doc text for session={case_session_id}, type={doc_type}: {e}")
+        return ""

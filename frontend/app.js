@@ -20,6 +20,7 @@ document.addEventListener("DOMContentLoaded", () => {
     let currentOcrRawText = []; // Recover raw text from the last successful single OCR
     let lastAiRecoverySignature = null;
     let lastAiRecoveryResult = null;
+    let currentCaseSessionId = null;
 
     // Global Cache for Extracted Field Population (Part 5)
     let lastExtractedFields = {};
@@ -949,6 +950,7 @@ document.addEventListener("DOMContentLoaded", () => {
     });
 
     function resetSingleUploadUI(triggerClick = false) {
+        currentCaseSessionId = null;
         if (singleDropZone) {
             singleDropZone.classList.remove("compact");
         }
@@ -957,6 +959,12 @@ document.addEventListener("DOMContentLoaded", () => {
             if (triggerClick) {
                 singleFileInput.click();
             }
+        }
+        if (supportingDocsSection) {
+            supportingDocsSection.style.display = "none";
+        }
+        if (supportingDocsChips) {
+            supportingDocsChips.innerHTML = "";
         }
     }
 
@@ -1057,6 +1065,7 @@ document.addEventListener("DOMContentLoaded", () => {
         // Show the PDF immediately, before OCR even starts, so the person has
         // something useful to read/scroll while extraction runs in the background.
         const immediateBlobUrl = URL.createObjectURL(file);
+        currentCaseSessionId = crypto.randomUUID();
         if (singlePreviewFilename) {
             singlePreviewFilename.innerHTML = `${file.name} <span class="badge source-badge" id="single-preview-source-badge" style="margin-left: 8px; background: rgba(251, 191, 36, 0.2); color: #f59e0b; border: 1px solid rgba(251, 191, 36, 0.3); font-size: 0.7rem; padding: 2px 6px; border-radius: 4px; display: inline-block;"><i class="fa-solid fa-spinner fa-spin"></i> Extracting...</span>`;
         }
@@ -1092,6 +1101,9 @@ document.addEventListener("DOMContentLoaded", () => {
 
         const formData = new FormData();
         formData.append("file", file);
+        if (currentCaseSessionId) {
+            formData.append("case_session_id", currentCaseSessionId);
+        }
 
         try {
             const response = await fetch("/api/ocr/process-ocr", {
@@ -1198,6 +1210,9 @@ document.addEventListener("DOMContentLoaded", () => {
                             // Highlight and show the live metrics and precedents cards
                             if (liveMetricsCard) liveMetricsCard.classList.add("show");
                             if (evaluatorCard) evaluatorCard.classList.add("show");
+                            if (supportingDocsSection) {
+                                supportingDocsSection.style.display = "block";
+                            }
 
 
 
@@ -1279,18 +1294,27 @@ document.addEventListener("DOMContentLoaded", () => {
     async function handleBatchUpload(files) {
         // Start the Live OCR timer for batch processing
         startOcrTimer();
-        const formData = new FormData();
         let validPdfCount = 0;
 
         for (let i = 0; i < files.length; i++) {
             const file = files[i];
             const isPdf = file.type === "application/pdf" || file.name.toLowerCase().endsWith(".pdf");
             if (isPdf) {
-                formData.append("files", file);
                 validPdfCount++;
-
+                const file_id = "file_" + Math.random().toString(36).substring(2, 12);
+                fileQueue.push({
+                    file_id: file_id,
+                    filename: file.name,
+                    status: "queued",
+                    progress: 10,
+                    suggestions: null,
+                    raw_text: []
+                });
                 // Map local filename to the file object to facilitate local iframe previewing!
                 uploadedFileObjects[file.name] = file;
+                
+                // Process the supporting document asynchronously
+                processSupportingDoc(file, file_id);
             }
         }
 
@@ -1299,36 +1323,56 @@ document.addEventListener("DOMContentLoaded", () => {
             return;
         }
 
+        renderQueueList();
+    }
+
+    async function processSupportingDoc(file, file_id) {
+        const idx = fileQueue.findIndex(f => f.file_id === file_id);
+        if (idx !== -1) {
+            fileQueue[idx].status = "scanning";
+            fileQueue[idx].progress = 30;
+            renderQueueList();
+        }
+
+        const formData = new FormData();
+        formData.append("file", file);
+        if (currentCaseSessionId) {
+            formData.append("case_session_id", currentCaseSessionId);
+        }
+
         try {
-            const response = await fetch("/api/ocr/upload-batch", {
+            const response = await fetch("/api/ocr/process-supporting-doc", {
                 method: "POST",
                 body: formData
             });
 
             if (!response.ok) {
-                throw new Error("Batch upload failed");
+                throw new Error("Failed to process supporting document");
             }
 
             const data = await response.json();
-
-            // Append files to our local tracker
-            data.queue.forEach(item => {
-                fileQueue.push({
-                    file_id: item.file_id,
-                    filename: item.filename,
-                    status: "queued",
-                    progress: 0,
-                    suggestions: null,
-                    raw_text: []
-                });
-            });
-
-            renderQueueList();
-            startQueuePolling();
-
+            
+            const idxDone = fileQueue.findIndex(f => f.file_id === file_id);
+            if (idxDone !== -1) {
+                fileQueue[idxDone].status = "indexed";
+                fileQueue[idxDone].progress = 100;
+                fileQueue[idxDone].ocr_debug = data.ocr_debug;
+                renderQueueList();
+            }
         } catch (error) {
-            console.error("Error uploading batch PDFs:", error);
-            alert("Failed to upload batch files to the server.");
+            console.error("Error processing supporting doc:", error);
+            const idxErr = fileQueue.findIndex(f => f.file_id === file_id);
+            if (idxErr !== -1) {
+                fileQueue[idxErr].status = "failed";
+                fileQueue[idxErr].progress = 100;
+                fileQueue[idxErr].error = error.message;
+                renderQueueList();
+            }
+        } finally {
+            const activeFiles = fileQueue.filter(f => f.status === "queued" || f.status === "scanning" || f.status === "indexing");
+            if (activeFiles.length === 0) {
+                stopOcrTimerSuccess();
+            }
         }
     }
 
@@ -1745,7 +1789,10 @@ This cannot be undone.`)) return;
                 const response = await fetch("/api/ocr/ai-recover", {
                     method: "POST",
                     headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({ raw_text: currentOcrRawText })
+                    body: JSON.stringify({ 
+                        raw_text: currentOcrRawText,
+                        case_session_id: currentCaseSessionId
+                    })
                 });
 
                 loader.remove();
@@ -2419,7 +2466,11 @@ This cannot be undone.`)) return;
             const response = await fetch("/api/ocr/ai-recover", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ raw_text: rawTextLines, track: track })
+                body: JSON.stringify({ 
+                    raw_text: rawTextLines, 
+                    track: track,
+                    case_session_id: currentCaseSessionId
+                })
             });
 
             loader.remove();
@@ -2577,7 +2628,8 @@ This cannot be undone.`)) return;
             const payload = {
                 message: query,
                 case_type: chatCaseFilter.value,
-                history: precedentChatHistory.slice(-12)
+                history: precedentChatHistory.slice(-12),
+                case_session_id: currentCaseSessionId
             };
 
             const chatDocumentFilter = document.getElementById("chat-document-filter");
@@ -3378,8 +3430,11 @@ This cannot be undone.`)) return;
                 innerHTML += `
                     <div id="final-judicial-summary-block" style="margin-top: 12px; padding: 12px; background: rgba(255,255,255,0.02); border: 1px solid rgba(255,255,255,0.08); border-radius: var(--radius-sm); display: flex; flex-direction: column; gap: 10px;">
                         <div style="display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid rgba(255,255,255,0.06); padding-bottom: 6px;">
-                            <span style="font-size: 0.85rem; font-weight: 700; color: var(--text-primary); text-transform: uppercase; display: flex; align-items: center; gap: 6px;">
+                            <span style="font-size: 0.85rem; font-weight: 700; color: var(--text-primary); text-transform: uppercase; display: inline-flex; align-items: center; gap: 8px;">
                                 <i class="fa-solid fa-scale-balanced" style="color: var(--color-primary);"></i> High Court Judicial Analysis
+                                <button type="button" id="refresh-judicial-btn" class="btn btn-secondary btn-xsmall" style="padding: 2px 6px; font-size: 0.7rem; line-height: 1; cursor: pointer; display: inline-flex; align-items: center; gap: 4px;" title="Refresh Analysis with Supporting Documents">
+                                    <i class="fa-solid fa-sync-alt"></i> Refresh
+                                </button>
                             </span>
                             <span class="badge" style="background: ${outcomeBadgeColor}; color: #fff; font-weight: 700; padding: 3px 8px; border-radius: var(--radius-sm); font-size: 0.75rem;">
                                 ${outcomeLabel}
@@ -3418,6 +3473,11 @@ This cannot be undone.`)) return;
         `;
 
         container.innerHTML = innerHTML;
+
+        const refreshBtn = document.getElementById("refresh-judicial-btn");
+        if (refreshBtn) {
+            refreshBtn.addEventListener("click", refreshJudicialAnalysis);
+        }
 
         if (typeof triggerTabNotification === "function") {
             triggerTabNotification("enhancement-check");
@@ -3558,6 +3618,13 @@ This cannot be undone.`)) return;
 
     document.getElementById("reset-btn").addEventListener("click", () => {
         compensationForm.reset();
+        currentCaseSessionId = null;
+        if (supportingDocsSection) {
+            supportingDocsSection.style.display = "none";
+        }
+        if (supportingDocsChips) {
+            supportingDocsChips.innerHTML = "";
+        }
 
         window.lastRawText = "";
         const suggestionDiv = document.getElementById("case-type-suggestion");
@@ -3997,7 +4064,8 @@ This cannot be undone.`)) return;
                 parsed_fields: parsedFields,
                 calculator_result: calculatorResult,
                 is_justify: isJustify,
-                history: assistantChatHistory.slice(-12)
+                history: assistantChatHistory.slice(-12),
+                case_session_id: currentCaseSessionId
             };
 
             const response = await fetch("/api/chat/pdf/stream", {
@@ -4560,6 +4628,199 @@ This cannot be undone.`)) return;
 
     // Global exposure of local math calculator for parity tests
     window.calculateCompensationLocally = calculateCompensationLocally;
+
+    // --- SUPPORTING DOCUMENTS UI & PROCESSING ENGINE ---
+    const supportingDocsSection = document.getElementById("supporting-docs-section");
+    const addSupportingDocsBtn = document.getElementById("add-supporting-docs-btn");
+    const supportingDocsInput = document.getElementById("supporting-docs-input");
+    const supportingDocsChips = document.getElementById("supporting-docs-chips");
+
+    if (addSupportingDocsBtn && supportingDocsInput) {
+        addSupportingDocsBtn.addEventListener("click", () => {
+            supportingDocsInput.click();
+        });
+    }
+
+    if (supportingDocsInput) {
+        supportingDocsInput.addEventListener("change", (e) => {
+            if (e.target.files.length > 0) {
+                handleSupportingDocsSelect(e.target.files);
+            }
+        });
+    }
+
+    function handleSupportingDocsSelect(files) {
+        for (let i = 0; i < files.length; i++) {
+            const file = files[i];
+            const file_id = "supp_" + Math.random().toString(36).substring(2, 12);
+            renderSupportingDocChip(file, file_id);
+        }
+        supportingDocsInput.value = ""; // Reset input so same file can be selected again
+    }
+
+    function renderSupportingDocChip(file, file_id) {
+        const chip = document.createElement("div");
+        chip.className = "supporting-doc-chip";
+        chip.id = file_id;
+        chip.innerHTML = `
+            <div style="display: flex; align-items: center; gap: 10px; overflow: hidden; flex: 1;">
+                <i class="fa-solid fa-file-pdf" style="color: var(--color-danger); font-size: 1.2rem; flex-shrink: 0;"></i>
+                <span class="filename" style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; font-size: 0.85rem; color: var(--text-primary); max-width: 180px;" title="${file.name}">${file.name}</span>
+                
+                <select class="doc-type-select" style="background: var(--bg-panel-light, rgba(255, 255, 255, 0.05)); border: 1px solid var(--border-color); color: var(--text-primary); padding: 4px 8px; border-radius: 6px; font-size: 0.78rem; cursor: pointer; font-weight: 500;">
+                    <option value="lower_court">Lower Court Judgment</option>
+                    <option value="hospital_record">Hospital Record</option>
+                    <option value="other">Other</option>
+                </select>
+
+                <label class="enhance-ocr-label" style="display: inline-flex; align-items: center; gap: 4px; font-size: 0.75rem; cursor: pointer; color: var(--text-secondary); user-select: none;">
+                    <input type="checkbox" class="enhance-ocr-checkbox" style="cursor: pointer; width: 14px; height: 14px; accent-color: var(--color-primary);">
+                    <span>Enhance OCR</span>
+                </label>
+            </div>
+            
+            <div class="action-container" style="display: flex; align-items: center; gap: 10px; flex-shrink: 0;">
+                <span class="status-badge queued">queued</span>
+                <button type="button" class="upload-btn btn btn-primary btn-small" style="padding: 4px 10px; font-size: 0.78rem; line-height: 1;">
+                    <i class="fa-solid fa-upload"></i> Upload
+                </button>
+            </div>
+        `;
+
+        if (supportingDocsChips) {
+            supportingDocsChips.appendChild(chip);
+        }
+
+        // Attach upload handler
+        const uploadBtn = chip.querySelector(".upload-btn");
+        const docTypeSelect = chip.querySelector(".doc-type-select");
+        const enhanceOcrCheckbox = chip.querySelector(".enhance-ocr-checkbox");
+        const statusBadge = chip.querySelector(".status-badge");
+
+        uploadBtn.addEventListener("click", () => {
+            // Disable inputs during upload
+            docTypeSelect.disabled = true;
+            enhanceOcrCheckbox.disabled = true;
+            uploadBtn.style.display = "none";
+            
+            // Start upload process
+            uploadSupportingDoc(file, file_id, docTypeSelect.value, enhanceOcrCheckbox.checked, statusBadge);
+        });
+    }
+
+    async function uploadSupportingDoc(file, file_id, doc_type, enhance_ocr, statusBadge) {
+        statusBadge.textContent = "processing";
+        statusBadge.className = "status-badge processing";
+
+        const formData = new FormData();
+        formData.append("file", file);
+        formData.append("doc_type", doc_type);
+        if (currentCaseSessionId) {
+            formData.append("case_session_id", currentCaseSessionId);
+        }
+        formData.append("enhance_ocr", enhance_ocr);
+
+        try {
+            // Trigger SSE process endpoint
+            const response = await fetch("/api/ocr/process-supporting-doc", {
+                method: "POST",
+                body: formData
+            });
+
+            if (!response.ok) {
+                throw new Error("Supporting document process initiation failed.");
+            }
+
+            // Read the stream
+            const reader = response.body.getReader();
+            const decoder = new TextDecoder();
+            let buffer = "";
+
+            while (true) {
+                const { done, value } = await reader.read();
+                if (done) break;
+
+                buffer += decoder.decode(value, { stream: true });
+                const lines = buffer.split("\n");
+                buffer = lines.pop();
+
+                for (const line of lines) {
+                    const cleanLine = line.trim();
+                    if (!cleanLine.startsWith("data: ")) continue;
+
+                    const payload = cleanLine.slice(6);
+                    const data = JSON.parse(payload);
+
+                    if (data.message) {
+                        statusBadge.textContent = data.message;
+                    }
+
+                    if (data.status === "done") {
+                        if (data.success) {
+                            statusBadge.textContent = "done";
+                            statusBadge.className = "status-badge done";
+                            showToast(`Supporting document "${file.name}" successfully indexed!`, "success");
+                            if (document.getElementById("final-judicial-summary-block")) {
+                                refreshJudicialAnalysis();
+                            }
+                        } else {
+                            statusBadge.textContent = "failed";
+                            statusBadge.className = "status-badge failed";
+                            showToast(`Failed to process "${file.name}": ${data.message || "Unknown error"}`, "error");
+                        }
+                    } else if (data.status === "failed") {
+                        statusBadge.textContent = "failed";
+                        statusBadge.className = "status-badge failed";
+                        showToast(`Failed to process "${file.name}": ${data.message || "Unknown error"}`, "error");
+                    }
+                }
+            }
+        } catch (err) {
+            console.error("Supporting doc upload failed:", err);
+            statusBadge.textContent = "failed";
+            statusBadge.className = "status-badge failed";
+            showToast(`Failed to process "${file.name}": ${err.message}`, "error");
+        }
+    }
+
+    async function refreshJudicialAnalysis() {
+        const refreshBtn = document.getElementById("refresh-judicial-btn");
+        if (!refreshBtn) return;
+        const origHTML = refreshBtn.innerHTML;
+        refreshBtn.disabled = true;
+        refreshBtn.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i> Refreshing...`;
+
+        try {
+            const response = await fetch("/api/ocr/ai-recover", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ 
+                    raw_text: currentOcrRawText,
+                    track: window.detectedTrack || "high_court",
+                    case_session_id: currentCaseSessionId
+                })
+            });
+
+            if (!response.ok) {
+                throw new Error("AI refresh failed");
+            }
+            const data = await response.json();
+            if (data.success) {
+                updateEnhancementCheck(data);
+                showToast("Judicial Analysis updated with supporting documents!", "success");
+            } else {
+                showToast("Failed to refresh analysis", "error");
+            }
+        } catch (err) {
+            console.error("Refresh analysis error:", err);
+            showToast("Failed to refresh analysis: " + err.message, "error");
+        } finally {
+            if (refreshBtn) {
+                refreshBtn.disabled = false;
+                refreshBtn.innerHTML = origHTML;
+            }
+        }
+    }
 });
 
 

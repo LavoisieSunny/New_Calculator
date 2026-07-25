@@ -62,6 +62,7 @@ app.add_middleware(
 class ChatRequest(BaseModel):
     message: str
     case_type: str = "all"  # 'injury', 'death', or 'all'
+    case_session_id: str | None = None
 
 class EvaluateRequest(BaseModel):
     params: dict
@@ -101,7 +102,7 @@ async def legal_ai_chat(request: ChatRequest):
         case_filter = None if request.case_type == "all" else request.case_type
         
         # 1. Perform semantic search
-        logger_results = semantic_search(request.message, limit=3, case_type_filter=case_filter)
+        logger_results = semantic_search(request.message, limit=3, case_type_filter=case_filter, case_session_id_filter=request.case_session_id)
         
         if not logger_results:
             # Fallback chat response if Qdrant is empty
@@ -156,6 +157,7 @@ class PDFChatRequest(BaseModel):
     message: str | None = None  # Backwards compatibility
     filename: str | None = None  # if provided, chats strictly with this PDF
     case_type: str = "all"  # 'injury', 'death', or 'all'
+    case_session_id: str | None = None
     
     # Validation context fields
     ocr_text: str | None = None
@@ -251,8 +253,8 @@ async def prepare_pdf_chat_prompt(request: PDFChatRequest):
         # Use two targeted queries that will actually match the award table
         # and the grounds of appeal section in Qdrant chunks
         results_award, results_grounds = await asyncio.gather(
-            asyncio.to_thread(semantic_search_rag, query="compensation awarded amount medical expenses pain suffering transport attender loss of income heads", limit=4, filename_filter=filename_filter),
-            asyncio.to_thread(semantic_search_rag, query="grounds of appeal enhancement disfiguration ear loss marriage prospects disability", limit=3, filename_filter=filename_filter),
+            asyncio.to_thread(semantic_search_rag, query="compensation awarded amount medical expenses pain suffering transport attender loss of income heads", limit=4, filename_filter=filename_filter, case_session_id_filter=request.case_session_id),
+            asyncio.to_thread(semantic_search_rag, query="grounds of appeal enhancement disfiguration ear loss marriage prospects disability", limit=3, filename_filter=filename_filter, case_session_id_filter=request.case_session_id),
         )
         # Deduplicate by chunk text and merge
         seen_texts = set()
@@ -264,8 +266,8 @@ async def prepare_pdf_chat_prompt(request: PDFChatRequest):
                 search_results.append(r)
     elif is_summary_q:
         results_court, results_grounds = await asyncio.gather(
-            asyncio.to_thread(semantic_search_rag, query="court tribunal appeal case number appellant respondents claim award", limit=4, filename_filter=filename_filter),
-            asyncio.to_thread(semantic_search_rag, query="grounds of appeal relief prayer enhancement exoneration liability arguments", limit=4, filename_filter=filename_filter),
+            asyncio.to_thread(semantic_search_rag, query="court tribunal appeal case number appellant respondents claim award", limit=4, filename_filter=filename_filter, case_session_id_filter=request.case_session_id),
+            asyncio.to_thread(semantic_search_rag, query="grounds of appeal relief prayer enhancement exoneration liability arguments", limit=4, filename_filter=filename_filter, case_session_id_filter=request.case_session_id),
         )
         seen_texts = set()
         search_results = []
@@ -279,7 +281,8 @@ async def prepare_pdf_chat_prompt(request: PDFChatRequest):
             semantic_search_rag,
             query=question_str,
             limit=5,
-            filename_filter=filename_filter
+            filename_filter=filename_filter,
+            case_session_id_filter=request.case_session_id
         )
     
     # 2. Construct context from retrieved points
@@ -298,9 +301,30 @@ async def prepare_pdf_chat_prompt(request: PDFChatRequest):
         })
         
     retrieved_chunks = "\n\n".join(context_blocks)
+
+    # Retrieve relevant supporting documents chunks if case_session_id is active
+    supporting_context = ""
+    if request.case_session_id:
+        supporting_results = await asyncio.to_thread(
+            semantic_search_rag,
+            query=question_str,
+            limit=3,
+            case_session_id_filter=request.case_session_id,
+            doc_type_filter=["lower_court", "hospital_record", "other"]
+        )
+        if supporting_results:
+            supp_blocks = []
+            for res in supporting_results:
+                text_block = res.get("text", "").strip()
+                filename = res.get("filename", "unknown")
+                doc_type = res.get("metadata", {}).get("doc_type", "supporting_doc")
+                supp_blocks.append(f"[Supporting Doc ({doc_type}) - {filename}]:\n{text_block}")
+            supporting_context = "\n\n".join(supp_blocks)
     
     # 3. Incorporate Workstation Context (Phase 8 state integration)
     chunks_combined = retrieved_chunks
+    if supporting_context:
+        chunks_combined = chunks_combined + "\n\n=== SUPPORTING DOCUMENTS CONTEXT ===\n\n" + supporting_context
     workstation_blocks = []
     if request.ocr_text:
         if request.is_justify or is_summary_q:
