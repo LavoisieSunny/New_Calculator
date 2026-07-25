@@ -706,7 +706,51 @@ def delete_document(filename: str) -> bool:
         return False
 
 
-_FULL_TEXT_CACHE = {}  # (case_session_id, doc_type) -> text
+import collections
+import time
+import threading
+
+class BoundedCache(collections.OrderedDict):
+    def __init__(self, maxsize=200, ttl=3600):
+        super().__init__()
+        self.maxsize = maxsize
+        self.ttl = ttl
+        self._lock = threading.Lock()
+
+    def __contains__(self, key):
+        with self._lock:
+            if not super().__contains__(key):
+                return False
+            timestamp, _ = super().__getitem__(key)
+            if time.time() - timestamp > self.ttl:
+                super().pop(key, None)
+                return False
+            return True
+
+    def __getitem__(self, key):
+        with self._lock:
+            timestamp, val = super().__getitem__(key)
+            if time.time() - timestamp > self.ttl:
+                super().pop(key, None)
+                raise KeyError(key)
+            self.move_to_end(key)
+            return val
+
+    def __setitem__(self, key, value):
+        with self._lock:
+            if super().__contains__(key):
+                super().pop(key, None)
+            elif len(self) >= self.maxsize:
+                super().popitem(last=False)
+            super().__setitem__(key, (time.time(), value))
+
+    def get(self, key, default=None):
+        try:
+            return self[key]
+        except KeyError:
+            return default
+
+_FULL_TEXT_CACHE = BoundedCache(maxsize=200, ttl=3600)  # (case_session_id, doc_type) -> text
 
 def get_supporting_doc_text(case_session_id: str, doc_type: str) -> str:
     """
