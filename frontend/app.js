@@ -8,6 +8,28 @@ window.onerror = function (msg, src, line, col, err) {
     console.error("GLOBAL ERROR DETECTED:", msg, "at", src, "line:", line, err);
 };
 
+// crypto.randomUUID() only exists in secure contexts (HTTPS or localhost).
+// This app may be accessed over plain HTTP via a LAN IP, where it's undefined.
+// crypto.getRandomValues() has no such restriction, so build the UUID from that.
+function generateCaseSessionId() {
+    if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+        try {
+            return crypto.randomUUID();
+        } catch (e) {
+            // fall through to manual generation
+        }
+    }
+    if (typeof crypto !== "undefined" && typeof crypto.getRandomValues === "function") {
+        const bytes = crypto.getRandomValues(new Uint8Array(16));
+        bytes[6] = (bytes[6] & 0x0f) | 0x40; // version 4
+        bytes[8] = (bytes[8] & 0x3f) | 0x80; // variant
+        const hex = [...bytes].map(b => b.toString(16).padStart(2, "0")).join("");
+        return `${hex.slice(0,8)}-${hex.slice(8,12)}-${hex.slice(12,16)}-${hex.slice(16,20)}-${hex.slice(20)}`;
+    }
+    // Last-resort fallback (not cryptographically strong, but fine for a client-side session id)
+    return "case-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 10);
+}
+
 document.addEventListener("DOMContentLoaded", () => {
 
     // --- STATE VARIABLES ---
@@ -1065,7 +1087,12 @@ document.addEventListener("DOMContentLoaded", () => {
         // Show the PDF immediately, before OCR even starts, so the person has
         // something useful to read/scroll while extraction runs in the background.
         const immediateBlobUrl = URL.createObjectURL(file);
-        currentCaseSessionId = crypto.randomUUID();
+        try {
+            currentCaseSessionId = generateCaseSessionId();
+        } catch (e) {
+            console.error("Failed to generate case session id, continuing without it:", e);
+            currentCaseSessionId = null;
+        }
         if (singlePreviewFilename) {
             singlePreviewFilename.innerHTML = `${file.name} <span class="badge source-badge" id="single-preview-source-badge" style="margin-left: 8px; background: rgba(251, 191, 36, 0.2); color: #f59e0b; border: 1px solid rgba(251, 191, 36, 0.3); font-size: 0.7rem; padding: 2px 6px; border-radius: 4px; display: inline-block;"><i class="fa-solid fa-spinner fa-spin"></i> Extracting...</span>`;
         }
