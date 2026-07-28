@@ -1283,6 +1283,7 @@ def _verify_final_summary_grounding(summary: dict, source_text: str) -> dict:
         return summary
         
     source_normalized = (source_text or "").lower().replace(",", "")
+    source_digits = re.sub(r"\D", "", source_text or "")
     
     def _numbers(s: str) -> list:
         return re.findall(r"\b[a-zA-Z]*\d+[\w\d\.,\-%/]*\b", s or "")
@@ -1293,7 +1294,8 @@ def _verify_final_summary_grounding(summary: dict, source_text: str) -> dict:
             bad = None
             for raw in _numbers(item):
                 digits = re.sub(r"\D", "", raw)
-                if digits and len(digits) >= 2 and digits not in source_normalized and raw.lower() not in source_normalized:
+                raw_normalized = raw.lower().replace(",", "")
+                if digits and len(digits) >= 2 and digits not in source_digits and raw_normalized not in source_normalized:
                     bad = raw
                     logger.warning(f"[FINAL-SUMMARY GROUNDING CHECK] Unverified number '{raw}' in text snippet: {_redact(item)}")
                     break
