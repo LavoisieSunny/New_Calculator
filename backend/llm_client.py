@@ -1855,6 +1855,62 @@ def classify_sections_via_llm(full_text: str) -> dict:
         return None
 
 
+def find_missing_claims(grounds_claims: list, trial_claims: list, match_threshold: float = 72.0) -> list:
+    """Deterministic fuzzy matcher: for every claim raised in the HC grounds of
+    appeal / relief, check whether a sufficiently similar claim was actually
+    addressed in the trial court issues/award text. Anything that doesn't
+    clear the threshold against ANY trial claim is surfaced as a candidate
+    factual discrepancy for the LLM to confirm or reject -- this is what
+    populates `candidate_discrepancies` in generate_final_judicial_summary.
+
+    Returns a list already shaped like validate_factual_discrepancies_shape
+    expects: {"claim", "category", "found_in_grounds", "found_in_trial_court", "note"}.
+    """
+    if not isinstance(grounds_claims, list) or not grounds_claims:
+        return []
+    if not isinstance(trial_claims, list):
+        trial_claims = []
+
+    candidates = []
+    for g in grounds_claims:
+        if not isinstance(g, dict):
+            continue
+        g_claim = str(g.get("claim", "")).strip()
+        if not g_claim:
+            continue
+        g_category = str(g.get("category", "other"))
+
+        best_score = 0.0
+        for t in trial_claims:
+            if not isinstance(t, dict):
+                continue
+            t_claim = str(t.get("claim", "")).strip()
+            if not t_claim:
+                continue
+            score = max(
+                fuzz.partial_ratio(g_claim.lower(), t_claim.lower()),
+                fuzz.token_set_ratio(g_claim.lower(), t_claim.lower()),
+            )
+            if score > best_score:
+                best_score = score
+            if best_score >= match_threshold:
+                break  # good enough match found, no need to keep scanning
+
+        if best_score < match_threshold:
+            candidates.append({
+                "claim": g_claim,
+                "category": g_category,
+                "found_in_grounds": True,
+                "found_in_trial_court": False,
+                "note": (
+                    "Raised in HC grounds/relief but no comparable claim found in the "
+                    f"trial court issues/award (best fuzzy match score={best_score:.0f})."
+                ),
+            })
+
+    return candidates
+
+
 def generate_final_judicial_summary(sections: dict, heuristic_signal: dict = None, case_type: str = "death", supporting_docs: dict = None) -> dict:
     import hashlib
     from backend.parser_heuristics import normalize_issues_table
