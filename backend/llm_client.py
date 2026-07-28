@@ -1870,6 +1870,7 @@ def generate_final_judicial_summary(sections: dict, heuristic_signal: dict = Non
                 model=LLM_FINAL_SUMMARY_MODEL_NAME,
                 temperature=LLM_FINAL_SUMMARY_TEMPERATURE
             )
+            response = re.sub(r"<think>.*?</think>", "", response, flags=re.DOTALL).strip()
             s = response.find("{")
             e = response.rfind("}")
             candidate = response[s:e+1] if s != -1 and e != -1 and e > s else response

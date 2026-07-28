@@ -170,6 +170,16 @@
                                     <input type="file" id="supporting-docs-input" accept="application/pdf,image/png,image/jpeg" multiple style="display: none;">
                                     <div id="supporting-docs-chips" class="supporting-docs-chips-container" style="display: flex; flex-direction: column; gap: 8px; margin-bottom: 12px;"></div>
                                 </div>
+
+                                <!-- Judicial Analysis: explicit, on-demand comparison of the High
+                                     Court file against any supporting (lower court / hospital) docs.
+                                     Does not auto-run — only when the button below is clicked. -->
+                                <div id="judicial-analysis-section" style="margin-bottom: 12px;">
+                                    <button type="button" id="check-judicial-analysis-btn" class="btn btn-secondary" style="width: 100%; display: inline-flex; align-items: center; justify-content: center; gap: 8px; padding: 12px 16px; font-size: 0.85rem; font-weight: 700; border-radius: var(--radius-sm);">
+                                        <i class="fa-solid fa-scale-balanced"></i> Check Judicial Analysis
+                                    </button>
+                                    <div id="judicial-analysis-result" style="margin-top: 10px; display: none;"></div>
+                                </div>
                                 
                                 <!-- Premium Live OCR Timer Container
                                      Tracks and monitors real-time text extraction latency inside the workstation. -->

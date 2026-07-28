@@ -4794,6 +4794,172 @@ This cannot be undone.`)) return;
         });
     }
 
+    // --- CHECK JUDICIAL ANALYSIS (on-demand, gated on supporting-doc status) ---
+    const checkJudicialAnalysisBtn = document.getElementById("check-judicial-analysis-btn");
+    const judicialAnalysisResult = document.getElementById("judicial-analysis-result");
+
+    function renderJudicialProcessingState(message) {
+        if (!judicialAnalysisResult) return;
+        judicialAnalysisResult.style.display = "block";
+        judicialAnalysisResult.innerHTML = `
+            <div style="padding: 14px; background: rgba(59,130,246,0.08); border: 1px solid rgba(59,130,246,0.25); border-radius: var(--radius-sm); display: flex; align-items: center; gap: 10px; font-size: 0.85rem; color: var(--text-secondary);">
+                <i class="fa-solid fa-spinner fa-spin" style="color: var(--color-primary);"></i>
+                ${message}
+            </div>
+        `;
+    }
+
+    function renderJudicialErrorState(message) {
+        if (!judicialAnalysisResult) return;
+        judicialAnalysisResult.style.display = "block";
+        judicialAnalysisResult.innerHTML = `
+            <div style="padding: 14px; background: rgba(239,68,68,0.08); border: 1px solid rgba(239,68,68,0.25); border-radius: var(--radius-sm); font-size: 0.85rem; color: #f87171;">
+                <i class="fa-solid fa-triangle-exclamation"></i> ${message}
+            </div>
+        `;
+    }
+
+    function renderJudicialAnalysisPanel(finalJudicial) {
+        if (!judicialAnalysisResult) return;
+        const issueWise = finalJudicial.issue_wise_view || [];
+        const finalPoints = finalJudicial.final_summary_points || [];
+        const probableOutcome = finalJudicial.probable_outcome || "not_determinable";
+        const summarySource = finalJudicial.summary_source || "llm_summary";
+
+        let outcomeBadgeColor = "#6c757d";
+        let outcomeLabel = "Not Determinable";
+        if (probableOutcome === "enhancement") { outcomeBadgeColor = "#22c55e"; outcomeLabel = "Enhancement Likely"; }
+        else if (probableOutcome === "reduction") { outcomeBadgeColor = "#eab308"; outcomeLabel = "Reduction Likely"; }
+        else if (probableOutcome === "exoneration") { outcomeBadgeColor = "#a855f7"; outcomeLabel = "Exoneration / Set Aside"; }
+        else if (probableOutcome === "upheld") { outcomeBadgeColor = "#3b82f6"; outcomeLabel = "Award Upheld"; }
+
+        let degradationNotice = "";
+        if (summarySource === "insufficient_input" || summarySource === "fallback") {
+            const msg = finalPoints.length > 0 ? finalPoints[0] : "Limited automated analysis -- trial court section not fully detected.";
+            degradationNotice = `
+                <div style="padding: 8px 12px; background: rgba(234,179,8,0.1); border: 1px solid rgba(234,179,8,0.3); border-radius: var(--radius-sm); font-size: 0.78rem; color: #eab308; margin-top: 4px; display: flex; align-items: center; gap: 8px;">
+                    <i class="fa-solid fa-triangle-exclamation"></i>
+                    <span>${msg}</span>
+                </div>
+            `;
+        }
+
+        let issueCardsHTML = "";
+        if (issueWise.length > 0) {
+            issueCardsHTML = issueWise.map((item, idx) => `
+                <div style="padding: 10px; background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.08); border-radius: var(--radius-sm); display: flex; flex-direction: column; gap: 6px;">
+                    <div style="font-size: 0.82rem; font-weight: 700; color: var(--color-primary); display: flex; align-items: center; gap: 6px;">
+                        <i class="fa-solid fa-gavel" style="font-size: 0.75rem;"></i> Issue ${idx + 1}: ${item.issue || 'Point for Determination'}
+                    </div>
+                    ${item.trial_court_finding ? `
+                        <div style="font-size: 0.78rem; color: var(--text-secondary); background: rgba(255,255,255,0.02); padding: 6px 8px; border-radius: 4px; border-left: 3px solid var(--color-primary);">
+                            <strong style="color: var(--text-primary);">Trial Court Finding:</strong> ${item.trial_court_finding}
+                        </div>
+                    ` : ''}
+                    ${item.hc_ground_challenge ? `
+                        <div style="font-size: 0.78rem; color: var(--text-secondary); background: rgba(255,255,255,0.02); padding: 6px 8px; border-radius: 4px; border-left: 3px solid #eab308;">
+                            <strong style="color: var(--text-primary);">HC Challenge:</strong> ${item.hc_ground_challenge}
+                        </div>
+                    ` : ''}
+                    ${item.likely_judicial_view ? `
+                        <div style="font-size: 0.78rem; color: var(--text-secondary); background: rgba(34,197,94,0.05); padding: 6px 8px; border-radius: 4px; border-left: 3px solid #22c55e;">
+                            <strong style="color: #22c55e;">Likely Judicial View:</strong> ${item.likely_judicial_view}
+                        </div>
+                    ` : ''}
+                </div>
+            `).join('');
+        }
+
+        let finalBulletsHTML = "";
+        if (finalPoints.length > 0 && summarySource === "llm_summary") {
+            finalBulletsHTML = `
+                <ul style="margin: 4px 0 0 0; padding-left: 16px; display: flex; flex-direction: column; gap: 4px;">
+                    ${finalPoints.map(p => `<li style="font-size: 0.82rem; line-height: 1.3; color: var(--text-secondary);">${p}</li>`).join('')}
+                </ul>
+            `;
+        }
+
+        judicialAnalysisResult.style.display = "block";
+        judicialAnalysisResult.innerHTML = `
+            <div style="padding: 12px; background: rgba(255,255,255,0.02); border: 1px solid rgba(255,255,255,0.08); border-radius: var(--radius-sm); display: flex; flex-direction: column; gap: 10px;">
+                <div style="display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid rgba(255,255,255,0.06); padding-bottom: 6px;">
+                    <span style="font-size: 0.85rem; font-weight: 700; color: var(--text-primary); text-transform: uppercase; display: inline-flex; align-items: center; gap: 8px;">
+                        <i class="fa-solid fa-scale-balanced" style="color: var(--color-primary);"></i> High Court Judicial Analysis
+                    </span>
+                    <span class="badge" style="background: ${outcomeBadgeColor}; color: #fff; font-weight: 700; padding: 3px 8px; border-radius: var(--radius-sm); font-size: 0.75rem;">
+                        ${outcomeLabel}
+                    </span>
+                </div>
+                ${degradationNotice}
+                ${issueCardsHTML ? `<div style="display: flex; flex-direction: column; gap: 8px;">${issueCardsHTML}</div>` : ''}
+                ${finalBulletsHTML ? `
+                    <div style="display: flex; flex-direction: column; gap: 6px; padding: 8px; background: rgba(255,255,255,0.01); border-radius: 4px;">
+                        <div style="font-size: 0.8rem; font-weight: 700; color: var(--text-primary);">Synthesized Judicial Summary</div>
+                        ${finalBulletsHTML}
+                    </div>
+                ` : ''}
+            </div>
+        `;
+    }
+
+    if (checkJudicialAnalysisBtn) {
+        checkJudicialAnalysisBtn.addEventListener("click", async () => {
+            if (!currentOcrRawText || currentOcrRawText.length === 0) {
+                showToast("Please upload and OCR the High Court case file first.", "warning");
+                return;
+            }
+
+            // Gate: if any supporting-doc chip exists but hasn't finished
+            // OCR/indexing yet, show "Processing" instead of running the
+            // comparison against incomplete/missing supporting-doc text.
+            const chips = supportingDocsChips ? Array.from(supportingDocsChips.querySelectorAll(".supporting-doc-chip")) : [];
+            const pendingChip = chips.find(chip => {
+                const badge = chip.querySelector(".status-badge");
+                const status = badge ? badge.className : "";
+                return !status.includes("done") && !status.includes("failed");
+            });
+
+            if (pendingChip) {
+                renderJudicialProcessingState("Processing the file&hellip; Judicial Analysis will be available once the supporting document finishes OCR.");
+                return;
+            }
+
+            checkJudicialAnalysisBtn.disabled = true;
+            const origHTML = checkJudicialAnalysisBtn.innerHTML;
+            checkJudicialAnalysisBtn.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i> Generating Judicial Analysis...`;
+            renderJudicialProcessingState("Processing the file&hellip;");
+
+            try {
+                const caseType = caseTypeSelect ? caseTypeSelect.value : "death";
+                const response = await fetch("/api/ocr/refresh-judicial-summary", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({
+                        raw_text: currentOcrRawText,
+                        track: window.detectedTrack || "high_court",
+                        case_session_id: currentCaseSessionId,
+                        case_type: caseType
+                    })
+                });
+
+                if (!response.ok) throw new Error("Judicial analysis request failed");
+                const data = await response.json();
+
+                if (data.success && data.final_judicial_summary) {
+                    renderJudicialAnalysisPanel(data.final_judicial_summary);
+                } else {
+                    renderJudicialErrorState("Failed to generate Judicial Analysis. Please try again.");
+                }
+            } catch (err) {
+                console.error("Judicial analysis error:", err);
+                renderJudicialErrorState(`Failed to generate Judicial Analysis: ${err.message}`);
+            } finally {
+                checkJudicialAnalysisBtn.disabled = false;
+                checkJudicialAnalysisBtn.innerHTML = origHTML;
+            }
+        });
+    }
+
     async function uploadSupportingDoc(file, file_id, doc_type, enhance_ocr, statusBadge, previewBtn) {
         statusBadge.textContent = "processing";
         statusBadge.className = "status-badge processing";
@@ -4851,9 +5017,8 @@ This cannot be undone.`)) return;
                                 previewBtn.style.display = "inline-flex";
                             }
 
-                            if (document.getElementById("final-judicial-summary-block")) {
-                                refreshJudicialAnalysis();
-                            }
+                            // Judicial Analysis is no longer auto-generated here; the user clicks
+                            // "Check Judicial Analysis" when ready.
                         } else {
                             statusBadge.textContent = "failed";
                             statusBadge.className = "status-badge failed";
