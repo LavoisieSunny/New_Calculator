@@ -1725,7 +1725,26 @@ def extract_claims(text: str, case_type: str = "death", source_label: str = "") 
     prompt = CLAIM_EXTRACTION_USER_PROMPT.format(
         case_type=case_type, source_label=source_label, text=text[:6000]
     )
-    f_ISSUE_ANCHOR_RE = re.compile(r"(वादप्रश्न|वाद\s*प्रश्न)\s*(क्र?\.?|क0|no\.?)?\s*1\b")
+    for attempt in range(2):
+        try:
+            response = generate_response(
+                prompt=prompt,
+                system_instruction=CLAIM_EXTRACTION_SYSTEM_INSTRUCTION,
+                response_format="json",
+                model=LLM_CLAIM_EXTRACTION_MODEL_NAME,
+                temperature=LLM_CLAIM_EXTRACTION_TEMPERATURE
+            )
+            s = response.find("{"); e = response.rfind("}")
+            candidate = response[s:e+1] if s != -1 and e != -1 and e > s else response
+            parsed = json.loads(candidate)
+            if isinstance(parsed, dict) and isinstance(parsed.get("claims"), list):
+                return parsed
+        except Exception as ex:
+            logger.warning(f"[CLAIM-EXTRACTION] attempt {attempt + 1} failed ({source_label}): {ex}")
+    return {"claims": []}
+
+
+_ISSUE_ANCHOR_RE = re.compile(r"(वादप्रश्न|वाद\s*प्रश्न)\s*(क्र?\.?|क0|no\.?)?\s*1\b")
 _OPERATIVE_ANCHOR_RE = re.compile(r"(अधिनिर्णय|आदेश)\s*(खुले न्यायालय|पारित)")
 
 def _split_lower_court_text(text: str):
