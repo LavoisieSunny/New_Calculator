@@ -1245,6 +1245,23 @@ def ocr_page_with_vision(
     page_num = page_idx + 1
     start = time.time()
 
+    # ── 0. Check track detection OCR probe cache to prevent redundant OCR ──
+    from backend.track_detection import _OCR_PROBE_CACHE
+    cache_key = (pdf_path, page_num)
+    if pdf_path and cache_key in _OCR_PROBE_CACHE:
+        cached_lines, cached_lang = _OCR_PROBE_CACHE[cache_key]
+        elapsed = time.time() - start
+        logger.info(f"Page {page_num}: Reusing OCR lines from track probe cache ({len(cached_lines)} lines).")
+        return cached_lines, {
+            "page": page_num, "engine": f"PaddleOCR-cached ({cached_lang})", "dpi": 100,
+            "confidence": 0.9, "text_length": len(" ".join(cached_lines)),
+            "quality_score": 0.9, "preprocessing_applied": [],
+            "lines": len(cached_lines), "ocr_boxes": [],
+            "render_time": 0.0, "ocr_time": elapsed, "total_page_time": elapsed,
+            "confidence_untrusted": False,
+            "vision_cross_checked": False
+        }
+
     # ── 1. Fast path: trust fitz digital text ───────────────────────
     if fitz_text and len(fitz_text.strip()) > 200:
         keywords = ["court", "claimant", "petitioner", "respondent", "accident",
@@ -2119,6 +2136,16 @@ def perform_ocr_on_scanned_pdf(
             with _PAGE_MEMORY_SLOTS:
                 _wait_for_memory_headroom(page_num=idx + 1)
                 try:
+                    # Determine track for this page
+                    page_track = "high_court"
+                    if isinstance(track, list):
+                        for p in track:
+                            if p.get("page") == idx + 1:
+                                page_track = p.get("track", "high_court")
+                                break
+                    else:
+                        page_track = track
+
                     lines, meta = ocr_page_with_vision(
                         page_idx=idx,
                         total_pages=total_pages,
@@ -2127,7 +2154,7 @@ def perform_ocr_on_scanned_pdf(
                         pdf_path=file_path,
                         vision_available=vision_available,
                         paddle_available=paddle_available,
-                        track=track
+                        track=page_track
                     )
                 except Exception as e:
                     # Critical: without this, an exception on ANY single page
@@ -2501,8 +2528,23 @@ def run_background_pdf_indexing(file_id: str, temp_path: str, filename: str):
         BATCH_QUEUE[file_id]["progress"] = 20
 
         # Detect court level track
-        track_info = detect_case_track(temp_path)
-        track = track_info.get("track", "high_court")
+        from backend.track_detection import detect_case_track_per_page
+        track_per_page = detect_case_track_per_page(temp_path)
+        
+        hc_count = sum(1 for p in track_per_page if p["track"] == "high_court")
+        lc_count = len(track_per_page) - hc_count
+        track = "high_court" if hc_count >= lc_count else "lower_court"
+        
+        hc_hits = sum(p["hc_hits"] for p in track_per_page)
+        lc_hits = sum(p["lc_hits"] for p in track_per_page)
+        avg_deva_ratio = sum(p["deva_ratio"] for p in track_per_page) / max(len(track_per_page), 1)
+        track_info = {
+            "track": track,
+            "hc_hits": hc_hits,
+            "lc_hits": lc_hits,
+            "devanagari_ratio": round(avg_deva_ratio, 3),
+            "sampled_pages": len(track_per_page)
+        }
 
         text_lines = extract_digital_pdf_text(temp_path)
         fallback_source = "DigitalPDF"
@@ -2517,7 +2559,7 @@ def run_background_pdf_indexing(file_id: str, temp_path: str, filename: str):
             text_lines, ocr_debug = perform_ocr_on_scanned_pdf(
                 temp_path, progress_callback=report_progress,
                 scan_all_pages=True, original_filename=filename,
-                track=track
+                track=track_per_page
             )
             fallback_source = OCR_HYBRID_LABEL
             ocr_debug["track"] = track_info
@@ -2642,9 +2684,12 @@ async def process_single_file(
                 # to use — English HC bundles vs Hindi lower-court bundles.
                 yield f"data: {json.dumps({'status': 'routing', 'progress': 42, 'message': 'Detecting court level (High Court / Lower Court)...'})}\n\n"
                 await asyncio.sleep(0.01)
-                track_info = await asyncio.to_thread(detect_case_track, temp_path)
-                track = track_info["track"]
-                _tlog(f"[TRACK] {file.filename}: {track_info}")
+                from backend.track_detection import detect_case_track_per_page
+                track_per_page = await asyncio.to_thread(detect_case_track_per_page, temp_path)
+                hc_count = sum(1 for p in track_per_page if p["track"] == "high_court")
+                lc_count = len(track_per_page) - hc_count
+                track = "high_court" if hc_count >= lc_count else "lower_court"
+                _tlog(f"[TRACK] {file.filename}: majority={track}, pages={len(track_per_page)}")
 
                 if is_extracted_text_sparse(text_lines):
                     page_event_queue = _queue.Queue()
@@ -2656,22 +2701,16 @@ async def process_single_file(
 
                     if track == "lower_court":
                         yield f"data: {json.dumps({'status': 'ocr', 'progress': 50, 'message': 'Lower-court bundle detected — running hybrid OCR...'})}\n\n"
-                        await asyncio.sleep(0.01)
-                        ocr_future = loop.run_in_executor(
-                            None,
-                            lambda: perform_ocr_on_scanned_pdf(
-                                temp_path, page_callback=_page_cb, original_filename=file.filename, track="lower_court"
-                            )
-                        )
                     else:
                         yield f"data: {json.dumps({'status': 'ocr', 'progress': 50, 'message': 'Scanned PDF detected — running PaddleOCR + vision OCR...'})}\n\n"
-                        await asyncio.sleep(0.01)
-                        ocr_future = loop.run_in_executor(
-                            None,
-                            lambda: perform_ocr_on_scanned_pdf(
-                                temp_path, page_callback=_page_cb, original_filename=file.filename, track="high_court"
-                            )
+                    await asyncio.sleep(0.01)
+
+                    ocr_future = loop.run_in_executor(
+                        None,
+                        lambda: perform_ocr_on_scanned_pdf(
+                            temp_path, page_callback=_page_cb, original_filename=file.filename, track=track_per_page
                         )
+                    )
 
                     while not ocr_future.done():
                         await asyncio.sleep(0.1)
@@ -2786,8 +2825,8 @@ async def process_single_file(
                     "text": "\n".join(current_page_lines)
                 })
             
-            from backend.parser_heuristics import detect_document_sections, classify_enhancement_or_reduction
-            sections_meta = detect_document_sections(full_text, pages_list)
+            from backend.parser_heuristics import detect_document_sections_with_fallback, classify_enhancement_or_reduction
+            sections_meta = detect_document_sections_with_fallback(full_text, pages_list)
             sections_dict = {k: v["content"] for k, v in sections_meta.items()}
             sections_dict["raw_ocr"] = full_text
 
@@ -3185,11 +3224,11 @@ async def ai_recover_fields(request: AIRecoverRequest):
                 else:
                     recovered_data["confidence_scores"][field] = {"confidence": 0.85, "reason": "Merged from heuristics parser"}
 
-        from backend.parser_heuristics import format_suggestions_for_calculator, detect_document_sections, classify_enhancement_or_reduction
+        from backend.parser_heuristics import format_suggestions_for_calculator, detect_document_sections_with_fallback, classify_enhancement_or_reduction
         formatted = format_suggestions_for_calculator(recovered_data)
 
         # Generate or attach grounds & relief summary so autofill preserves it
-        sections_meta = detect_document_sections(full_text, [])
+        sections_meta = detect_document_sections_with_fallback(full_text, [])
         sections_dict = {k: v["content"] for k, v in sections_meta.items()}
         sections_dict["raw_ocr"] = full_text
         heuristic_signal = heuristics_data.get("case_classification") or classify_enhancement_or_reduction(sections_dict)
@@ -3250,8 +3289,8 @@ async def refresh_judicial_summary(request: RefreshJudicialSummaryRequest):
             from backend.track_detection import _devanagari_ratio
             track = "lower_court" if _devanagari_ratio(full_text) >= 0.30 else "high_court"
 
-        from backend.parser_heuristics import detect_document_sections, classify_enhancement_or_reduction
-        sections_meta = detect_document_sections(full_text, [])
+        from backend.parser_heuristics import detect_document_sections_with_fallback, classify_enhancement_or_reduction
+        sections_meta = detect_document_sections_with_fallback(full_text, [])
         sections_dict = {k: v["content"] for k, v in sections_meta.items()}
         sections_dict["raw_ocr"] = full_text
 

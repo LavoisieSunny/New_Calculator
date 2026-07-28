@@ -2189,6 +2189,15 @@ def detect_document_sections(full_text, pages):
     return sections
 
 
+def detect_document_sections_with_fallback(full_text, pages, case_type=None):
+    sections = detect_document_sections(full_text, pages)  # existing keyword pass
+    missing_core = not sections.get("grounds_section") and not sections.get("award_operative_section")
+    if missing_core:
+        from backend.llm_client import classify_sections_via_llm  # new function
+        sections = classify_sections_via_llm(full_text) or sections
+    return sections
+
+
 def find_exact_page(value, start_page, end_page, pages):
     """Finds the exact page number that contains a value within a page range."""
     if not value:
@@ -3006,7 +3015,7 @@ def parse_extracted_text(text_lines, case_type=None):
         if is_hindi_doc or not _is_predominantly_devanagari(line)
     ]
     
-    sections_metadata = detect_document_sections(full_text, pages)
+    sections_metadata = detect_document_sections_with_fallback(full_text, pages)
     sections = {name: info["content"] for name, info in sections_metadata.items()}
     sections["raw_ocr"] = full_text
 

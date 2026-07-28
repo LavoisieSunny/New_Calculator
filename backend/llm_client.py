@@ -1725,50 +1725,115 @@ def extract_claims(text: str, case_type: str = "death", source_label: str = "") 
     prompt = CLAIM_EXTRACTION_USER_PROMPT.format(
         case_type=case_type, source_label=source_label, text=text[:6000]
     )
-    for attempt in range(2):
-        try:
-            response = generate_response(
-                prompt=prompt,
-                system_instruction=CLAIM_EXTRACTION_SYSTEM_INSTRUCTION,
-                response_format="json",
-                model=LLM_CLAIM_EXTRACTION_MODEL_NAME,
-                temperature=LLM_CLAIM_EXTRACTION_TEMPERATURE
-            )
-            s = response.find("{"); e = response.rfind("}")
-            candidate = response[s:e+1] if s != -1 and e != -1 and e > s else response
-            parsed = json.loads(candidate)
-            if isinstance(parsed, dict) and isinstance(parsed.get("claims"), list):
-                return parsed
-        except Exception as ex:
-            logger.warning(f"[CLAIM-EXTRACTION] attempt {attempt + 1} failed ({source_label}): {ex}")
-    return {"claims": []}
+    f_ISSUE_ANCHOR_RE = re.compile(r"(वादप्रश्न|वाद\s*प्रश्न)\s*(क्र?\.?|क0|no\.?)?\s*1\b")
+_OPERATIVE_ANCHOR_RE = re.compile(r"(अधिनिर्णय|आदेश)\s*(खुले न्यायालय|पारित)")
+
+def _split_lower_court_text(text: str):
+    issue_m = _ISSUE_ANCHOR_RE.search(text)
+    op_m = None
+    for m in _OPERATIVE_ANCHOR_RE.finditer(text):
+        op_m = m  # last match = final operative order, not a heading mention
+    if issue_m and op_m and op_m.start() > issue_m.start():
+        return text[issue_m.start():op_m.start()], text[op_m.start():]
+    return None, None  # no reliable anchors — caller should NOT guess-split
 
 
-def find_missing_claims(grounds_claims: list, trial_claims: list, threshold: int = 70) -> list:
-    """Deterministic, cheap, English-only fuzzy matching -- this is what the
-    bilingual keyword dict used to try to do, except now it doesn't need to
-    know every possible Hindi spelling variant because translation already
-    normalized everything to English."""
-    trial_texts = [c.get("claim", "") for c in trial_claims if isinstance(c, dict) and c.get("claim")]
-    missing = []
-    for gc in grounds_claims:
-        claim_text = gc.get("claim", "")
-        if not claim_text:
-            continue
-        best = max((fuzz.token_set_ratio(claim_text, tc) for tc in trial_texts), default=0)
-        if best < threshold:
-            missing.append({
-                "claim": claim_text,
-                "category": gc.get("category", "other"),
-                "found_in_grounds": True,
-                "found_in_trial_court": False,
-                "note": (
-                    f"'{claim_text}' is asserted in the High Court grounds of appeal / relief "
-                    f"clause, but no corresponding mention was found in the trial court's "
-                    f"translated issues, findings, or operative award text."
-                )
-            })
-    return missing
+def classify_doc_type_via_llm(text: str) -> str:
+    """Uses LLM to classify document contents as either 'lower_court' (tribunal judgment) or 'hospital_record' / other."""
+    system_instruction = (
+        "You are a legal and medical document classifier. Your job is to analyze the provided document text "
+        "and determine if it is a 'lower_court' (MACT tribunal judgment, issues framed, award details) "
+        "or a 'hospital_record' (medical bills, discharge summaries, treatment reports, prescriptions, disability certificates) "
+        "or 'other' (FIR copy, insurance policy, etc.).\n"
+        "Return a JSON object with a single key 'doc_type' whose value is either 'lower_court', 'hospital_record', or 'other'."
+    )
+    user_prompt = (
+        f"Classify the following document content. Return ONLY JSON conforming to the requested schema:\n\n"
+        f"{text[:5000]}"
+    )
+    try:
+        from config.llm import LLM_FINAL_SUMMARY_MODEL_NAME
+        response = generate_response(
+            prompt=user_prompt,
+            system_instruction=system_instruction,
+            response_format="json",
+            model=LLM_FINAL_SUMMARY_MODEL_NAME,
+            temperature=0.1
+        )
+        response = re.sub(r"<think>.*?</think>", "", response, flags=re.DOTALL).strip()
+        s = response.find("{")
+        e = response.rfind("}")
+        candidate = response[s:e+1] if s != -1 and e != -1 and e > s else response
+        parsed = json.loads(candidate)
+        return parsed.get("doc_type", "other")
+    except Exception as e:
+        logger.error(f"classify_doc_type_via_llm failed: {e}")
+        return "other"
+
+
+def _looks_like_tribunal_judgment(text: str) -> bool:
+    """Heuristic + LLM fallback to check if the text contents resemble a MACT tribunal judgment."""
+    if not text:
+        return False
+    keywords = [
+        "अधिकरण", "न्यायाधिकरण", "मोटर दुर्घटना", "दावा याचिका", "याचिकाकर्ता", "विपक्षी", 
+        "mact", "tribunal", "motor accident", "claim petition", "issues", "award", "judgment",
+        "वादप्रश्न", "वाद प्रश्न", "अधिनिर्णय", "पंचाट"
+    ]
+    text_lower = text.lower()
+    hits = sum(1 for kw in keywords if kw in text_lower)
+    if hits >= 3:
+        return True
+    doc_type = classify_doc_type_via_llm(text)
+    return doc_type == "lower_court"
+
+
+def classify_sections_via_llm(full_text: str) -> dict:
+    """Uses LLM to identify the main text spans of the core document sections when keyword matching fails."""
+    system_instruction = (
+        "You are an expert Indian court document parser. Your job is to extract the exact text blocks "
+        "belonging to the main structural sections from the provided document text. "
+        "Return a JSON object with the following keys:\n"
+        "- grounds_section: Text explaining the grounds of appeal/challenge (or empty string)\n"
+        "- relief_section: Text of the relief claimed or prayer (or empty string)\n"
+        "- issues_findings_section: Text of issues framed, points for determination, or findings (or empty string)\n"
+        "- award_operative_section: Text of the final award amount calculation table, order, or operative details (or empty string)\n"
+        "Do not summarize or paraphrase the text. Extract the relevant text spans verbatim from the input text."
+    )
+    user_prompt = (
+        f"Extract the sections from the following document text. Return ONLY JSON conforming to the requested schema:\n\n"
+        f"{full_text[:12000]}"
+    )
+    try:
+        from config.llm import LLM_FINAL_SUMMARY_MODEL_NAME
+        response = generate_response(
+            prompt=user_prompt,
+            system_instruction=system_instruction,
+            response_format="json",
+            model=LLM_FINAL_SUMMARY_MODEL_NAME,
+            temperature=0.1
+        )
+        response = re.sub(r"<think>.*?</think>", "", response, flags=re.DOTALL).strip()
+        s = response.find("{")
+        e = response.rfind("}")
+        candidate = response[s:e+1] if s != -1 and e != -1 and e > s else response
+        parsed = json.loads(candidate)
+        
+        sections = {}
+        for sec_name in ["grounds_section", "relief_section", "issues_findings_section", "award_operative_section"]:
+            content = (parsed.get(sec_name) or "").strip()
+            if content:
+                sections[sec_name] = {
+                    "section_name": sec_name,
+                    "start_page": 1,
+                    "end_page": 1,
+                    "content": content,
+                    "strong_match": True
+                }
+        return sections
+    except Exception as e:
+        logger.error(f"classify_sections_via_llm failed: {e}")
+        return None
 
 
 def generate_final_judicial_summary(sections: dict, heuristic_signal: dict = None, case_type: str = "death", supporting_docs: dict = None) -> dict:
@@ -1792,28 +1857,55 @@ def generate_final_judicial_summary(sections: dict, heuristic_signal: dict = Non
     else:
         medical_evidence_text = "(No medical evidence from hospital records provided.)"
 
+    summary_src = "llm_summary"
+
     if supporting_docs and supporting_docs.get("lower_court"):
         lower_court_text = supporting_docs["lower_court"]
-        from backend.parser_heuristics import detect_document_sections, classify_page_type
+        
+        # 1. Content validation guard
+        if not _looks_like_tribunal_judgment(lower_court_text):
+            message = (
+                "The uploaded document tagged as 'Lower Court Judgment' does not appear to "
+                "be a valid trial court judgment -- it lacks expected tribunal layout/keywords. "
+                "Please verify the file and ensure it is uploaded under the correct document type."
+            )
+            return {
+                "issue_wise_view": [],
+                "final_summary_points": [message],
+                "probable_outcome": heuristic_signal.get("verdict", "not_determinable") if heuristic_signal else "not_determinable",
+                "factual_discrepancies": [],
+                "summary_source": "mislabeled_input"
+            }
 
-        lc_sections_meta = detect_document_sections(lower_court_text, [])
+        from backend.parser_heuristics import detect_document_sections_with_fallback, classify_page_type
+
+        lc_sections_meta = detect_document_sections_with_fallback(lower_court_text, [])
         lc_sections = {k: v["content"] for k, v in lc_sections_meta.items()}
         lc_issues_raw = (lc_sections.get("issues_findings_section", "") or "").strip()
         lc_award_raw = (lc_sections.get("award_operative_section", "") or lc_sections.get("award_copy_section", "") or "").strip()
 
-        # NEW: pull out anything that looks like an attached exhibit/annexure
-        # (medical reports, FIR copy, post-mortem, etc.) inside the tribunal file
-        # itself, so it gets cross-checked the same way hospital_record docs do.
+        # pull out attached exhibit/annexure
         lc_attachment_text = ""
         pages = [p.strip() for p in lower_court_text.split("\f") if p.strip()]  # or however pages are delimited
         attachment_pages = [p for p in pages if classify_page_type(p, 0) in ("annexure", "evidence")]
         if attachment_pages:
             lc_attachment_text = "\n---\n".join(attachment_pages)
 
+        # Determine issues and award texts
         if not lc_issues_raw and not lc_award_raw:
-            split_point = int(len(lower_court_text) * 0.7)
-            lc_issues_raw = lower_court_text[:split_point]
-            lc_award_raw = lower_court_text[split_point:]
+            anchors_issues, anchors_award = _split_lower_court_text(lower_court_text)
+            if anchors_issues and anchors_award:
+                lc_issues_raw = anchors_issues
+                lc_award_raw = anchors_award
+                summary_src = "structural_anchor_split"
+            else:
+                # fall back to the 70/30 split as a last resort
+                split_point = int(len(lower_court_text) * 0.7)
+                lc_issues_raw = lower_court_text[:split_point]
+                lc_award_raw = lower_court_text[split_point:]
+                summary_src = "guess_split_70_30"
+        else:
+            summary_src = "parsed_sections"
 
         translation = translate_trial_court_text(lc_issues_raw, lc_award_raw)
         issues_text_en = translation.get("issues_en") or lc_issues_raw
@@ -1847,13 +1939,13 @@ def generate_final_judicial_summary(sections: dict, heuristic_signal: dict = Non
                 "factual_discrepancies": [],
                 "summary_source": "insufficient_input"
             }
-
         issues_rows = normalize_issues_table(issues_raw)
         issues_text_hi = "\n".join(f"{r.get('issue', '')}: {r.get('finding', '')}" for r in issues_rows) or issues_raw
 
         translation = translate_trial_court_text(issues_text_hi, award_text_raw)
         issues_text_en = translation.get("issues_en") or issues_text_hi
         award_text_en = translation.get("award_en") or award_text_raw
+        summary_src = "mact_quoted_fallback"
 
     concat = f"{issues_text_en}|||{award_text_en}|||{grounds_text}|||{relief_text}|||{medical_evidence_text}"
     h = hashlib.sha256(concat.encode("utf-8")).hexdigest()
@@ -1907,7 +1999,7 @@ def generate_final_judicial_summary(sections: dict, heuristic_signal: dict = Non
             if validate_final_summary_shape(parsed):
                 full_source = f"{issues_text_en}\n{award_text_en}\n{grounds_text}\n{relief_text}"
                 result_dict = _verify_final_summary_grounding(parsed, full_source)
-                result_dict["summary_source"] = "llm_summary"
+                result_dict["summary_source"] = summary_src
 
                 # Union, not override: the LLM's reviewed list is authoritative for
                 # anything it actually commented on; any matcher candidate the LLM's

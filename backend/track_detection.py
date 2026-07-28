@@ -47,33 +47,117 @@ def _devanagari_ratio(text: str) -> float:
     return deva / len(alpha)
 
 
-def detect_case_track(pdf_path: str, sample_pages: int = 3) -> dict:
-    """
-    Renders + OCRs only the first `sample_pages` pages (default 3) to decide
-    the processing track. Returns:
+_OCR_PROBE_CACHE = {}
 
-        {
-            "track": "high_court" | "lower_court",
-            "hc_hits": int, "lc_hits": int,
-            "devanagari_ratio": float, "sampled_pages": int,
-        }
 
-    Imports OCR helpers lazily (inside the function) to avoid a circular
-    import with backend.ocr, which itself imports detect_case_track.
-    """
+def _extract_digital_text_per_page(pdf_path: str) -> dict:
+    from backend.ocr import extract_digital_pdf_text, extract_alternate_pdf_text
+    lines = extract_digital_pdf_text(pdf_path)
+    if not lines or len(" ".join(lines).strip()) < 100:
+        lines = extract_alternate_pdf_text(pdf_path)
+    
+    page_texts = {}
+    current_page = None
+    current_lines = []
+    
+    for line in lines:
+        m = re.match(r'^---\s*PAGE\s+(\d+)\s*---', line, re.IGNORECASE)
+        if m:
+            if current_page is not None:
+                page_texts[current_page] = "\n".join(current_lines)
+            current_page = int(m.group(1))
+            current_lines = []
+        else:
+            current_lines.append(line)
+    if current_page is not None:
+        page_texts[current_page] = "\n".join(current_lines)
+    return page_texts
+
+
+def detect_case_track_per_page(pdf_path: str) -> list[dict]:
+    """Returns [{'page': 1, 'track': 'high_court', 'deva_ratio': 0.02}, ...] for every page."""
     from backend.ocr import (
         call_paddle_ocr, guard_and_downscale_image, is_vision_model_available,
         call_vision_model, image_to_base64, preprocess_for_vision, classify_scanned_page,
-        extract_digital_pdf_text, extract_alternate_pdf_text, detect_page_language_from_probe
+        detect_page_language_from_probe
     )
 
-    # 1. Try digital text-layer extraction first (no OCR at all)
-    digital_lines = extract_digital_pdf_text(pdf_path)
-    if not digital_lines or len(" ".join(digital_lines).strip()) < 100:
-        digital_lines = extract_alternate_pdf_text(pdf_path)
+    page_texts = _extract_digital_text_per_page(pdf_path)
+    
+    try:
+        with pdfium.PdfDocument(pdf_path) as doc:
+            total_pages = len(doc)
+    except Exception as e:
+        logger.error(f"detect_case_track_per_page failed to open PDF: {e}")
+        return []
 
-    if digital_lines and len(" ".join(digital_lines).strip()) >= 100:
-        combined = " ".join(digital_lines)
+    results = []
+    has_digital = any(len(text.strip()) >= 100 for text in page_texts.values())
+    vision_available = is_vision_model_available()
+
+    if has_digital:
+        for page_num in range(1, total_pages + 1):
+            text = page_texts.get(page_num, "")
+            text_lower = text.lower()
+            deva_ratio = _devanagari_ratio(text)
+            hc_hits = sum(1 for m in _HC_MARKERS if m in text_lower)
+            lc_hits = sum(1 for m in _LC_MARKERS if m.lower() in text_lower)
+
+            if hc_hits >= 1 and deva_ratio < 0.15:
+                track = "high_court"
+            elif lc_hits >= 1 or deva_ratio >= 0.30:
+                track = "lower_court"
+            else:
+                track = "high_court" if hc_hits >= lc_hits else "lower_court"
+
+            results.append({
+                "page": page_num,
+                "track": track,
+                "deva_ratio": round(deva_ratio, 3),
+                "hc_hits": hc_hits,
+                "lc_hits": lc_hits,
+                "method": "digital"
+            })
+        logger.info(f"[TRACK-PER-PAGE] Digital classification completed for {total_pages} pages.")
+        return results
+
+    # Scanned PDF fallback
+    for page_idx in range(total_pages):
+        page_num = page_idx + 1
+        lines = []
+        try:
+            with pdfium.PdfDocument(pdf_path) as doc:
+                page_obj = doc[page_idx]
+                bitmap = page_obj.render(scale=100 / 72.0)
+                pil_img = bitmap.to_pil()
+                del bitmap, page_obj
+            
+            pil_img = guard_and_downscale_image(pil_img)
+            if classify_scanned_page(pil_img) != "blank":
+                lang = detect_page_language_from_probe(pil_img, page_num=page_num)
+                tmp_path = os.path.join(tempfile.gettempdir(), f"_track_probe_{uuid.uuid4().hex}.png")
+                try:
+                    pil_img.save(tmp_path, format="PNG")
+                    lines, conf, _ = call_paddle_ocr(tmp_path, page_num=page_num, lang=lang)
+                    if not lines and vision_available:
+                        b64 = image_to_base64(preprocess_for_vision(pil_img))
+                        raw = call_vision_model(b64, page_num=page_num)
+                        if raw and raw.strip() != "[BLANK PAGE]":
+                            lines = [l.strip() for l in raw.split("\n") if l.strip()]
+                    
+                    if lines:
+                        _OCR_PROBE_CACHE[(pdf_path, page_num)] = (lines, lang)
+                finally:
+                    if os.path.exists(tmp_path):
+                        try:
+                            os.unlink(tmp_path)
+                        except Exception:
+                            pass
+            del pil_img
+        except Exception as e:
+            logger.warning(f"Track probe failed on page {page_num}: {e}")
+
+        combined = " ".join(lines)
         combined_lower = combined.lower()
         deva_ratio = _devanagari_ratio(combined)
         hc_hits = sum(1 for m in _HC_MARKERS if m in combined_lower)
@@ -86,94 +170,40 @@ def detect_case_track(pdf_path: str, sample_pages: int = 3) -> dict:
         else:
             track = "high_court" if hc_hits >= lc_hits else "lower_court"
 
-        logger.info(
-            f"[TRACK DETECTED via Digital Text] track={track}, deva_ratio={deva_ratio:.2f}, "
-            f"hc_hits={hc_hits}, lc_hits={lc_hits}, text_len={len(combined)}"
-        )
-        return {
+        results.append({
+            "page": page_num,
             "track": track,
+            "deva_ratio": round(deva_ratio, 3),
             "hc_hits": hc_hits,
             "lc_hits": lc_hits,
-            "devanagari_ratio": round(deva_ratio, 3),
-            "sampled_pages": len(digital_lines),
+            "method": "ocr"
+        })
+    logger.info(f"[TRACK-PER-PAGE] OCR classification completed for scanned PDF ({total_pages} pages).")
+    return results
+
+
+def detect_case_track(pdf_path: str, sample_pages: int = 3) -> dict:
+    """Legacy wrapper for compatibility. Detects track based on majority page tracks."""
+    per_page = detect_case_track_per_page(pdf_path)
+    if not per_page:
+        return {
+            "track": "high_court",
+            "hc_hits": 0, "lc_hits": 0,
+            "devanagari_ratio": 0.0, "sampled_pages": 0
         }
-
-    # 2. Fall back to rendered-image OCR probe if no usable text layer exists
-    texts = []
-    try:
-        with pdfium.PdfDocument(pdf_path) as doc:
-            n = min(sample_pages, len(doc))
-            for i in range(n):
-                try:
-                    page_obj = doc[i]
-                    bitmap = page_obj.render(scale=100 / 72.0)
-                    pil_img = bitmap.to_pil()
-                    del bitmap, page_obj
-                except Exception as e:
-                    logger.warning(f"Track probe render failed on page {i+1}: {e}")
-                    continue
-
-                pil_img = guard_and_downscale_image(pil_img)
-                if classify_scanned_page(pil_img) == "blank":
-                    del pil_img
-                    continue
-
-                # Run dynamic lang probe to determine language
-                lang = detect_page_language_from_probe(pil_img, page_num=i + 1)
-
-                tmp_path = os.path.join(tempfile.gettempdir(), f"_track_probe_{uuid.uuid4().hex}.png")
-                pil_img.save(tmp_path, format="PNG")
-                
-                # Call Paddle OCR using detected language
-                lines, conf, _ = call_paddle_ocr(tmp_path, page_num=i + 1, lang=lang)
-
-                if not lines and is_vision_model_available():
-                    try:
-                        b64 = image_to_base64(preprocess_for_vision(pil_img))
-                        raw = call_vision_model(b64, page_num=i + 1)
-                        if raw and raw.strip() != "[BLANK PAGE]":
-                            lines = [l.strip() for l in raw.split("\n") if l.strip()]
-                    except Exception as e:
-                        logger.warning(f"Track probe vision fallback failed on page {i+1}: {e}")
-
-                del pil_img
-                if os.path.exists(tmp_path):
-                    try:
-                        os.unlink(tmp_path)
-                    except Exception:
-                        pass
-
-                texts.append(" ".join(lines))
-    except Exception as e:
-        logger.error(f"detect_case_track failed to open/scan PDF: {e}")
-
-    combined = " ".join(texts)
-    combined_lower = combined.lower()
-    deva_ratio = _devanagari_ratio(combined)
-
-    hc_hits = sum(1 for m in _HC_MARKERS if m in combined_lower)
-    lc_hits = sum(1 for m in _LC_MARKERS if m.lower() in combined_lower)
-
-    # Decision order: an explicit HC marker with low Devanagari content wins
-    # outright (this is the common, unambiguous case: a clean English memo
-    # of appeal). Otherwise, either an explicit LC marker OR a high
-    # Devanagari ratio routes to lower_court. Ties fall back to whichever
-    # marker count is higher.
-    if hc_hits >= 1 and deva_ratio < 0.15:
-        track = "high_court"
-    elif lc_hits >= 1 or deva_ratio >= 0.30:
-        track = "lower_court"
-    else:
-        track = "high_court" if hc_hits >= lc_hits else "lower_court"
-
-    logger.info(
-        f"[TRACK DETECTED via OCR Probe] track={track}, deva_ratio={deva_ratio:.2f}, "
-        f"hc_hits={hc_hits}, lc_hits={lc_hits}"
-    )
+    
+    hc_count = sum(1 for p in per_page if p["track"] == "high_court")
+    lc_count = len(per_page) - hc_count
+    majority_track = "high_court" if hc_count >= lc_count else "lower_court"
+    
+    hc_hits = sum(p["hc_hits"] for p in per_page)
+    lc_hits = sum(p["lc_hits"] for p in per_page)
+    avg_deva_ratio = sum(p["deva_ratio"] for p in per_page) / len(per_page)
+    
     return {
-        "track": track,
+        "track": majority_track,
         "hc_hits": hc_hits,
         "lc_hits": lc_hits,
-        "devanagari_ratio": round(deva_ratio, 3),
-        "sampled_pages": len(texts),
+        "devanagari_ratio": round(avg_deva_ratio, 3),
+        "sampled_pages": len(per_page)
     }
