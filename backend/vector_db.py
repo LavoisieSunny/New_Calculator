@@ -810,7 +810,21 @@ def get_supporting_doc_text(case_session_id: str, doc_type: str) -> str:
 
         # Sort chunks by chunk_index to ensure they are in order
         points_sorted = sorted(scroll_res, key=lambda p: p.payload.get("chunk_index") or 0)
-        full_text = "\n".join(p.payload.get("text") or "" for p in points_sorted)
+        
+        text_parts = []
+        last_page = None
+        for p in points_sorted:
+            p_text = p.payload.get("text") or ""
+            p_num = p.payload.get("page_number") or 1
+            if last_page is not None and p_num != last_page:
+                text_parts.append("\f")
+            else:
+                if last_page is not None:
+                    text_parts.append("\n")
+            text_parts.append(p_text)
+            last_page = p_num
+            
+        full_text = "".join(text_parts)
         
         _FULL_TEXT_CACHE[cache_key] = full_text
         return full_text

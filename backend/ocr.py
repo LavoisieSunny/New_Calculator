@@ -1633,37 +1633,46 @@ def _devanagari_ratio(text: str) -> float:
     return deva / len(alpha)
 
 
+def _save_full_page(pil_img) -> str:
+    tmp_path = os.path.join(tempfile.gettempdir(), f"_full_page_{uuid.uuid4().hex}.png")
+    pil_img.save(tmp_path, format="PNG")
+    return tmp_path
+
+
 def detect_page_language_from_probe(pil_img, page_num: int = 1) -> str:
-    """
-    Crops a small slice of the page image, runs both English and Hindi PaddleOCR,
-    and returns "hi" or "en" based on confidence and Devanagari content.
-    """
     width, height = pil_img.size
-    # Crop the middle 20% height of the page to avoid headers/footers
-    crop_box = (0, int(height * 0.4), width, int(height * 0.6))
+    # middle 60%, much less likely to land on whitespace
+    crop_box = (0, int(height * 0.20), width, int(height * 0.80))
     probe_img = pil_img.crop(crop_box)
-    
+
     tmp_path = os.path.join(tempfile.gettempdir(), f"_lang_probe_{uuid.uuid4().hex}.png")
     try:
         probe_img.save(tmp_path, format="PNG")
-        
-        # Run English probe
         lines_en, conf_en, _ = call_paddle_ocr(tmp_path, page_num=page_num, lang="en")
-        
-        # Run Hindi probe
         lines_hi, conf_hi, _ = call_paddle_ocr(tmp_path, page_num=page_num, lang="hi")
-        
-        text_en = " ".join(lines_en)
         text_hi = " ".join(lines_hi)
-        
         ratio_hi = _devanagari_ratio(text_hi)
-        
-        # If Hindi model detected Devanagari characters, and confidence is decent, it's Hindi
-        if ratio_hi >= 0.15 and conf_hi > 0.4:
-            chosen = "hi"
-        else:
-            chosen = "en"
-            
+
+        # NEW: if the probe genuinely found nothing on either pass, don't
+        # default to "en" — retry once on the full page before giving up.
+        if not lines_en and not lines_hi:
+            full_path = _save_full_page(pil_img)
+            try:
+                lines_hi2, conf_hi2, _ = call_paddle_ocr(
+                    full_path, page_num=page_num, lang="hi"
+                )
+                ratio_hi2 = _devanagari_ratio(" ".join(lines_hi2))
+                if ratio_hi2 >= 0.15 and conf_hi2 > 0.3:
+                    _tlog(f"Page {page_num}: full-page retry found Hindi (deva_ratio={ratio_hi2:.2f})")
+                    return "hi"
+            finally:
+                if os.path.exists(full_path):
+                    try:
+                        os.unlink(full_path)
+                    except Exception:
+                        pass
+
+        chosen = "hi" if (ratio_hi >= 0.15 and conf_hi > 0.4) else "en"
         _tlog(
             f"Page {page_num} lang probe: EN_conf={conf_en:.2f} (lines={len(lines_en)}), "
             f"HI_conf={conf_hi:.2f} (lines={len(lines_hi)}, deva_ratio={ratio_hi:.2f}). "
@@ -1672,7 +1681,7 @@ def detect_page_language_from_probe(pil_img, page_num: int = 1) -> str:
         return chosen
     except Exception as e:
         logger.warning(f"Language probe failed on page {page_num}: {e}")
-        return "hi"  # Default to "hi" (the project default)
+        return "hi"
     finally:
         if os.path.exists(tmp_path):
             try:
@@ -2978,6 +2987,7 @@ async def process_supporting_doc(
                             )
                     
                     lines, meta = await run_page_ocr()
+                    text_lines.append(f"--- PAGE {idx + 1} ---")
                     text_lines.extend(lines)
                     
                     pages_done += 1
@@ -3011,7 +3021,8 @@ async def process_supporting_doc(
                                     lines.append(t)
                         return lines
                 
-                text_lines = await loop.run_in_executor(SUPPORTING_DOCS_POOL, run_img_ocr)
+                raw_lines = await loop.run_in_executor(SUPPORTING_DOCS_POOL, run_img_ocr)
+                text_lines = ["--- PAGE 1 ---"] + raw_lines
 
             yield f"data: {json.dumps({'status': 'indexing', 'progress': 90, 'message': 'Indexing document in Qdrant...'})}\n\n"
             await asyncio.sleep(0.01)

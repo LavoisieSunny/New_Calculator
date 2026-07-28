@@ -38,12 +38,13 @@ async def startup_event():
     except Exception as e:
         logger.error(f"Startup check failed: {str(e)}")
 
-    # Warm up PaddleOCR eagerly to verify device and load the model at startup
+    # Warm up PaddleOCR eagerly to verify device and load the models at startup
     try:
-        logger.info("Warming up PaddleOCR singleton...")
+        logger.info("Warming up PaddleOCR singletons...")
         from backend.ocr import get_ocr_instance
-        get_ocr_instance()
-        logger.info("PaddleOCR warm-up complete.")
+        get_ocr_instance(lang="en")
+        get_ocr_instance(lang="hi")
+        logger.info("PaddleOCR warm-up complete (both 'en' and 'hi' loaded).")
     except Exception as e:
         logger.error(f"PaddleOCR warm-up failed (non-fatal): {str(e)}")
 

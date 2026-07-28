@@ -1794,21 +1794,39 @@ def generate_final_judicial_summary(sections: dict, heuristic_signal: dict = Non
 
     if supporting_docs and supporting_docs.get("lower_court"):
         lower_court_text = supporting_docs["lower_court"]
-        from backend.parser_heuristics import detect_document_sections
+        from backend.parser_heuristics import detect_document_sections, classify_page_type
+
         lc_sections_meta = detect_document_sections(lower_court_text, [])
         lc_sections = {k: v["content"] for k, v in lc_sections_meta.items()}
         lc_issues_raw = (lc_sections.get("issues_findings_section", "") or "").strip()
         lc_award_raw = (lc_sections.get("award_operative_section", "") or lc_sections.get("award_copy_section", "") or "").strip()
+
+        # NEW: pull out anything that looks like an attached exhibit/annexure
+        # (medical reports, FIR copy, post-mortem, etc.) inside the tribunal file
+        # itself, so it gets cross-checked the same way hospital_record docs do.
+        lc_attachment_text = ""
+        pages = [p.strip() for p in lower_court_text.split("\f") if p.strip()]  # or however pages are delimited
+        attachment_pages = [p for p in pages if classify_page_type(p, 0) in ("annexure", "evidence")]
+        if attachment_pages:
+            lc_attachment_text = "\n---\n".join(attachment_pages)
+
         if not lc_issues_raw and not lc_award_raw:
-            # Section headers weren't detected — fall back to a crude split:
-            # operative orders are almost always at the end of the judgment.
             split_point = int(len(lower_court_text) * 0.7)
             lc_issues_raw = lower_court_text[:split_point]
             lc_award_raw = lower_court_text[split_point:]
+
         translation = translate_trial_court_text(lc_issues_raw, lc_award_raw)
         issues_text_en = translation.get("issues_en") or lc_issues_raw
         award_text_en = translation.get("award_en") or lc_award_raw
+
+        # fold attachments into medical_evidence_text instead of overwriting it
+        if lc_attachment_text:
+            medical_evidence_text = (medical_evidence_text + "\n\n[From lower court record attachments]\n" + lc_attachment_text).strip()
     else:
+        logger.info(
+            f"[JUDICIAL-ANALYSIS] issues_raw_len={len(issues_raw)}, award_text_raw_len={len(award_text_raw)}, "
+            f"has_lower_court_supporting_doc={bool(supporting_docs and supporting_docs.get('lower_court'))}"
+        )
         if not issues_raw and not award_text_raw:
             no_supporting_doc_uploaded = not (supporting_docs and supporting_docs.get("lower_court"))
             if no_supporting_doc_uploaded:
