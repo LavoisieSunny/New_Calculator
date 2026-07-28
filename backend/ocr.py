@@ -487,20 +487,21 @@ def ocr_supporting_page(
         
         with _SUPPORTING_PADDLE_INFER_LOCK:
             engine = get_supporting_ocr_instance(lang=page_lang)
-            res = engine.ocr(rendered_img_path, cls=True)
-        
+            results = engine.predict(rendered_img_path)
+
         paddle_duration = time.time() - t0
-        
+
         paddle_lines = []
         confs = []
-        if res and len(res) > 0:
-            for item in res:
-                if isinstance(item, list):
-                    for line in item:
-                        if isinstance(line, list) and len(line) > 1 and isinstance(line[1], tuple):
-                            paddle_lines.append(line[1][0])
-                            confs.append(line[1][1])
-        
+        if results:
+            res0 = results[0]
+            rec_texts = res0.get("rec_texts", []) if hasattr(res0, "get") else getattr(res0, "rec_texts", [])
+            rec_scores = res0.get("rec_scores", []) if hasattr(res0, "get") else getattr(res0, "rec_scores", [])
+            for t, s in zip(rec_texts or [], rec_scores or []):
+                if t and t.strip():
+                    paddle_lines.append(t)
+                    confs.append(s)
+
         paddle_conf = np.mean(confs) if confs else 0.0
         paddle_q = score_ocr_page_quality(paddle_lines)
         paddle_good = _paddle_result_is_trustworthy(paddle_lines, paddle_conf, paddle_q)
@@ -3000,14 +3001,14 @@ async def process_supporting_doc(
                     with _SUPPORTING_PAGE_SEMAPHORE:
                         with _SUPPORTING_PADDLE_INFER_LOCK:
                             engine = get_supporting_ocr_instance(lang="en")
-                            res = engine.ocr(temp_path, cls=True)
+                            results = engine.predict(temp_path)
                         lines = []
-                        if res and len(res) > 0:
-                            for item in res:
-                                if isinstance(item, list):
-                                    for line in item:
-                                        if isinstance(line, list) and len(line) > 1 and isinstance(line[1], tuple):
-                                            lines.append(line[1][0])
+                        if results:
+                            res0 = results[0]
+                            rec_texts = res0.get("rec_texts", []) if hasattr(res0, "get") else getattr(res0, "rec_texts", [])
+                            for t in (rec_texts or []):
+                                if t and t.strip():
+                                    lines.append(t)
                         return lines
                 
                 text_lines = await loop.run_in_executor(SUPPORTING_DOCS_POOL, run_img_ocr)
