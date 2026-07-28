@@ -1810,11 +1810,21 @@ def generate_final_judicial_summary(sections: dict, heuristic_signal: dict = Non
         award_text_en = translation.get("award_en") or lc_award_raw
     else:
         if not issues_raw and not award_text_raw:
+            no_supporting_doc_uploaded = not (supporting_docs and supporting_docs.get("lower_court"))
+            if no_supporting_doc_uploaded:
+                message = (
+                    "No trial court / tribunal judgment was found for this case -- this is "
+                    "an appeal-side-only view. Upload the original MACT award as a supporting "
+                    "document (doc type: Lower Court Judgment) to get a full trial-court-vs-appeal comparison."
+                )
+            else:
+                message = (
+                    "A lower court document was uploaded, but its issues/award section could not "
+                    "be reliably parsed -- summary limited to appeal-side grounds only."
+                )
             return {
                 "issue_wise_view": [],
-                "final_summary_points": [
-                    "Trial court issues/award section could not be located in the uploaded document -- summary limited to appeal-side grounds only."
-                ],
+                "final_summary_points": [message],
                 "probable_outcome": heuristic_signal.get("verdict", "not_determinable") if heuristic_signal else "not_determinable",
                 "factual_discrepancies": [],
                 "summary_source": "insufficient_input"

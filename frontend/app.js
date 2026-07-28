@@ -3399,98 +3399,12 @@ This cannot be undone.`)) return;
                 </div>
             `;
 
-            // Render AI-Assisted Judicial Summary Engine Block (Trial Court vs HC Appeal grounds)
-            const finalJudicial = data?.final_judicial_summary || (data?.suggestions && data?.suggestions?.final_judicial_summary) || null;
-            if (finalJudicial) {
-                const issueWise = finalJudicial.issue_wise_view || [];
-                const finalPoints = finalJudicial.final_summary_points || [];
-                const probableOutcome = finalJudicial.probable_outcome || "not_determinable";
-                const summarySource = finalJudicial.summary_source || "llm_summary";
-
-                let outcomeBadgeColor = "#6c757d";
-                let outcomeLabel = "Not Determinable";
-                if (probableOutcome === "enhancement") { outcomeBadgeColor = "#22c55e"; outcomeLabel = "Enhancement Likely"; }
-                else if (probableOutcome === "reduction") { outcomeBadgeColor = "#eab308"; outcomeLabel = "Reduction Likely"; }
-                else if (probableOutcome === "exoneration") { outcomeBadgeColor = "#a855f7"; outcomeLabel = "Exoneration / Set Aside"; }
-                else if (probableOutcome === "upheld") { outcomeBadgeColor = "#3b82f6"; outcomeLabel = "Award Upheld"; }
-
-                let degradationNotice = "";
-                if (summarySource === "insufficient_input" || summarySource === "fallback") {
-                    const msg = finalPoints.length > 0 ? finalPoints[0] : "Limited automated analysis -- trial court section not fully detected.";
-                    degradationNotice = `
-                        <div style="padding: 8px 12px; background: rgba(234,179,8,0.1); border: 1px solid rgba(234,179,8,0.3); border-radius: var(--radius-sm); font-size: 0.78rem; color: #eab308; margin-top: 4px; display: flex; align-items: center; gap: 8px;">
-                            <i class="fa-solid fa-triangle-exclamation"></i>
-                            <span>${msg}</span>
-                        </div>
-                    `;
-                }
-
-                let issueCardsHTML = "";
-                if (issueWise.length > 0) {
-                    issueCardsHTML = issueWise.map((item, idx) => `
-                        <div style="padding: 10px; background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.08); border-radius: var(--radius-sm); display: flex; flex-direction: column; gap: 6px;">
-                            <div style="font-size: 0.82rem; font-weight: 700; color: var(--color-primary); display: flex; align-items: center; gap: 6px;">
-                                <i class="fa-solid fa-gavel" style="font-size: 0.75rem;"></i> Issue ${idx + 1}: ${item.issue || 'Point for Determination'}
-                            </div>
-                            ${item.trial_court_finding ? `
-                                <div style="font-size: 0.78rem; color: var(--text-secondary); background: rgba(255,255,255,0.02); padding: 6px 8px; border-radius: 4px; border-left: 3px solid var(--color-primary);">
-                                    <strong style="color: var(--text-primary);">Trial Court Finding:</strong> ${item.trial_court_finding}
-                                </div>
-                            ` : ''}
-                            ${item.hc_ground_challenge ? `
-                                <div style="font-size: 0.78rem; color: var(--text-secondary); background: rgba(255,255,255,0.02); padding: 6px 8px; border-radius: 4px; border-left: 3px solid #eab308;">
-                                    <strong style="color: var(--text-primary);">HC Challenge:</strong> ${item.hc_ground_challenge}
-                                </div>
-                            ` : ''}
-                            ${item.likely_judicial_view ? `
-                                <div style="font-size: 0.78rem; color: var(--text-secondary); background: rgba(34,197,94,0.05); padding: 6px 8px; border-radius: 4px; border-left: 3px solid #22c55e;">
-                                    <strong style="color: #22c55e;">Likely Judicial View:</strong> ${item.likely_judicial_view}
-                                </div>
-                            ` : ''}
-                        </div>
-                    `).join('');
-                }
-
-                let finalBulletsHTML = "";
-                if (finalPoints.length > 0 && summarySource === "llm_summary") {
-                    finalBulletsHTML = `
-                        <ul style="margin: 4px 0 0 0; padding-left: 16px; display: flex; flex-direction: column; gap: 4px;">
-                            ${finalPoints.map(p => `<li style="font-size: 0.82rem; line-height: 1.3; color: var(--text-secondary);">${p}</li>`).join('')}
-                        </ul>
-                    `;
-                }
-
-                innerHTML += `
-                    <div id="final-judicial-summary-block" style="margin-top: 12px; padding: 12px; background: rgba(255,255,255,0.02); border: 1px solid rgba(255,255,255,0.08); border-radius: var(--radius-sm); display: flex; flex-direction: column; gap: 10px;">
-                        <div style="display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid rgba(255,255,255,0.06); padding-bottom: 6px;">
-                            <span style="font-size: 0.85rem; font-weight: 700; color: var(--text-primary); text-transform: uppercase; display: inline-flex; align-items: center; gap: 8px;">
-                                <i class="fa-solid fa-scale-balanced" style="color: var(--color-primary);"></i> High Court Judicial Analysis
-                                <button type="button" id="refresh-judicial-btn" class="btn btn-secondary btn-xsmall" style="padding: 2px 6px; font-size: 0.7rem; line-height: 1; cursor: pointer; display: inline-flex; align-items: center; gap: 4px;" title="Refresh Analysis with Supporting Documents">
-                                    <i class="fa-solid fa-sync-alt"></i> Refresh
-                                </button>
-                            </span>
-                            <span class="badge" style="background: ${outcomeBadgeColor}; color: #fff; font-weight: 700; padding: 3px 8px; border-radius: var(--radius-sm); font-size: 0.75rem;">
-                                ${outcomeLabel}
-                            </span>
-                        </div>
-
-                        ${degradationNotice}
-
-                        ${issueCardsHTML ? `
-                            <div style="display: flex; flex-direction: column; gap: 8px;">
-                                ${issueCardsHTML}
-                            </div>
-                        ` : ''}
-
-                        ${finalBulletsHTML ? `
-                            <div style="display: flex; flex-direction: column; gap: 6px; padding: 8px; background: rgba(255,255,255,0.01); border-radius: 4px;">
-                                <div style="font-size: 0.8rem; font-weight: 700; color: var(--text-primary);">Synthesized Judicial Summary</div>
-                                ${finalBulletsHTML}
-                            </div>
-                        ` : ''}
-                    </div>
-                `;
-            }
+            // NOTE: High Court Judicial Analysis is intentionally NOT auto-rendered
+            // here anymore. It is only ever shown via the dedicated "Check Judicial
+            // Analysis" button/panel (checkJudicialAnalysisBtn handler), which itself
+            // gates on supporting-document OCR status. Auto-rendering it here — as
+            // soon as the main High Court file finished OCR, before any supporting
+            // document had been processed — was the bug.
 
 
         }
@@ -3507,10 +3421,7 @@ This cannot be undone.`)) return;
 
         container.innerHTML = innerHTML;
 
-        const refreshBtn = document.getElementById("refresh-judicial-btn");
-        if (refreshBtn) {
-            refreshBtn.addEventListener("click", refreshJudicialAnalysis);
-        }
+
 
         if (typeof triggerTabNotification === "function") {
             triggerTabNotification("enhancement-check");
@@ -4800,6 +4711,7 @@ This cannot be undone.`)) return;
 
     function renderJudicialProcessingState(message) {
         if (!judicialAnalysisResult) return;
+        judicialAnalysisResult.dataset.state = "processing";
         judicialAnalysisResult.style.display = "block";
         judicialAnalysisResult.innerHTML = `
             <div style="padding: 14px; background: rgba(59,130,246,0.08); border: 1px solid rgba(59,130,246,0.25); border-radius: var(--radius-sm); display: flex; align-items: center; gap: 10px; font-size: 0.85rem; color: var(--text-secondary);">
@@ -4811,6 +4723,7 @@ This cannot be undone.`)) return;
 
     function renderJudicialErrorState(message) {
         if (!judicialAnalysisResult) return;
+        judicialAnalysisResult.dataset.state = "error";
         judicialAnalysisResult.style.display = "block";
         judicialAnalysisResult.innerHTML = `
             <div style="padding: 14px; background: rgba(239,68,68,0.08); border: 1px solid rgba(239,68,68,0.25); border-radius: var(--radius-sm); font-size: 0.85rem; color: #f87171;">
@@ -4879,6 +4792,7 @@ This cannot be undone.`)) return;
             `;
         }
 
+        judicialAnalysisResult.dataset.state = "done";
         judicialAnalysisResult.style.display = "block";
         judicialAnalysisResult.innerHTML = `
             <div style="padding: 12px; background: rgba(255,255,255,0.02); border: 1px solid rgba(255,255,255,0.08); border-radius: var(--radius-sm); display: flex; flex-direction: column; gap: 10px;">
@@ -5017,8 +4931,13 @@ This cannot be undone.`)) return;
                                 previewBtn.style.display = "inline-flex";
                             }
 
-                            // Judicial Analysis is no longer auto-generated here; the user clicks
-                            // "Check Judicial Analysis" when ready.
+                            // If the user already clicked "Check Judicial Analysis" and it's sitting
+                            // in the "Processing the file..." state waiting on this document, auto
+                            // re-run the check now that OCR just finished.
+                            if (checkJudicialAnalysisBtn && judicialAnalysisResult &&
+                                judicialAnalysisResult.dataset.state === "processing") {
+                                checkJudicialAnalysisBtn.click();
+                            }
                         } else {
                             statusBadge.textContent = "failed";
                             statusBadge.className = "status-badge failed";
@@ -5039,48 +4958,7 @@ This cannot be undone.`)) return;
         }
     }
 
-    async function refreshJudicialAnalysis() {
-        const refreshBtn = document.getElementById("refresh-judicial-btn");
-        if (!refreshBtn) return;
-        const origHTML = refreshBtn.innerHTML;
-        refreshBtn.disabled = true;
-        refreshBtn.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i> Refreshing...`;
 
-        try {
-            const caseTypeSelect = document.getElementById("case-type");
-            const caseType = caseTypeSelect ? caseTypeSelect.value : "death";
-
-            const response = await fetch("/api/ocr/refresh-judicial-summary", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ 
-                    raw_text: currentOcrRawText,
-                    track: window.detectedTrack || "high_court",
-                    case_session_id: currentCaseSessionId,
-                    case_type: caseType
-                })
-            });
-
-            if (!response.ok) {
-                throw new Error("AI refresh failed");
-            }
-            const data = await response.json();
-            if (data.success) {
-                updateEnhancementCheck(data);
-                showToast("Judicial Analysis updated with supporting documents!", "success");
-            } else {
-                showToast("Failed to refresh analysis", "error");
-            }
-        } catch (err) {
-            console.error("Refresh analysis error:", err);
-            showToast("Failed to refresh analysis: " + err.message, "error");
-        } finally {
-            if (refreshBtn) {
-                refreshBtn.disabled = false;
-                refreshBtn.innerHTML = origHTML;
-            }
-        }
-    }
 });
 
 
