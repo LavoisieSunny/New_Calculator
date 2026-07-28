@@ -2550,7 +2550,7 @@ def run_background_pdf_indexing(file_id: str, temp_path: str, filename: str):
         fallback_source = "DigitalPDF"
         ocr_debug = _build_ocr_debug("DigitalPDF", 0, 1.0, [], [], [], "", 0.0,
                                       total_ocr_time=time.time() - start_time)
-        ocr_debug["track"] = track_info
+        ocr_debug["track"] = locals().get("track_info", {"track": locals().get("track", "high_court")})
 
         if is_extracted_text_sparse(text_lines):
             logger.info(f"Sparse digital text for {filename}. Running hybrid OCR (PaddleOCR + vision).")
@@ -2562,7 +2562,7 @@ def run_background_pdf_indexing(file_id: str, temp_path: str, filename: str):
                 track=track_per_page
             )
             fallback_source = OCR_HYBRID_LABEL
-            ocr_debug["track"] = track_info
+            ocr_debug["track"] = locals().get("track_info", {"track": locals().get("track", "high_court")})
 
         if is_extracted_text_sparse(text_lines):
             alt_lines = extract_alternate_pdf_text(temp_path)
@@ -2636,7 +2636,7 @@ def run_background_pdf_indexing(file_id: str, temp_path: str, filename: str):
         if os.path.exists(temp_path):
             os.unlink(temp_path)
         BATCH_QUEUE[file_id].update({"status": "failed", "error": str(e)})
-        logger.error(f"Background task failed for {filename}: {e}")
+        logger.error(f"Background task failed for {filename}: {e}", exc_info=True)
 
 
 # ======================================================
@@ -2689,6 +2689,17 @@ async def process_single_file(
                 hc_count = sum(1 for p in track_per_page if p["track"] == "high_court")
                 lc_count = len(track_per_page) - hc_count
                 track = "high_court" if hc_count >= lc_count else "lower_court"
+                
+                hc_hits = sum(p["hc_hits"] for p in track_per_page)
+                lc_hits = sum(p["lc_hits"] for p in track_per_page)
+                avg_deva_ratio = sum(p["deva_ratio"] for p in track_per_page) / max(len(track_per_page), 1)
+                track_info = {
+                    "track": track,
+                    "hc_hits": hc_hits,
+                    "lc_hits": lc_hits,
+                    "devanagari_ratio": round(avg_deva_ratio, 3),
+                    "sampled_pages": len(track_per_page)
+                }
                 _tlog(f"[TRACK] {file.filename}: majority={track}, pages={len(track_per_page)}")
 
                 if is_extracted_text_sparse(text_lines):
@@ -2730,7 +2741,7 @@ async def process_single_file(
 
                     text_lines, ocr_debug = await ocr_future
                     fallback_source = OCR_HYBRID_LABEL
-                    ocr_debug["track"] = track_info
+                    ocr_debug["track"] = locals().get("track_info", {"track": locals().get("track", "high_court")})
 
                 if track == "high_court" and is_extracted_text_sparse(text_lines):
                     yield f"data: {json.dumps({'status': 'checking_alternate', 'progress': 65, 'message': 'Sparse text — trying alternate extraction...'})}\n\n"
@@ -2883,7 +2894,7 @@ async def process_single_file(
 
 
         except Exception as e:
-            logger.error(f"Streaming OCR error: {e}")
+            logger.error(f"Streaming OCR error: {e}", exc_info=True)
             if temp_path and os.path.exists(temp_path):
                 try:
                     os.unlink(temp_path)
