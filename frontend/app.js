@@ -992,9 +992,6 @@ document.addEventListener("DOMContentLoaded", () => {
                 singleFileInput.click();
             }
         }
-        if (supportingDocsSection) {
-            supportingDocsSection.style.display = "none";
-        }
         if (supportingDocsChips) {
             supportingDocsChips.innerHTML = "";
         }
@@ -4717,6 +4714,9 @@ This cannot be undone.`)) return;
             
             <div class="action-container" style="display: flex; align-items: center; gap: 10px; flex-shrink: 0;">
                 <span class="status-badge queued">queued</span>
+                <button type="button" class="preview-extraction-btn" title="View extracted text" style="display: none; background: transparent; border: 1px solid var(--border-color); color: var(--text-secondary); width: 26px; height: 26px; border-radius: 6px; cursor: pointer; align-items: center; justify-content: center;">
+                    <i class="fa-solid fa-eye"></i>
+                </button>
                 <button type="button" class="upload-btn btn btn-primary btn-small" style="padding: 4px 10px; font-size: 0.78rem; line-height: 1;">
                     <i class="fa-solid fa-upload"></i> Upload
                 </button>
@@ -4727,24 +4727,74 @@ This cannot be undone.`)) return;
             supportingDocsChips.appendChild(chip);
         }
 
-        // Attach upload handler
         const uploadBtn = chip.querySelector(".upload-btn");
         const docTypeSelect = chip.querySelector(".doc-type-select");
         const enhanceOcrCheckbox = chip.querySelector(".enhance-ocr-checkbox");
         const statusBadge = chip.querySelector(".status-badge");
+        const previewBtn = chip.querySelector(".preview-extraction-btn");
 
         uploadBtn.addEventListener("click", () => {
-            // Disable inputs during upload
             docTypeSelect.disabled = true;
             enhanceOcrCheckbox.disabled = true;
             uploadBtn.style.display = "none";
-            
-            // Start upload process
-            uploadSupportingDoc(file, file_id, docTypeSelect.value, enhanceOcrCheckbox.checked, statusBadge);
+            uploadSupportingDoc(file, file_id, docTypeSelect.value, enhanceOcrCheckbox.checked, statusBadge, previewBtn);
+        });
+
+        previewBtn.addEventListener("click", () => {
+            const rawText = chip.dataset.rawText ? JSON.parse(chip.dataset.rawText) : [];
+            showExtractedTextModal(file.name, rawText);
         });
     }
 
-    async function uploadSupportingDoc(file, file_id, doc_type, enhance_ocr, statusBadge) {
+    function showExtractedTextModal(filename, lines) {
+        let overlay = document.getElementById("extraction-preview-overlay");
+        if (overlay) overlay.remove();
+
+        overlay = document.createElement("div");
+        overlay.id = "extraction-preview-overlay";
+        overlay.style.cssText = `
+            position: fixed; inset: 0; background: rgba(0,0,0,0.6);
+            display: flex; align-items: center; justify-content: center;
+            z-index: 10000; padding: 24px;
+        `;
+
+        const card = document.createElement("div");
+        card.style.cssText = `
+            background: var(--bg-panel, #1e293b); border: 1px solid var(--border-glass, rgba(255,255,255,0.08));
+            border-radius: var(--radius-sm, 8px); width: 100%; max-width: 720px; max-height: 80vh;
+            display: flex; flex-direction: column; overflow: hidden; box-shadow: 0 20px 40px rgba(0,0,0,0.4);
+        `;
+
+        const bodyText = (lines && lines.length > 0)
+            ? lines.join("\n")
+            : "No text could be extracted from this document.";
+
+        card.innerHTML = `
+            <div style="padding: 14px 18px; border-bottom: 1px solid var(--border-color, rgba(255,255,255,0.08)); display: flex; align-items: center; justify-content: space-between; gap: 12px;">
+                <h3 style="margin: 0; font-size: 0.95rem; color: var(--text-primary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
+                    <i class="fa-solid fa-file-lines" style="color: var(--color-primary); margin-right: 8px;"></i>${filename}
+                </h3>
+                <button type="button" id="extraction-preview-close" style="background: transparent; border: none; color: var(--text-secondary); font-size: 1.1rem; cursor: pointer; line-height: 1;">
+                    <i class="fa-solid fa-xmark"></i>
+                </button>
+            </div>
+            <div style="padding: 16px 18px; overflow-y: auto; flex: 1;">
+                <pre style="white-space: pre-wrap; word-break: break-word; font-family: 'Inter', sans-serif; font-size: 0.85rem; line-height: 1.6; color: var(--text-secondary); margin: 0;"></pre>
+            </div>
+        `;
+        card.querySelector("pre").textContent = bodyText;
+
+        overlay.appendChild(card);
+        document.body.appendChild(overlay);
+
+        const closeModal = () => overlay.remove();
+        overlay.querySelector("#extraction-preview-close").addEventListener("click", closeModal);
+        overlay.addEventListener("click", (e) => {
+            if (e.target === overlay) closeModal();
+        });
+    }
+
+    async function uploadSupportingDoc(file, file_id, doc_type, enhance_ocr, statusBadge, previewBtn) {
         statusBadge.textContent = "processing";
         statusBadge.className = "status-badge processing";
 
@@ -4755,7 +4805,6 @@ This cannot be undone.`)) return;
         formData.append("enhance_ocr", enhance_ocr);
 
         try {
-            // Trigger SSE process endpoint
             const response = await fetch("/api/ocr/process-supporting-doc", {
                 method: "POST",
                 body: formData
@@ -4765,7 +4814,6 @@ This cannot be undone.`)) return;
                 throw new Error("Supporting document process initiation failed.");
             }
 
-            // Read the stream
             const reader = response.body.getReader();
             const decoder = new TextDecoder();
             let buffer = "";
@@ -4794,6 +4842,15 @@ This cannot be undone.`)) return;
                             statusBadge.textContent = "done";
                             statusBadge.className = "status-badge done";
                             showToast(`Supporting document "${file.name}" successfully indexed!`, "success");
+
+                            if (previewBtn) {
+                                const chipEl = statusBadge.closest(".supporting-doc-chip");
+                                if (chipEl) {
+                                    chipEl.dataset.rawText = JSON.stringify(data.raw_text || []);
+                                }
+                                previewBtn.style.display = "inline-flex";
+                            }
+
                             if (document.getElementById("final-judicial-summary-block")) {
                                 refreshJudicialAnalysis();
                             }

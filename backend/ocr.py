@@ -3034,7 +3034,7 @@ async def process_supporting_doc(
                 os.unlink(temp_path)
                 temp_path = None
 
-            yield f"data: {json.dumps({'status': 'done', 'progress': 100, 'success': True, 'filename': file.filename})}\n\n"
+            yield f"data: {json.dumps({'status': 'done', 'progress': 100, 'success': True, 'filename': file.filename, 'raw_text': text_lines})}\n\n"
 
         except Exception as e:
             logger.error(f"Streaming supporting OCR error: {e}")
