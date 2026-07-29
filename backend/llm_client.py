@@ -1913,7 +1913,7 @@ def find_missing_claims(grounds_claims: list, trial_claims: list, match_threshol
     return candidates
 
 
-def generate_final_judicial_summary(sections: dict, heuristic_signal: dict = None, case_type: str = "death", supporting_docs: dict = None) -> dict:
+def generate_final_judicial_summary(sections: dict, heuristic_signal: dict = None, case_type: str = "death", supporting_docs: dict = None, force_refresh: bool = False) -> dict:
     import hashlib
     from backend.parser_heuristics import normalize_issues_table
     from config.llm import (
@@ -2027,7 +2027,7 @@ def generate_final_judicial_summary(sections: dict, heuristic_signal: dict = Non
 
     concat = f"{issues_text_en}|||{award_text_en}|||{grounds_text}|||{relief_text}|||{medical_evidence_text}"
     h = hashlib.sha256(concat.encode("utf-8")).hexdigest()
-    if h in _FINAL_SUMMARY_CACHE:
+    if not force_refresh and h in _FINAL_SUMMARY_CACHE:
         logger.info("[FINAL-JUDICIAL-SUMMARY] Returning cached summary.")
         return _FINAL_SUMMARY_CACHE[h]
 

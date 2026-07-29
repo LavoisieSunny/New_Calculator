@@ -3284,7 +3284,7 @@ async def ai_recover_fields(request: AIRecoverRequest):
         case_tp = recovered_data.get("case_type") or "death"
         summary_res = summarize_grounds_and_relief(sections_dict, heuristic_signal, case_tp)
         final_judicial_res = generate_final_judicial_summary(
-            sections_dict, heuristic_signal, case_tp, supporting_docs=supporting_docs
+            sections_dict, heuristic_signal, case_tp, supporting_docs=supporting_docs, force_refresh=True
         )
 
         formatted["grounds_relief_summary"] = summary_res
@@ -3400,7 +3400,8 @@ async def refresh_judicial_summary(request: RefreshJudicialSummaryRequest):
             sections_dict,
             heuristic_signal,
             request.case_type,
-            supporting_docs=supporting_docs
+            supporting_docs=supporting_docs,
+            force_refresh=request.force_refresh
         )
 
         with _JUDICIAL_SUMMARY_CACHE_LOCK:
