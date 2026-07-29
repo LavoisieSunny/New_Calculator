@@ -37,6 +37,14 @@ _LC_MARKERS = [
 
 _DEVANAGARI_RE = re.compile(r"[\u0900-\u097F]")
 
+# How many leading (front-matter) pages decide the bundle-level track.
+# A High Court appeal bundle always attaches a certified copy of the
+# impugned lower-court award as an annexure -- in Hindi, and frequently
+# more pages than the appeal memo itself -- so the overall track must be
+# decided from the cause-title / computer-sheet / memo-of-appeal pages at
+# the front, not from a majority vote across every page in the bundle.
+TRACK_DECISION_SAMPLE_PAGES = 3
+
 
 def _devanagari_ratio(text: str) -> float:
     """Fraction of alphabetic characters that are Devanagari script."""

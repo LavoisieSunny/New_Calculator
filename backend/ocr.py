@@ -2528,22 +2528,27 @@ def run_background_pdf_indexing(file_id: str, temp_path: str, filename: str):
         BATCH_QUEUE[file_id]["progress"] = 20
 
         # Detect court level track
-        from backend.track_detection import detect_case_track_per_page
+        from backend.track_detection import detect_case_track_per_page, TRACK_DECISION_SAMPLE_PAGES
         track_per_page = detect_case_track_per_page(temp_path)
-        
-        hc_count = sum(1 for p in track_per_page if p["track"] == "high_court")
-        lc_count = len(track_per_page) - hc_count
+
+        # Vote only on the front-matter pages -- see matching comment in the
+        # single-upload SSE endpoint for why voting across the whole bundle
+        # misclassifies HC appeals that annex the (Hindi) lower-court award.
+        voting_pages = track_per_page[:TRACK_DECISION_SAMPLE_PAGES] or track_per_page
+        hc_count = sum(1 for p in voting_pages if p["track"] == "high_court")
+        lc_count = len(voting_pages) - hc_count
         track = "high_court" if hc_count >= lc_count else "lower_court"
-        
-        hc_hits = sum(p["hc_hits"] for p in track_per_page)
-        lc_hits = sum(p["lc_hits"] for p in track_per_page)
-        avg_deva_ratio = sum(p["deva_ratio"] for p in track_per_page) / max(len(track_per_page), 1)
+
+        hc_hits = sum(p["hc_hits"] for p in voting_pages)
+        lc_hits = sum(p["lc_hits"] for p in voting_pages)
+        avg_deva_ratio = sum(p["deva_ratio"] for p in voting_pages) / max(len(voting_pages), 1)
         track_info = {
             "track": track,
             "hc_hits": hc_hits,
             "lc_hits": lc_hits,
             "devanagari_ratio": round(avg_deva_ratio, 3),
-            "sampled_pages": len(track_per_page)
+            "sampled_pages": len(voting_pages),
+            "total_pages_in_bundle": len(track_per_page)
         }
 
         text_lines = extract_digital_pdf_text(temp_path)
@@ -2684,21 +2689,31 @@ async def process_single_file(
                 # to use — English HC bundles vs Hindi lower-court bundles.
                 yield f"data: {json.dumps({'status': 'routing', 'progress': 42, 'message': 'Detecting court level (High Court / Lower Court)...'})}\n\n"
                 await asyncio.sleep(0.01)
-                from backend.track_detection import detect_case_track_per_page
+                from backend.track_detection import detect_case_track_per_page, TRACK_DECISION_SAMPLE_PAGES
                 track_per_page = await asyncio.to_thread(detect_case_track_per_page, temp_path)
-                hc_count = sum(1 for p in track_per_page if p["track"] == "high_court")
-                lc_count = len(track_per_page) - hc_count
+                # Only the front-matter pages (cause title / computer sheet / memo of
+                # appeal) decide the bundle's overall track. A High Court appeal
+                # always attaches a certified copy of the impugned lower-court award
+                # as an annexure -- in Hindi, and often more pages than the appeal
+                # memo itself -- so voting across the WHOLE document would let that
+                # annexure outvote the appeal's own front matter and misclassify an
+                # HC appeal bundle as "lower_court". Voting on the front matter only
+                # matches the "cheap, 1-3 low-DPI pages" design intent above.
+                voting_pages = track_per_page[:TRACK_DECISION_SAMPLE_PAGES] or track_per_page
+                hc_count = sum(1 for p in voting_pages if p["track"] == "high_court")
+                lc_count = len(voting_pages) - hc_count
                 track = "high_court" if hc_count >= lc_count else "lower_court"
-                
-                hc_hits = sum(p["hc_hits"] for p in track_per_page)
-                lc_hits = sum(p["lc_hits"] for p in track_per_page)
-                avg_deva_ratio = sum(p["deva_ratio"] for p in track_per_page) / max(len(track_per_page), 1)
+
+                hc_hits = sum(p["hc_hits"] for p in voting_pages)
+                lc_hits = sum(p["lc_hits"] for p in voting_pages)
+                avg_deva_ratio = sum(p["deva_ratio"] for p in voting_pages) / max(len(voting_pages), 1)
                 track_info = {
                     "track": track,
                     "hc_hits": hc_hits,
                     "lc_hits": lc_hits,
                     "devanagari_ratio": round(avg_deva_ratio, 3),
-                    "sampled_pages": len(track_per_page)
+                    "sampled_pages": len(voting_pages),
+                    "total_pages_in_bundle": len(track_per_page)
                 }
                 _tlog(f"[TRACK] {file.filename}: majority={track}, pages={len(track_per_page)}")
 
