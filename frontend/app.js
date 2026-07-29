@@ -1489,6 +1489,8 @@ document.addEventListener("DOMContentLoaded", () => {
                 const id = btn.getAttribute("data-id");
                 const matchedFile = fileQueue.find(f => f.file_id === id);
                 if (matchedFile) {
+                    window.lastEnhancementVerdict = null;
+                    window.currentRenderedVerdict = null;
                     window.lastUploadedOcrData = matchedFile;
                     window.detectedTrack = matchedFile.track || "high_court";
                     currentOcrRawText = matchedFile.raw_text || [];
