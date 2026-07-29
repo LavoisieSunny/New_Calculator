@@ -4615,8 +4615,8 @@ This cannot be undone.`)) return;
                 
                 <select class="doc-type-select" style="background: var(--bg-panel-light, rgba(255, 255, 255, 0.05)); border: 1px solid var(--border-color); color: var(--text-primary); padding: 4px 8px; border-radius: 6px; font-size: 0.78rem; cursor: pointer; font-weight: 500;">
                     <option value="lower_court">Lower Court Judgment</option>
-                    <option value="hospital_record">Hospital Record</option>
-                    <option value="other">Other</option>
+                    <option value="hospital_record">Medical / Hospital Record</option>
+                    <option value="other">Other Supporting Document</option>
                 </select>
 
                 <label class="enhance-ocr-label" style="display: inline-flex; align-items: center; gap: 4px; font-size: 0.75rem; cursor: pointer; color: var(--text-secondary); user-select: none;">

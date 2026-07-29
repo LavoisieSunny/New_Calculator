@@ -832,3 +832,109 @@ def get_supporting_doc_text(case_session_id: str, doc_type: str) -> str:
     except Exception as e:
         logger.error(f"Error reassembling supporting doc text for session={case_session_id}, type={doc_type}: {e}")
         return ""
+
+
+def get_all_supporting_docs(case_session_id: str, exclude_doc_types: tuple = ("lower_court",)) -> list:
+    """
+    Generic retrieval: returns EVERY supporting document indexed for this case
+    session, grouped by (filename, doc_type), regardless of what tag the
+    uploader picked ("hospital_record", "other", or anything else added later).
+
+    Only doc_types in `exclude_doc_types` are skipped -- by default just
+    "lower_court", since that document is handled specially elsewhere (its
+    text is parsed into issues/award sections rather than treated as evidence).
+
+    Returns a list of dicts: [{"filename": ..., "doc_type": ..., "text": ...}, ...]
+    ordered by chunk_index within each document, so a whole family of files
+    (an X-ray report, a discharge summary, an income affidavit, etc.) all
+    surface here without any of them needing a specific hardcoded key.
+    """
+    if not case_session_id:
+        return []
+
+    client = get_qdrant_client()
+    if client is None:
+        return []
+
+    try:
+        from qdrant_client.models import Filter, FieldCondition, MatchValue
+
+        scroll_filter = Filter(must=[
+            FieldCondition(key="case_session_id", match=MatchValue(value=case_session_id))
+        ])
+
+        all_points = []
+        next_offset = None
+        while True:
+            scroll_res, next_offset = client.scroll(
+                collection_name=COLLECTION_NAME,
+                scroll_filter=scroll_filter,
+                limit=200,
+                offset=next_offset,
+                with_payload=True
+            )
+            all_points.extend(scroll_res)
+            if not next_offset:
+                break
+
+        if not all_points:
+            return []
+
+        # Group by (filename, doc_type) so multi-chunk documents get
+        # reassembled in the right order rather than interleaved.
+        groups: dict = {}
+        for p in all_points:
+            doc_type = p.payload.get("doc_type") or "other"
+            if doc_type in exclude_doc_types:
+                continue
+            filename = p.payload.get("filename") or p.payload.get("file_name") or "unnamed document"
+            key = (filename, doc_type)
+            groups.setdefault(key, []).append(p)
+
+        documents = []
+        for (filename, doc_type), points in groups.items():
+            points_sorted = sorted(points, key=lambda p: p.payload.get("chunk_index") or 0)
+            text = "\n".join((p.payload.get("text") or "") for p in points_sorted).strip()
+            if text:
+                documents.append({"filename": filename, "doc_type": doc_type, "text": text})
+
+        return documents
+
+    except Exception as e:
+        logger.error(f"Error retrieving all supporting docs for session={case_session_id}: {e}")
+        return []
+
+
+def build_supporting_docs_bundle(case_session_id: str) -> dict:
+    """
+    Single source of truth for assembling the supporting_docs dict passed into
+    generate_final_judicial_summary(). Used by every call site so behaviour
+    stays consistent no matter which endpoint triggers the analysis.
+
+    - "lower_court": still fetched specifically, since its structure (issues
+      framed / operative award) is parsed out separately.
+    - "medical_evidence": every OTHER document attached to the case, whatever
+      it was tagged as on upload, concatenated with a clear per-document
+      header so the LLM knows which fact came from which file.
+    """
+    if not case_session_id:
+        return {"lower_court": "", "medical_evidence": ""}
+
+    lower_court_text = get_supporting_doc_text(case_session_id, "lower_court")
+
+    other_docs = get_all_supporting_docs(case_session_id, exclude_doc_types=("lower_court",))
+    labeled_blocks = []
+    for doc in other_docs:
+        tag_label = {
+            "hospital_record": "Hospital / Medical Record",
+            "other": "Supporting Document"
+        }.get(doc["doc_type"], doc["doc_type"])
+        labeled_blocks.append(
+            f"=== {tag_label}: {doc['filename']} ===\n{doc['text']}"
+        )
+    medical_evidence_text = "\n\n".join(labeled_blocks)
+
+    return {
+        "lower_court": lower_court_text,
+        "medical_evidence": medical_evidence_text
+    }

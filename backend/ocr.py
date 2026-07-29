@@ -2858,13 +2858,10 @@ async def process_single_file(
 
             heuristic_signal = suggestions.get("case_classification") or classify_enhancement_or_reduction(sections_dict)
 
-            from backend.vector_db import get_supporting_doc_text
+            from backend.vector_db import build_supporting_docs_bundle
             supporting_docs = {}
             if case_session_id:
-                supporting_docs = {
-                    "lower_court": get_supporting_doc_text(case_session_id, "lower_court"),
-                    "hospital_record": get_supporting_doc_text(case_session_id, "hospital_record")
-                }
+                supporting_docs = build_supporting_docs_bundle(case_session_id)
 
             from backend.llm_client import summarize_grounds_and_relief, generate_final_judicial_summary
             summary_res, final_judicial_res = await asyncio.gather(
@@ -3260,13 +3257,10 @@ async def ai_recover_fields(request: AIRecoverRequest):
         heuristic_signal = heuristics_data.get("case_classification") or classify_enhancement_or_reduction(sections_dict)
 
         # Fetch supporting docs
-        from backend.vector_db import get_supporting_doc_text
+        from backend.vector_db import build_supporting_docs_bundle
         supporting_docs = {}
         if request.case_session_id:
-            supporting_docs = {
-                "lower_court": get_supporting_doc_text(request.case_session_id, "lower_court"),
-                "hospital_record": get_supporting_doc_text(request.case_session_id, "hospital_record")
-            }
+            supporting_docs = build_supporting_docs_bundle(request.case_session_id)
 
         from backend.llm_client import summarize_grounds_and_relief, generate_final_judicial_summary
         case_tp = recovered_data.get("case_type") or "death"
@@ -3356,11 +3350,8 @@ async def refresh_judicial_summary(request: RefreshJudicialSummaryRequest):
             from backend.track_detection import _devanagari_ratio
             track = "lower_court" if _devanagari_ratio(full_text) >= 0.30 else "high_court"
 
-        from backend.vector_db import get_supporting_doc_text
-        supporting_docs = {
-            "lower_court": get_supporting_doc_text(request.case_session_id, "lower_court"),
-            "hospital_record": get_supporting_doc_text(request.case_session_id, "hospital_record")
-        }
+        from backend.vector_db import build_supporting_docs_bundle
+        supporting_docs = build_supporting_docs_bundle(request.case_session_id)
 
         cache_key = _make_judicial_summary_cache_key(
             request.case_session_id, track, request.case_type, full_text, supporting_docs

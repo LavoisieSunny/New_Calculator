@@ -1929,10 +1929,10 @@ def generate_final_judicial_summary(sections: dict, heuristic_signal: dict = Non
     relief_text = (sections.get("relief_section", "") or "").strip()
 
     medical_evidence_text = ""
-    if supporting_docs and supporting_docs.get("hospital_record"):
-        medical_evidence_text = supporting_docs["hospital_record"]
+    if supporting_docs and supporting_docs.get("medical_evidence"):
+        medical_evidence_text = supporting_docs["medical_evidence"]
     else:
-        medical_evidence_text = "(No medical evidence from hospital records provided.)"
+        medical_evidence_text = "(No supporting documents/medical evidence provided.)"
 
     summary_src = "llm_summary"
 
