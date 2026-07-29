@@ -4711,6 +4711,24 @@ This cannot be undone.`)) return;
     const checkJudicialAnalysisBtn = document.getElementById("check-judicial-analysis-btn");
     const judicialAnalysisResult = document.getElementById("judicial-analysis-result");
 
+    // In-memory cache of generated judicial-analysis reports, keyed per document
+    // (case session + OCR text). This means: once a report has been generated
+    // for the currently loaded document, clicking "Check Judicial Analysis"
+    // again simply reopens the same cached report in the modal instead of
+    // calling the backend/LLM again -- so the report never changes between
+    // clicks for the same document.
+    const judicialAnalysisCache = new Map();
+
+    function getJudicialAnalysisCacheKey() {
+        const sessionPart = currentCaseSessionId || "no-session";
+        const trackPart = window.detectedTrack || "high_court";
+        const caseTypePart = caseTypeSelect ? caseTypeSelect.value : "death";
+        // Cheap content fingerprint so a re-upload / different document under
+        // the same session doesn't reuse a stale cached report.
+        const textPart = (currentOcrRawText || []).join("\n").length + ":" + (currentOcrRawText || []).length;
+        return `${sessionPart}|${trackPart}|${caseTypePart}|${textPart}`;
+    }
+
     function renderJudicialProcessingState(message) {
         if (!judicialAnalysisResult) return;
         judicialAnalysisResult.dataset.state = "processing";
@@ -4734,8 +4752,7 @@ This cannot be undone.`)) return;
         `;
     }
 
-    function renderJudicialAnalysisPanel(finalJudicial) {
-        if (!judicialAnalysisResult) return;
+    function buildJudicialAnalysisBodyHTML(finalJudicial) {
         const issueWise = finalJudicial.issue_wise_view || [];
         const finalPoints = finalJudicial.final_summary_points || [];
         const probableOutcome = finalJudicial.probable_outcome || "not_determinable";
@@ -4794,12 +4811,10 @@ This cannot be undone.`)) return;
             `;
         }
 
-        judicialAnalysisResult.dataset.state = "done";
-        judicialAnalysisResult.style.display = "block";
-        judicialAnalysisResult.innerHTML = `
-            <div style="padding: 12px; background: rgba(255,255,255,0.02); border: 1px solid rgba(255,255,255,0.08); border-radius: var(--radius-sm); display: flex; flex-direction: column; gap: 10px;">
-                <div style="display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid rgba(255,255,255,0.06); padding-bottom: 6px;">
-                    <span style="font-size: 0.85rem; font-weight: 700; color: var(--text-primary); text-transform: uppercase; display: inline-flex; align-items: center; gap: 8px;">
+        return `
+            <div style="display: flex; flex-direction: column; gap: 10px;">
+                <div style="display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid rgba(255,255,255,0.06); padding-bottom: 8px;">
+                    <span style="font-size: 0.9rem; font-weight: 700; color: var(--text-primary); text-transform: uppercase; display: inline-flex; align-items: center; gap: 8px;">
                         <i class="fa-solid fa-scale-balanced" style="color: var(--color-primary);"></i> High Court Judicial Analysis
                     </span>
                     <span class="badge" style="background: ${outcomeBadgeColor}; color: #fff; font-weight: 700; padding: 3px 8px; border-radius: var(--radius-sm); font-size: 0.75rem;">
@@ -4818,62 +4833,142 @@ This cannot be undone.`)) return;
         `;
     }
 
-    if (checkJudicialAnalysisBtn) {
-        checkJudicialAnalysisBtn.addEventListener("click", async () => {
-            if (!currentOcrRawText || currentOcrRawText.length === 0) {
-                showToast("Please upload and OCR the High Court case file first.", "warning");
-                return;
-            }
+    // Renders the report inside a full modal "window" overlay, following the
+    // same visual pattern as showExtractedTextModal, so the entire
+    // comparison report is visible at once rather than cramped into the
+    // small inline panel.
+    function showJudicialAnalysisModal(finalJudicial, fromCache) {
+        let overlay = document.getElementById("judicial-analysis-overlay");
+        if (overlay) overlay.remove();
 
-            // Gate: if any supporting-doc chip exists but hasn't finished
-            // OCR/indexing yet, show "Processing" instead of running the
-            // comparison against incomplete/missing supporting-doc text.
-            const chips = supportingDocsChips ? Array.from(supportingDocsChips.querySelectorAll(".supporting-doc-chip")) : [];
-            const pendingChip = chips.find(chip => {
-                const badge = chip.querySelector(".status-badge");
-                const status = badge ? badge.className : "";
-                return !status.includes("done") && !status.includes("failed");
+        overlay = document.createElement("div");
+        overlay.id = "judicial-analysis-overlay";
+        overlay.style.cssText = `
+            position: fixed; inset: 0; background: rgba(0,0,0,0.6);
+            display: flex; align-items: center; justify-content: center;
+            z-index: 10000; padding: 24px;
+        `;
+
+        const card = document.createElement("div");
+        card.style.cssText = `
+            background: var(--bg-panel, #1e293b); border: 1px solid var(--border-glass, rgba(255,255,255,0.08));
+            border-radius: var(--radius-sm, 8px); width: 100%; max-width: 820px; max-height: 85vh;
+            display: flex; flex-direction: column; overflow: hidden; box-shadow: 0 20px 40px rgba(0,0,0,0.4);
+        `;
+
+        card.innerHTML = `
+            <div style="padding: 14px 18px; border-bottom: 1px solid var(--border-color, rgba(255,255,255,0.08)); display: flex; align-items: center; justify-content: space-between; gap: 12px;">
+                <h3 style="margin: 0; font-size: 0.95rem; color: var(--text-primary); display: flex; align-items: center; gap: 8px;">
+                    <i class="fa-solid fa-scale-balanced" style="color: var(--color-primary);"></i> Judicial Analysis &amp; Summary Comparison Report
+                    ${fromCache ? `<span style="font-size: 0.7rem; font-weight: 600; color: var(--text-secondary); background: rgba(255,255,255,0.06); padding: 2px 8px; border-radius: 999px;"><i class="fa-solid fa-clock-rotate-left"></i> Cached</span>` : ''}
+                </h3>
+                <div style="display: flex; align-items: center; gap: 10px; flex-shrink: 0;">
+                    <button type="button" id="judicial-analysis-regenerate" title="Regenerate (bypass cache)" style="background: transparent; border: 1px solid var(--border-color); color: var(--text-secondary); font-size: 0.75rem; padding: 4px 10px; border-radius: 6px; cursor: pointer;">
+                        <i class="fa-solid fa-rotate"></i> Regenerate
+                    </button>
+                    <button type="button" id="judicial-analysis-close" style="background: transparent; border: none; color: var(--text-secondary); font-size: 1.1rem; cursor: pointer; line-height: 1;">
+                        <i class="fa-solid fa-xmark"></i>
+                    </button>
+                </div>
+            </div>
+            <div style="padding: 16px 18px; overflow-y: auto; flex: 1;">
+                ${buildJudicialAnalysisBodyHTML(finalJudicial)}
+            </div>
+        `;
+
+        overlay.appendChild(card);
+        document.body.appendChild(overlay);
+
+        const closeModal = () => overlay.remove();
+        overlay.querySelector("#judicial-analysis-close").addEventListener("click", closeModal);
+        overlay.addEventListener("click", (e) => {
+            if (e.target === overlay) closeModal();
+        });
+        overlay.querySelector("#judicial-analysis-regenerate").addEventListener("click", () => {
+            closeModal();
+            runJudicialAnalysis({ forceRefresh: true });
+        });
+    }
+
+    async function runJudicialAnalysis({ forceRefresh = false } = {}) {
+        if (!currentOcrRawText || currentOcrRawText.length === 0) {
+            showToast("Please upload and OCR the High Court case file first.", "warning");
+            return;
+        }
+
+        // Gate: if any supporting-doc chip exists but hasn't finished
+        // OCR/indexing yet, show "Processing" instead of running the
+        // comparison against incomplete/missing supporting-doc text.
+        const chips = supportingDocsChips ? Array.from(supportingDocsChips.querySelectorAll(".supporting-doc-chip")) : [];
+        const pendingChip = chips.find(chip => {
+            const badge = chip.querySelector(".status-badge");
+            const status = badge ? badge.className : "";
+            return !status.includes("done") && !status.includes("failed");
+        });
+
+        if (pendingChip) {
+            renderJudicialProcessingState("Processing the file&hellip; Judicial Analysis will be available once the supporting document finishes OCR.");
+            return;
+        }
+
+        const cacheKey = getJudicialAnalysisCacheKey();
+
+        // Cache hit: reopen the exact same report immediately, no backend call.
+        if (!forceRefresh && judicialAnalysisCache.has(cacheKey)) {
+            if (judicialAnalysisResult) {
+                judicialAnalysisResult.dataset.state = "done";
+                judicialAnalysisResult.style.display = "none"; // full report lives in the modal
+            }
+            showJudicialAnalysisModal(judicialAnalysisCache.get(cacheKey), true);
+            return;
+        }
+
+        checkJudicialAnalysisBtn.disabled = true;
+        const origHTML = checkJudicialAnalysisBtn.innerHTML;
+        checkJudicialAnalysisBtn.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i> Generating Judicial Analysis...`;
+        renderJudicialProcessingState("Processing the file&hellip;");
+
+        try {
+            const caseType = caseTypeSelect ? caseTypeSelect.value : "death";
+            const response = await fetch("/api/ocr/refresh-judicial-summary", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    raw_text: currentOcrRawText,
+                    track: window.detectedTrack || "high_court",
+                    case_session_id: currentCaseSessionId,
+                    case_type: caseType,
+                    force_refresh: forceRefresh
+                })
             });
 
-            if (pendingChip) {
-                renderJudicialProcessingState("Processing the file&hellip; Judicial Analysis will be available once the supporting document finishes OCR.");
-                return;
-            }
+            if (!response.ok) throw new Error("Judicial analysis request failed");
+            const data = await response.json();
 
-            checkJudicialAnalysisBtn.disabled = true;
-            const origHTML = checkJudicialAnalysisBtn.innerHTML;
-            checkJudicialAnalysisBtn.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i> Generating Judicial Analysis...`;
-            renderJudicialProcessingState("Processing the file&hellip;");
-
-            try {
-                const caseType = caseTypeSelect ? caseTypeSelect.value : "death";
-                const response = await fetch("/api/ocr/refresh-judicial-summary", {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({
-                        raw_text: currentOcrRawText,
-                        track: window.detectedTrack || "high_court",
-                        case_session_id: currentCaseSessionId,
-                        case_type: caseType
-                    })
-                });
-
-                if (!response.ok) throw new Error("Judicial analysis request failed");
-                const data = await response.json();
-
-                if (data.success && data.final_judicial_summary) {
-                    renderJudicialAnalysisPanel(data.final_judicial_summary);
-                } else {
-                    renderJudicialErrorState("Failed to generate Judicial Analysis. Please try again.");
+            if (data.success && data.final_judicial_summary) {
+                // Cache client-side too, so a page-local re-click never
+                // re-fetches, and mark the small inline panel "done" (the
+                // full report itself opens in the modal window).
+                judicialAnalysisCache.set(cacheKey, data.final_judicial_summary);
+                if (judicialAnalysisResult) {
+                    judicialAnalysisResult.dataset.state = "done";
+                    judicialAnalysisResult.style.display = "none";
                 }
-            } catch (err) {
-                console.error("Judicial analysis error:", err);
-                renderJudicialErrorState(`Failed to generate Judicial Analysis: ${err.message}`);
-            } finally {
-                checkJudicialAnalysisBtn.disabled = false;
-                checkJudicialAnalysisBtn.innerHTML = origHTML;
+                showJudicialAnalysisModal(data.final_judicial_summary, !!data.cached);
+            } else {
+                renderJudicialErrorState("Failed to generate Judicial Analysis. Please try again.");
             }
-        });
+        } catch (err) {
+            console.error("Judicial analysis error:", err);
+            renderJudicialErrorState(`Failed to generate Judicial Analysis: ${err.message}`);
+        } finally {
+            checkJudicialAnalysisBtn.disabled = false;
+            checkJudicialAnalysisBtn.innerHTML = origHTML;
+        }
+    }
+
+    if (checkJudicialAnalysisBtn) {
+        checkJudicialAnalysisBtn.addEventListener("click", () => runJudicialAnalysis({ forceRefresh: false }));
     }
 
     async function uploadSupportingDoc(file, file_id, doc_type, enhance_ocr, statusBadge, previewBtn) {

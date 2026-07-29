@@ -3300,13 +3300,54 @@ class RefreshJudicialSummaryRequest(BaseModel):
     case_session_id: str
     track: str = None
     case_type: str = "death"
+    force_refresh: bool = False
+
+
+# --- In-memory cache for the final judicial summary -------------------------
+# Keyed on a hash of everything that actually influences the LLM output
+# (case_session_id + track + case_type + the OCR text itself, plus whatever
+# supporting-doc text is indexed for that session at cache-build time). This
+# guarantees that clicking "Check Judicial Analysis" repeatedly on the same
+# document returns the exact same report instead of re-invoking the LLM and
+# risking a differently-worded (or differently-reasoned) summary each time.
+# The cache is intentionally process-local/in-memory (no persistence) since
+# it only needs to live for the duration of a single review session.
+_JUDICIAL_SUMMARY_CACHE: dict = {}
+_JUDICIAL_SUMMARY_CACHE_LOCK = threading.Lock()
+_JUDICIAL_SUMMARY_CACHE_MAX_ENTRIES = 200
+
+
+def _make_judicial_summary_cache_key(case_session_id: str, track: str, case_type: str,
+                                      full_text: str, supporting_docs: dict) -> str:
+    import hashlib
+    hasher = hashlib.sha256()
+    hasher.update((case_session_id or "").encode("utf-8", "ignore"))
+    hasher.update(b"|")
+    hasher.update((track or "").encode("utf-8", "ignore"))
+    hasher.update(b"|")
+    hasher.update((case_type or "").encode("utf-8", "ignore"))
+    hasher.update(b"|")
+    hasher.update(full_text.encode("utf-8", "ignore"))
+    for key in sorted(supporting_docs.keys()):
+        hasher.update(b"|")
+        hasher.update(key.encode("utf-8", "ignore"))
+        hasher.update(b":")
+        hasher.update((supporting_docs.get(key) or "").encode("utf-8", "ignore"))
+    return hasher.hexdigest()
 
 
 @router.post("/refresh-judicial-summary")
 async def refresh_judicial_summary(request: RefreshJudicialSummaryRequest):
     """
-    Lightweight endpoint to refresh the final judicial summary without re-running 
+    Lightweight endpoint to refresh the final judicial summary without re-running
     full AI fields recovery.
+
+    Cached: the first successful run for a given (session, track, case_type,
+    OCR text, supporting-doc text) combination is stored in-memory. Every
+    subsequent call with the same inputs returns the cached report instead of
+    calling the LLM again, so the "Check Judicial Analysis" button always
+    shows the same report for the same document. Pass force_refresh=true to
+    bypass the cache and regenerate.
     """
     try:
         full_text = "\n".join(request.raw_text)
@@ -3315,16 +3356,32 @@ async def refresh_judicial_summary(request: RefreshJudicialSummaryRequest):
             from backend.track_detection import _devanagari_ratio
             track = "lower_court" if _devanagari_ratio(full_text) >= 0.30 else "high_court"
 
-        from backend.parser_heuristics import detect_document_sections_with_fallback, classify_enhancement_or_reduction
-        sections_meta = detect_document_sections_with_fallback(full_text, [])
-        sections_dict = {k: v["content"] for k, v in sections_meta.items()}
-        sections_dict["raw_ocr"] = full_text
-
         from backend.vector_db import get_supporting_doc_text
         supporting_docs = {
             "lower_court": get_supporting_doc_text(request.case_session_id, "lower_court"),
             "hospital_record": get_supporting_doc_text(request.case_session_id, "hospital_record")
         }
+
+        cache_key = _make_judicial_summary_cache_key(
+            request.case_session_id, track, request.case_type, full_text, supporting_docs
+        )
+
+        if not request.force_refresh:
+            with _JUDICIAL_SUMMARY_CACHE_LOCK:
+                cached = _JUDICIAL_SUMMARY_CACHE.get(cache_key)
+            if cached is not None:
+                logger.info(f"Judicial summary cache hit for session {request.case_session_id}")
+                return {
+                    "success": True,
+                    "final_judicial_summary": cached["final_judicial_summary"],
+                    "case_classification": cached["case_classification"],
+                    "cached": True
+                }
+
+        from backend.parser_heuristics import detect_document_sections_with_fallback, classify_enhancement_or_reduction
+        sections_meta = detect_document_sections_with_fallback(full_text, [])
+        sections_dict = {k: v["content"] for k, v in sections_meta.items()}
+        sections_dict["raw_ocr"] = full_text
 
         from backend.llm_client import generate_final_judicial_summary
         heuristic_signal = classify_enhancement_or_reduction(sections_dict)
@@ -3336,10 +3393,20 @@ async def refresh_judicial_summary(request: RefreshJudicialSummaryRequest):
             supporting_docs=supporting_docs
         )
 
+        with _JUDICIAL_SUMMARY_CACHE_LOCK:
+            if len(_JUDICIAL_SUMMARY_CACHE) >= _JUDICIAL_SUMMARY_CACHE_MAX_ENTRIES:
+                # Evict oldest entry (dicts preserve insertion order in py3.7+)
+                _JUDICIAL_SUMMARY_CACHE.pop(next(iter(_JUDICIAL_SUMMARY_CACHE)))
+            _JUDICIAL_SUMMARY_CACHE[cache_key] = {
+                "final_judicial_summary": final_judicial_res,
+                "case_classification": heuristic_signal
+            }
+
         return {
             "success": True,
             "final_judicial_summary": final_judicial_res,
-            "case_classification": heuristic_signal
+            "case_classification": heuristic_signal,
+            "cached": False
         }
     except Exception as e:
         logger.error(f"Error in refresh-judicial-summary: {e}")
