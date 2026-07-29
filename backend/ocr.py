@@ -3241,7 +3241,13 @@ async def ai_recover_fields(request: AIRecoverRequest):
         heuristics_data = parse_extracted_text(request.raw_text, case_type=recovered_data.get("case_type") or "death")
         
         # Merge heuristics into recovered_data if LLM missed them or returned low confidence
-        for field in ["monthly_income", "age", "deceased_name", "claimant_name", "date_of_accident", "marital_status"]:
+        merge_fields = [
+            "monthly_income", "age", "deceased_name", "claimant_name", "date_of_accident", "marital_status",
+            "father_name", "dependents", "disability", "medical_expenses", "pain_and_suffering",
+            "transportation", "special_diet", "attender_charges", "loss_of_income", "future_medical_expenses",
+            "consortium", "funeral_expenses", "loss_estate"
+        ]
+        for field in merge_fields:
             heur_val = heuristics_data.get(field)
             llm_val = recovered_data.get(field)
             
