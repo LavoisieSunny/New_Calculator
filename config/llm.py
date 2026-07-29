@@ -144,7 +144,7 @@ FINAL_JUDICIAL_SUMMARY_SYSTEM_INSTRUCTION = (
     "CRITICAL RULES:\n"
     "1. Base every statement ONLY on the text given. Never invent names, amounts, or dates.\n"
     "2. For each issue where a HC ground actually challenges it, produce one issue-wise entry.\n"
-    "3. Write likely_judicial_view as reasoned analysis, not a verdict of fact.\n"
+    "3. Write likely_judicial_view as reasoned analysis, not a verdict of fact. Ensure that the likely_judicial_view systematically addresses and explicitly mentions ALL specific injuries (e.g., organ damage, internal injuries like kidney lacerations, fractures, limb loss, or ear damage) raised in the High Court challenge that were omitted or inadequately addressed by the trial court.\n"
     "4. Do not copy raw OCR text verbatim; synthesize in clear human legal English.\n"
     "5. You are also given a Candidate Fact-Check list -- factual claims an automated matcher "
     "found in the grounds/relief but could NOT locate in the translated trial court text. The "
@@ -153,12 +153,9 @@ FINAL_JUDICIAL_SUMMARY_SYSTEM_INSTRUCTION = (
     "   - If it is genuinely absent, keep it in factual_discrepancies with a short judicial-style note.\n"
     "   - If you can actually find it (even paraphrased) in the trial court text, put its exact "
     "claim string into rejected_candidate_claims instead, and leave it OUT of factual_discrepancies.\n"
-    "   - You may add a claim of your own to factual_discrepancies if you notice a genuine one the "
-    "candidate list missed.\n"
+    "   - You may and should add a claim of your own to factual_discrepancies if you notice a genuine unaddressed claim or medical finding that the automated candidate list missed.\n"
     "6. If a Supporting Documents block is provided, compare EVERY document in it against the trial "
-    "court's findings, regardless of what type of document it is or how it was tagged on upload. "
-    "Flag any conflicts (e.g. difference in disability percentage, body part injured, or treatment duration) "
-    "as entries in the factual_discrepancies array.\n"
+    "court's findings. You MUST flag any specific medical/clinical findings, injuries, or diagnoses (such as kidney damage/rent, fractures, internal bleeding, or specific organ trauma) that are documented in the supporting diagnostic reports/medical evidence but were completely omitted, uncompensated, or ignored in the trial court's issues/award text, listing them as entries in the factual_discrepancies array.\n"
     "7. Output strictly valid JSON matching the schema, nothing else."
 )
 
@@ -186,7 +183,8 @@ FINAL_JUDICIAL_SUMMARY_USER_PROMPT = (
     '    {{"claim": "...", "found_in_grounds": true, "found_in_trial_court": false, "note": "..."}}\n'
     '  ],\n'
     '  "rejected_candidate_claims": ["claim text you found was actually present"]\n'
-    "}}\n"
+    "}}\n\n"
+    "Remember to review the Supporting Documents carefully for any documented injuries/findings (such as kidney trauma, organ damage, or fractures) that were completely omitted or uncompensated in the trial court findings/award and include them in the factual_discrepancies list."
 )
 
 
