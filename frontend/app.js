@@ -142,16 +142,16 @@ document.addEventListener("DOMContentLoaded", () => {
             statusIcon.innerHTML = `<i class="fa-solid fa-circle-check" style="color: var(--color-success);"></i>`;
         }
         if (statusText) {
-            statusText.textContent = "✅ OCR Complete";
+            statusText.textContent = "OCR complete";
             statusText.style.color = "var(--color-success)";
         }
         if (elapsedText) {
-            elapsedText.textContent = `Total Time: ${formatTimeMMSS(ocrSecondsElapsed)}`;
+            elapsedText.textContent = `Total time: ${formatTimeMMSS(ocrSecondsElapsed)}`;
             elapsedText.style.color = "var(--color-success)";
         }
 
         if (headerElapsedText && headerTimerContainer) {
-            headerElapsedText.textContent = `✅ Complete: ${formatTimeMMSS(ocrSecondsElapsed)}`;
+            headerElapsedText.textContent = `Complete: ${formatTimeMMSS(ocrSecondsElapsed)}`;
             headerTimerContainer.style.color = "var(--color-success)";
             headerTimerContainer.style.borderColor = "rgba(22, 163, 74, 0.3)";
             headerTimerContainer.style.background = "rgba(22, 163, 74, 0.08)";
@@ -174,16 +174,16 @@ document.addEventListener("DOMContentLoaded", () => {
             statusIcon.innerHTML = `<i class="fa-solid fa-circle-xmark" style="color: var(--color-danger);"></i>`;
         }
         if (statusText) {
-            statusText.textContent = "❌ OCR Failed";
+            statusText.textContent = "OCR failed";
             statusText.style.color = "var(--color-danger)";
         }
         if (elapsedText) {
-            elapsedText.textContent = `OCR Failed after ${formatTimeMMSS(ocrSecondsElapsed)}`;
+            elapsedText.textContent = `Failed after ${formatTimeMMSS(ocrSecondsElapsed)}`;
             elapsedText.style.color = "var(--color-danger)";
         }
 
         if (headerElapsedText && headerTimerContainer) {
-            headerElapsedText.textContent = `❌ Failed: ${formatTimeMMSS(ocrSecondsElapsed)}`;
+            headerElapsedText.textContent = `Failed: ${formatTimeMMSS(ocrSecondsElapsed)}`;
             headerTimerContainer.style.color = "var(--color-danger)";
             headerTimerContainer.style.borderColor = "rgba(220, 38, 38, 0.3)";
             headerTimerContainer.style.background = "rgba(220, 38, 38, 0.08)";
@@ -4617,28 +4617,32 @@ This cannot be undone.`)) return;
         chip.className = "supporting-doc-chip";
         chip.id = file_id;
         chip.innerHTML = `
-            <div style="display: flex; align-items: center; gap: 10px; overflow: hidden; flex: 1;">
-                <i class="fa-solid fa-file-pdf" style="color: var(--color-danger); font-size: 1.2rem; flex-shrink: 0;"></i>
-                <span class="filename" style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; font-size: 0.85rem; color: var(--text-primary); max-width: 180px;" title="${file.name}">${file.name}</span>
-                
-                <select class="doc-type-select" style="background: var(--bg-panel-light, rgba(255, 255, 255, 0.05)); border: 1px solid var(--border-color); color: var(--text-primary); padding: 4px 8px; border-radius: 6px; font-size: 0.78rem; cursor: pointer; font-weight: 500;">
+            <div class="chip-row chip-row-top">
+                <div class="chip-file-info">
+                    <i class="fa-solid fa-file-pdf chip-file-icon"></i>
+                    <span class="filename" title="${file.name}">${file.name}</span>
+                </div>
+                <div class="action-container">
+                    <span class="status-badge queued">queued</span>
+                    <button type="button" class="preview-extraction-btn" title="View extracted text" style="display: none;">
+                        <i class="fa-solid fa-eye"></i>
+                    </button>
+                </div>
+            </div>
+
+            <div class="chip-row chip-row-bottom">
+                <select class="doc-type-select">
                     <option value="lower_court">Lower Court Judgment</option>
                     <option value="hospital_record">Medical / Hospital Record</option>
                     <option value="other">Other Supporting Document</option>
                 </select>
 
-                <label class="enhance-ocr-label" style="display: inline-flex; align-items: center; gap: 4px; font-size: 0.75rem; cursor: pointer; color: var(--text-secondary); user-select: none;">
-                    <input type="checkbox" class="enhance-ocr-checkbox" style="cursor: pointer; width: 14px; height: 14px; accent-color: var(--color-primary);">
+                <label class="enhance-ocr-label">
+                    <input type="checkbox" class="enhance-ocr-checkbox">
                     <span>Enhance OCR</span>
                 </label>
-            </div>
-            
-            <div class="action-container" style="display: flex; align-items: center; gap: 10px; flex-shrink: 0;">
-                <span class="status-badge queued">queued</span>
-                <button type="button" class="preview-extraction-btn" title="View extracted text" style="display: none; background: transparent; border: 1px solid var(--border-color); color: var(--text-secondary); width: 26px; height: 26px; border-radius: 6px; cursor: pointer; align-items: center; justify-content: center;">
-                    <i class="fa-solid fa-eye"></i>
-                </button>
-                <button type="button" class="upload-btn btn btn-primary btn-small" style="padding: 4px 10px; font-size: 0.78rem; line-height: 1;">
+
+                <button type="button" class="upload-btn btn btn-primary btn-small">
                     <i class="fa-solid fa-upload"></i> Upload
                 </button>
             </div>
