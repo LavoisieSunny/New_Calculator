@@ -8,6 +8,28 @@ window.onerror = function (msg, src, line, col, err) {
     console.error("GLOBAL ERROR DETECTED:", msg, "at", src, "line:", line, err);
 };
 
+// crypto.randomUUID() only exists in secure contexts (HTTPS or localhost).
+// This app may be accessed over plain HTTP via a LAN IP, where it's undefined.
+// crypto.getRandomValues() has no such restriction, so build the UUID from that.
+function generateCaseSessionId() {
+    if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+        try {
+            return crypto.randomUUID();
+        } catch (e) {
+            // fall through to manual generation
+        }
+    }
+    if (typeof crypto !== "undefined" && typeof crypto.getRandomValues === "function") {
+        const bytes = crypto.getRandomValues(new Uint8Array(16));
+        bytes[6] = (bytes[6] & 0x0f) | 0x40; // version 4
+        bytes[8] = (bytes[8] & 0x3f) | 0x80; // variant
+        const hex = [...bytes].map(b => b.toString(16).padStart(2, "0")).join("");
+        return `${hex.slice(0,8)}-${hex.slice(8,12)}-${hex.slice(12,16)}-${hex.slice(16,20)}-${hex.slice(20)}`;
+    }
+    // Last-resort fallback (not cryptographically strong, but fine for a client-side session id)
+    return "case-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 10);
+}
+
 document.addEventListener("DOMContentLoaded", () => {
 
     // --- STATE VARIABLES ---
@@ -18,6 +40,19 @@ document.addEventListener("DOMContentLoaded", () => {
     let currentCalculationAmount = 0;
     let currentCalculationBreakdown = {};
     let currentOcrRawText = []; // Recover raw text from the last successful single OCR
+    let lastAiRecoverySignature = null;
+    let lastAiRecoveryResult = null;
+    let currentCaseSessionId = null;
+
+    function ensureCaseSessionId() {
+        if (!currentCaseSessionId) {
+            currentCaseSessionId = generateCaseSessionId();
+        }
+        return currentCaseSessionId;
+    }
+
+    // Generate session ID up-front on page load
+    ensureCaseSessionId();
 
     // Global Cache for Extracted Field Population (Part 5)
     let lastExtractedFields = {};
@@ -947,6 +982,7 @@ document.addEventListener("DOMContentLoaded", () => {
     });
 
     function resetSingleUploadUI(triggerClick = false) {
+        currentCaseSessionId = null;
         if (singleDropZone) {
             singleDropZone.classList.remove("compact");
         }
@@ -955,6 +991,9 @@ document.addEventListener("DOMContentLoaded", () => {
             if (triggerClick) {
                 singleFileInput.click();
             }
+        }
+        if (supportingDocsChips) {
+            supportingDocsChips.innerHTML = "";
         }
     }
 
@@ -976,6 +1015,62 @@ document.addEventListener("DOMContentLoaded", () => {
         singleFileInput.click();
     });
 
+    // --- DRAGGABLE PANEL RESIZER (Case Parameters <-> PDF Preview) ---
+    function initCalculatorPanelResizer() {
+        const grid = document.querySelector("#tab-calculator .workspace-grid.split-55-45");
+        const resizer = document.getElementById("calculator-panel-resizer");
+        if (!grid || !resizer) return;
+
+        const MIN_LEFT_PERCENT = 25;
+        const MAX_LEFT_PERCENT = 75;
+
+        function setLeftPercent(percent) {
+            const clamped = Math.min(MAX_LEFT_PERCENT, Math.max(MIN_LEFT_PERCENT, percent));
+            grid.style.setProperty("--split-left", clamped + "%");
+        }
+
+        function resetSplit() {
+            grid.style.removeProperty("--split-left");
+        }
+
+        let dragging = false;
+
+        function onPointerDown(e) {
+            dragging = true;
+            resizer.classList.add("resizing");
+            document.body.classList.add("panel-resize-active");
+            e.preventDefault();
+        }
+
+        function onPointerMove(e) {
+            if (!dragging) return;
+            const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+            const rect = grid.getBoundingClientRect();
+            const percent = ((clientX - rect.left) / rect.width) * 100;
+            setLeftPercent(percent);
+        }
+
+        function onPointerUp() {
+            if (!dragging) return;
+            dragging = false;
+            resizer.classList.remove("resizing");
+            document.body.classList.remove("panel-resize-active");
+        }
+
+        resizer.addEventListener("mousedown", onPointerDown);
+        resizer.addEventListener("touchstart", onPointerDown, { passive: false });
+        window.addEventListener("mousemove", onPointerMove);
+        window.addEventListener("touchmove", onPointerMove, { passive: false });
+        window.addEventListener("mouseup", onPointerUp);
+        window.addEventListener("touchend", onPointerUp);
+
+        resizer.addEventListener("dblclick", (e) => {
+            e.preventDefault();
+            resetSplit();
+        });
+    }
+    initCalculatorPanelResizer();
+
     singleFileInput.addEventListener("click", (e) => {
         e.stopPropagation();
     });
@@ -996,35 +1091,42 @@ document.addEventListener("DOMContentLoaded", () => {
             return;
         }
 
+        // Show the PDF immediately, before OCR even starts, so the person has
+        // something useful to read/scroll while extraction runs in the background.
+        const immediateBlobUrl = URL.createObjectURL(file);
+        try {
+            ensureCaseSessionId();
+        } catch (e) {
+            console.error("Failed to ensure case session id:", e);
+        }
+        if (singlePreviewFilename) {
+            singlePreviewFilename.innerHTML = `${file.name} <span class="badge source-badge" id="single-preview-source-badge" style="margin-left: 8px; background: rgba(251, 191, 36, 0.2); color: #f59e0b; border: 1px solid rgba(251, 191, 36, 0.3); font-size: 0.7rem; padding: 2px 6px; border-radius: 4px; display: inline-block;"><i class="fa-solid fa-spinner fa-spin"></i> Extracting...</span>`;
+        }
+        if (singlePreviewContainer) {
+            singlePreviewContainer.innerHTML = `
+                <iframe class="pdf-iframe" src="${immediateBlobUrl}#toolbar=0" width="100%" height="100%"></iframe>
+            `;
+        }
+        if (singlePreviewCard) {
+            singlePreviewCard.classList.remove("hidden-section");
+            singlePreviewCard.classList.add("show");
+        }
+        const earlyPdfTabBtn = document.querySelector('.pane-tab-btn[data-pane-tab="pdf"]');
+        if (earlyPdfTabBtn) {
+            earlyPdfTabBtn.click();
+        }
+
         // Start the Live OCR timer
         startOcrTimer();
 
-        // Show a premium glassmorphic loading spinner inside the form panel
-        const formPanel = document.querySelector("#tab-calculator .panel.scroll-y");
-        const loader = document.createElement("div");
-        loader.className = "form-ocr-loader";
-        loader.innerHTML = `
-            <div class="spinner-glow"></div>
-            <p id="ocr-loader-message">Analyzing document with legal OCR...</p>
-            <span id="ocr-loader-phase" style="font-size: 0.8rem; color: var(--text-secondary); opacity: 0.8;">Extracting Judgment, Petition, &amp; Prayer sections</span>
-            <div style="margin-top: 12px; font-family: monospace; font-size: 1.15rem; font-weight: 700; color: var(--color-primary); display: flex; align-items: center; gap: 8px; justify-content: center;">
-                <span>⏱</span>
-                <span id="ocr-loader-timer">00:00</span>
-            </div>
-            <div id="ocr-page-monitor" style="display:none; margin-top:16px; width:100%; max-width:520px; text-align:left;">
-                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
-                    <span style="font-size:0.75rem; font-weight:600; color:var(--text-secondary); text-transform:uppercase; letter-spacing:0.05em;">Page Processing</span>
-                    <span id="ocr-page-counter" style="font-size:0.75rem; font-family:monospace; color:var(--color-primary);">0 / ?</span>
-                </div>
-                <div style="width:100%; background:rgba(255,255,255,0.08); border-radius:4px; height:5px; margin-bottom:10px; overflow:hidden;">
-                    <div id="ocr-page-bar" style="height:100%; width:0%; background:var(--color-primary); border-radius:4px; transition:width 0.3s ease;"></div>
-                </div>
-                <div id="ocr-page-grid" style="display:grid; grid-template-columns:repeat(auto-fill,minmax(62px,1fr)); gap:5px; max-height:160px; overflow-y:auto;"></div>
-                <div id="ocr-recent-log" style="margin-top:10px; font-size:0.7rem; font-family:monospace; color:var(--text-secondary); line-height:1.6; max-height:60px; overflow:hidden;"></div>
-            </div>
-        `;
-        formPanel.style.position = "relative";
-        formPanel.appendChild(loader);
+        // Show a small, non-blocking "processing" indicator next to the header
+        // timer badge. There is no overlay/card over the form anymore — the
+        // person can freely scroll the page while OCR runs in the background.
+        const headerProcessingBadge = document.getElementById("header-ocr-processing-badge");
+        if (headerProcessingBadge) {
+            headerProcessingBadge.style.display = "inline-flex";
+        }
+        const loader = null; // Defined as null to prevent ReferenceErrors in subsequent loader blocks.
 
         // Per-page monitor state
         const _ocrPages = {};
@@ -1032,6 +1134,9 @@ document.addEventListener("DOMContentLoaded", () => {
 
         const formData = new FormData();
         formData.append("file", file);
+        if (currentCaseSessionId) {
+            formData.append("case_session_id", currentCaseSessionId);
+        }
 
         try {
             const response = await fetch("/api/ocr/process-ocr", {
@@ -1064,81 +1169,16 @@ document.addEventListener("DOMContentLoaded", () => {
                     const payload = cleanLine.slice(6);
                     const data = JSON.parse(payload);
 
-                    // Update loader visual progress message and submessage
-                    if (loader) {
-                        const messageEl = loader.querySelector("#ocr-loader-message");
-                        const phaseEl = loader.querySelector("#ocr-loader-phase");
-
-                        if (data.status === "page_progress" && data.page_info) {
-                            const pg = data.page_info;
-                            _ocrTotalPages = pg.total_pages;
-
-                            // Show the page monitor panel on first page event
-                            const monitor = loader.querySelector("#ocr-page-monitor");
-                            if (monitor) monitor.style.display = "block";
-
-                            // Update progress bar and counter
-                            const bar = loader.querySelector("#ocr-page-bar");
-                            const counter = loader.querySelector("#ocr-page-counter");
-                            if (bar) bar.style.width = Math.round((pg.pages_done / pg.total_pages) * 100) + "%";
-                            if (counter) counter.textContent = `${pg.pages_done} / ${pg.total_pages}`;
-
-                            // Engine colour coding
-                            const engineColor = pg.engine === "PaddleOCR" || pg.engine === "PaddleOCR-Retry"
-                                ? "#34d399" : pg.engine === "PyMuPDF"
-                                    ? "#60a5fa" : pg.engine === "Tesseract"
-                                        ? "#fbbf24" : pg.engine === "Skipped-blank"
-                                            ? "#6b7280" : "#a78bfa";
-
-                            // Add or update page chip in the grid
-                            const grid = loader.querySelector("#ocr-page-grid");
-                            if (grid) {
-                                const chipId = "ocr-chip-p" + pg.page;
-                                let chip = loader.querySelector("#" + chipId);
-                                if (!chip) {
-                                    chip = document.createElement("div");
-                                    chip.id = chipId;
-                                    chip.style.cssText = `border-radius:4px; padding:3px 4px; font-size:0.62rem; font-family:monospace; text-align:center; border:1px solid rgba(255,255,255,0.12); line-height:1.4;`;
-                                    grid.appendChild(chip);
-                                }
-                                const confPct = Math.round((pg.confidence || 0) * 100);
-                                chip.style.background = engineColor + "22";
-                                chip.style.borderColor = engineColor + "55";
-                                chip.style.color = engineColor;
-                                chip.title = `Page ${pg.page} | ${pg.engine} | conf:${confPct}% | lines:${pg.lines} | ${pg.total_page_time}s`;
-                                chip.innerHTML = `<span style="font-weight:700;">P${pg.page}</span><br>${pg.engine ? pg.engine.replace("PaddleOCR", "Paddle").replace("Tesseract", "Tess").replace("PyMuPDF", "Fitz").replace("Skipped-blank", "Skip").replace("-Retry", "↺") : "?"}<br>${confPct}%`;
-                                // Scroll newest chip into view
-                                chip.scrollIntoView({ block: "nearest" });
-                            }
-
-                            // Append to recent log (keep last 3 lines)
-                            const logEl = loader.querySelector("#ocr-recent-log");
-                            if (logEl) {
-                                const logLine = document.createElement("div");
-                                const engShort = (pg.engine || "?").replace("PaddleOCR-Retry", "Paddle↺");
-                                logLine.textContent = `[P${String(pg.page).padStart(2, "0")}] ${engShort.padEnd(10)} conf:${String(Math.round((pg.confidence || 0) * 100)).padStart(3)}%  lines:${String(pg.lines).padStart(3)}  ${pg.total_page_time}s`;
-                                logEl.prepend(logLine);
-                                while (logEl.children.length > 4) logEl.removeChild(logEl.lastChild);
-                            }
-
-                            if (messageEl) messageEl.textContent = `OCR: page ${pg.pages_done} of ${pg.total_pages} (${pg.engine || "??"})`;
-                            if (phaseEl) phaseEl.textContent = `${pg.total_pages - pg.pages_done} page(s) remaining`;
-
-                        } else {
-                            if (messageEl && data.message) messageEl.textContent = data.message;
-                            if (phaseEl && data.status) phaseEl.textContent = `Phase: ${data.status} (${data.progress}%)`;
-                        }
-                    }
-
-                    // Update local form panel timer status text
+                    // Update local form panel timer status text (this element already
+                    // existed in the form — no separate loader card needed anymore).
                     const statusText = document.getElementById("ocr-timer-status-text");
                     if (statusText && data.message) {
                         statusText.textContent = data.message;
                     }
 
                     if (data.status === "done") {
-                        // Remove spinner after processing is fully complete
-                        loader.remove();
+                        // Processing finished — hide the small header indicator
+                        if (headerProcessingBadge) headerProcessingBadge.style.display = "none";
 
                         if (data.success) {
                             // Stop timer on success
@@ -1177,14 +1217,15 @@ document.addEventListener("DOMContentLoaded", () => {
                                 }
                             }
 
-                            // Load high-fidelity PDF preview in the right pane!
-                            const blobUrl = URL.createObjectURL(file);
-                            if (singlePreviewFilename) {
-                                singlePreviewFilename.innerHTML = `${file.name} <span class="badge source-badge" style="margin-left: 8px; background: rgba(59, 130, 246, 0.2); color: #60a5fa; border: 1px solid rgba(59, 130, 246, 0.3); font-size: 0.7rem; padding: 2px 6px; border-radius: 4px; display: inline-block;">Source: ${data.fallback_source}</span>`;
+                            // The PDF preview was already rendered the moment the file was
+                            // selected, so just refresh the little status badge (no re-render).
+                            const sourceBadge = document.getElementById("single-preview-source-badge");
+                            if (sourceBadge) {
+                                sourceBadge.innerHTML = `<i class="fa-solid fa-check"></i> Source: ${data.fallback_source}`;
+                                sourceBadge.style.background = "rgba(59, 130, 246, 0.2)";
+                                sourceBadge.style.color = "#60a5fa";
+                                sourceBadge.style.borderColor = "rgba(59, 130, 246, 0.3)";
                             }
-                            singlePreviewContainer.innerHTML = `
-                                <iframe class="pdf-iframe" src="${blobUrl}#toolbar=0" width="100%" height="100%"></iframe>
-                            `;
                             singlePreviewCard.classList.remove("hidden-section");
                             singlePreviewCard.classList.add("show");
 
@@ -1202,6 +1243,9 @@ document.addEventListener("DOMContentLoaded", () => {
                             // Highlight and show the live metrics and precedents cards
                             if (liveMetricsCard) liveMetricsCard.classList.add("show");
                             if (evaluatorCard) evaluatorCard.classList.add("show");
+                            if (supportingDocsSection) {
+                                supportingDocsSection.style.display = "block";
+                            }
 
 
 
@@ -1219,14 +1263,14 @@ document.addEventListener("DOMContentLoaded", () => {
                             showToast("Failed to extract data from the PDF: " + (data.message || "Unknown OCR error."), "error");
                         }
                     } else if (data.status === "failed") {
-                        loader.remove();
+                        if (headerProcessingBadge) headerProcessingBadge.style.display = "none";
                         stopOcrTimerFailure();
                         showToast("Failed to extract data from the PDF: " + (data.message || "Unknown OCR error."), "error");
                     }
                 }
             }
         } catch (error) {
-            loader.remove();
+            if (headerProcessingBadge) headerProcessingBadge.style.display = "none";
             stopOcrTimerFailure();
             console.error("Single PDF OCR error:", error);
             showToast(`OCR processing failed: ${error.message}. Please verify the central FastAPI server is fully initialized.`, "error");
@@ -1283,18 +1327,27 @@ document.addEventListener("DOMContentLoaded", () => {
     async function handleBatchUpload(files) {
         // Start the Live OCR timer for batch processing
         startOcrTimer();
-        const formData = new FormData();
         let validPdfCount = 0;
 
         for (let i = 0; i < files.length; i++) {
             const file = files[i];
             const isPdf = file.type === "application/pdf" || file.name.toLowerCase().endsWith(".pdf");
             if (isPdf) {
-                formData.append("files", file);
                 validPdfCount++;
-
+                const file_id = "file_" + Math.random().toString(36).substring(2, 12);
+                fileQueue.push({
+                    file_id: file_id,
+                    filename: file.name,
+                    status: "queued",
+                    progress: 10,
+                    suggestions: null,
+                    raw_text: []
+                });
                 // Map local filename to the file object to facilitate local iframe previewing!
                 uploadedFileObjects[file.name] = file;
+                
+                // Process the supporting document asynchronously
+                processSupportingDoc(file, file_id);
             }
         }
 
@@ -1303,36 +1356,56 @@ document.addEventListener("DOMContentLoaded", () => {
             return;
         }
 
+        renderQueueList();
+    }
+
+    async function processSupportingDoc(file, file_id) {
+        const idx = fileQueue.findIndex(f => f.file_id === file_id);
+        if (idx !== -1) {
+            fileQueue[idx].status = "scanning";
+            fileQueue[idx].progress = 30;
+            renderQueueList();
+        }
+
+        const formData = new FormData();
+        formData.append("file", file);
+        if (currentCaseSessionId) {
+            formData.append("case_session_id", currentCaseSessionId);
+        }
+
         try {
-            const response = await fetch("/api/ocr/upload-batch", {
+            const response = await fetch("/api/ocr/process-supporting-doc", {
                 method: "POST",
                 body: formData
             });
 
             if (!response.ok) {
-                throw new Error("Batch upload failed");
+                throw new Error("Failed to process supporting document");
             }
 
             const data = await response.json();
-
-            // Append files to our local tracker
-            data.queue.forEach(item => {
-                fileQueue.push({
-                    file_id: item.file_id,
-                    filename: item.filename,
-                    status: "queued",
-                    progress: 0,
-                    suggestions: null,
-                    raw_text: []
-                });
-            });
-
-            renderQueueList();
-            startQueuePolling();
-
+            
+            const idxDone = fileQueue.findIndex(f => f.file_id === file_id);
+            if (idxDone !== -1) {
+                fileQueue[idxDone].status = "indexed";
+                fileQueue[idxDone].progress = 100;
+                fileQueue[idxDone].ocr_debug = data.ocr_debug;
+                renderQueueList();
+            }
         } catch (error) {
-            console.error("Error uploading batch PDFs:", error);
-            alert("Failed to upload batch files to the server.");
+            console.error("Error processing supporting doc:", error);
+            const idxErr = fileQueue.findIndex(f => f.file_id === file_id);
+            if (idxErr !== -1) {
+                fileQueue[idxErr].status = "failed";
+                fileQueue[idxErr].progress = 100;
+                fileQueue[idxErr].error = error.message;
+                renderQueueList();
+            }
+        } finally {
+            const activeFiles = fileQueue.filter(f => f.status === "queued" || f.status === "scanning" || f.status === "indexing");
+            if (activeFiles.length === 0) {
+                stopOcrTimerSuccess();
+            }
         }
     }
 
@@ -1416,6 +1489,8 @@ document.addEventListener("DOMContentLoaded", () => {
                 const id = btn.getAttribute("data-id");
                 const matchedFile = fileQueue.find(f => f.file_id === id);
                 if (matchedFile) {
+                    window.lastEnhancementVerdict = null;
+                    window.currentRenderedVerdict = null;
                     window.lastUploadedOcrData = matchedFile;
                     window.detectedTrack = matchedFile.track || "high_court";
                     currentOcrRawText = matchedFile.raw_text || [];
@@ -1749,7 +1824,10 @@ This cannot be undone.`)) return;
                 const response = await fetch("/api/ocr/ai-recover", {
                     method: "POST",
                     headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({ raw_text: currentOcrRawText })
+                    body: JSON.stringify({ 
+                        raw_text: currentOcrRawText,
+                        case_session_id: currentCaseSessionId
+                    })
                 });
 
                 loader.remove();
@@ -2391,6 +2469,21 @@ This cannot be undone.`)) return;
     async function runAiRecovery(rawTextLines, track = "high_court") {
         if (!rawTextLines || rawTextLines.length === 0) return;
 
+        // Idempotency guard: the LLM calls behind /ai-recover aren't temperature-0,
+        // so a fresh call on the SAME document can legitimately come back worded
+        // differently each time. Rather than relying on the backend's cache
+        // (which only helps if the process never restarts/evicts), just don't
+        // ask again for text we've already summarized in this session.
+        const signature = rawTextLines.join("\n");
+        if (lastAiRecoverySignature === signature && lastAiRecoveryResult) {
+            const data = lastAiRecoveryResult;
+            const confidenceScores = data.raw_recovered ? data.raw_recovered.confidence_scores : null;
+            const ocrEvidence = data.raw_recovered ? data.raw_recovered.ocr_evidence_case : null;
+            applyAllOcrSuggestions(data.suggestions, confidenceScores, ocrEvidence, data.raw_recovered, true);
+            showToast("Using the previously generated summary for this document — it won't change on re-click.", "info");
+            return true;
+        }
+
         const formPanel = document.querySelector("#tab-calculator .panel.scroll-y");
         const loader = document.createElement("div");
         loader.className = "form-ocr-loader";
@@ -2408,7 +2501,11 @@ This cannot be undone.`)) return;
             const response = await fetch("/api/ocr/ai-recover", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ raw_text: rawTextLines, track: track })
+                body: JSON.stringify({ 
+                    raw_text: rawTextLines, 
+                    track: track,
+                    case_session_id: currentCaseSessionId
+                })
             });
 
             loader.remove();
@@ -2426,6 +2523,11 @@ This cannot be undone.`)) return;
                 const confidenceScores = data.raw_recovered ? data.raw_recovered.confidence_scores : null;
                 const ocrEvidence = data.raw_recovered ? data.raw_recovered.ocr_evidence_case : null;
                 applyAllOcrSuggestions(data.suggestions, confidenceScores, ocrEvidence, data.raw_recovered, true);
+
+                // Memoize so a repeat click on the same document reuses this result
+                lastAiRecoverySignature = signature;
+                lastAiRecoveryResult = data;
+
                 showToast("Case analyzed — fields auto-filled and refined by AI.", "success");
                 return true;
             } else {
@@ -2561,7 +2663,8 @@ This cannot be undone.`)) return;
             const payload = {
                 message: query,
                 case_type: chatCaseFilter.value,
-                history: precedentChatHistory.slice(-12)
+                history: precedentChatHistory.slice(-12),
+                case_session_id: currentCaseSessionId
             };
 
             const chatDocumentFilter = document.getElementById("chat-document-filter");
@@ -3298,6 +3401,14 @@ This cannot be undone.`)) return;
                 </div>
             `;
 
+            // NOTE: High Court Judicial Analysis is intentionally NOT auto-rendered
+            // here anymore. It is only ever shown via the dedicated "Check Judicial
+            // Analysis" button/panel (checkJudicialAnalysisBtn handler), which itself
+            // gates on supporting-document OCR status. Auto-rendering it here — as
+            // soon as the main High Court file finished OCR, before any supporting
+            // document had been processed — was the bug.
+
+
         }
 
 
@@ -3311,6 +3422,8 @@ This cannot be undone.`)) return;
         `;
 
         container.innerHTML = innerHTML;
+
+
 
         if (typeof triggerTabNotification === "function") {
             triggerTabNotification("enhancement-check");
@@ -3451,6 +3564,13 @@ This cannot be undone.`)) return;
 
     document.getElementById("reset-btn").addEventListener("click", () => {
         compensationForm.reset();
+        currentCaseSessionId = null;
+        if (supportingDocsSection) {
+            supportingDocsSection.style.display = "none";
+        }
+        if (supportingDocsChips) {
+            supportingDocsChips.innerHTML = "";
+        }
 
         window.lastRawText = "";
         const suggestionDiv = document.getElementById("case-type-suggestion");
@@ -3890,7 +4010,8 @@ This cannot be undone.`)) return;
                 parsed_fields: parsedFields,
                 calculator_result: calculatorResult,
                 is_justify: isJustify,
-                history: assistantChatHistory.slice(-12)
+                history: assistantChatHistory.slice(-12),
+                case_session_id: currentCaseSessionId
             };
 
             const response = await fetch("/api/chat/pdf/stream", {
@@ -4453,6 +4574,488 @@ This cannot be undone.`)) return;
 
     // Global exposure of local math calculator for parity tests
     window.calculateCompensationLocally = calculateCompensationLocally;
+
+    // --- SUPPORTING DOCUMENTS UI & PROCESSING ENGINE ---
+    const supportingDocsSection = document.getElementById("supporting-docs-section");
+    const addSupportingDocsBtn = document.getElementById("add-supporting-docs-btn");
+    const supportingDocsInput = document.getElementById("supporting-docs-input");
+    const supportingDocsChips = document.getElementById("supporting-docs-chips");
+
+    if (addSupportingDocsBtn && supportingDocsInput) {
+        addSupportingDocsBtn.addEventListener("click", () => {
+            supportingDocsInput.click();
+        });
+    }
+
+    if (supportingDocsInput) {
+        supportingDocsInput.addEventListener("change", (e) => {
+            if (e.target.files.length > 0) {
+                handleSupportingDocsSelect(e.target.files);
+            }
+        });
+    }
+
+    function handleSupportingDocsSelect(files) {
+        for (let i = 0; i < files.length; i++) {
+            const file = files[i];
+            const file_id = "supp_" + Math.random().toString(36).substring(2, 12);
+            renderSupportingDocChip(file, file_id);
+        }
+        supportingDocsInput.value = ""; // Reset input so same file can be selected again
+    }
+
+    function renderSupportingDocChip(file, file_id) {
+        const chip = document.createElement("div");
+        chip.className = "supporting-doc-chip";
+        chip.id = file_id;
+        chip.innerHTML = `
+            <div style="display: flex; align-items: center; gap: 10px; overflow: hidden; flex: 1;">
+                <i class="fa-solid fa-file-pdf" style="color: var(--color-danger); font-size: 1.2rem; flex-shrink: 0;"></i>
+                <span class="filename" style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; font-size: 0.85rem; color: var(--text-primary); max-width: 180px;" title="${file.name}">${file.name}</span>
+                
+                <select class="doc-type-select" style="background: var(--bg-panel-light, rgba(255, 255, 255, 0.05)); border: 1px solid var(--border-color); color: var(--text-primary); padding: 4px 8px; border-radius: 6px; font-size: 0.78rem; cursor: pointer; font-weight: 500;">
+                    <option value="lower_court">Lower Court Judgment</option>
+                    <option value="hospital_record">Hospital Record</option>
+                    <option value="other">Other</option>
+                </select>
+
+                <label class="enhance-ocr-label" style="display: inline-flex; align-items: center; gap: 4px; font-size: 0.75rem; cursor: pointer; color: var(--text-secondary); user-select: none;">
+                    <input type="checkbox" class="enhance-ocr-checkbox" style="cursor: pointer; width: 14px; height: 14px; accent-color: var(--color-primary);">
+                    <span>Enhance OCR</span>
+                </label>
+            </div>
+            
+            <div class="action-container" style="display: flex; align-items: center; gap: 10px; flex-shrink: 0;">
+                <span class="status-badge queued">queued</span>
+                <button type="button" class="preview-extraction-btn" title="View extracted text" style="display: none; background: transparent; border: 1px solid var(--border-color); color: var(--text-secondary); width: 26px; height: 26px; border-radius: 6px; cursor: pointer; align-items: center; justify-content: center;">
+                    <i class="fa-solid fa-eye"></i>
+                </button>
+                <button type="button" class="upload-btn btn btn-primary btn-small" style="padding: 4px 10px; font-size: 0.78rem; line-height: 1;">
+                    <i class="fa-solid fa-upload"></i> Upload
+                </button>
+            </div>
+        `;
+
+        if (supportingDocsChips) {
+            supportingDocsChips.appendChild(chip);
+        }
+
+        const uploadBtn = chip.querySelector(".upload-btn");
+        const docTypeSelect = chip.querySelector(".doc-type-select");
+        const enhanceOcrCheckbox = chip.querySelector(".enhance-ocr-checkbox");
+        const statusBadge = chip.querySelector(".status-badge");
+        const previewBtn = chip.querySelector(".preview-extraction-btn");
+
+        uploadBtn.addEventListener("click", () => {
+            docTypeSelect.disabled = true;
+            enhanceOcrCheckbox.disabled = true;
+            uploadBtn.style.display = "none";
+            uploadSupportingDoc(file, file_id, docTypeSelect.value, enhanceOcrCheckbox.checked, statusBadge, previewBtn);
+        });
+
+        previewBtn.addEventListener("click", () => {
+            const rawText = chip.dataset.rawText ? JSON.parse(chip.dataset.rawText) : [];
+            showExtractedTextModal(file.name, rawText);
+        });
+    }
+
+    function showExtractedTextModal(filename, lines) {
+        let overlay = document.getElementById("extraction-preview-overlay");
+        if (overlay) overlay.remove();
+
+        overlay = document.createElement("div");
+        overlay.id = "extraction-preview-overlay";
+        overlay.style.cssText = `
+            position: fixed; inset: 0; background: rgba(0,0,0,0.6);
+            display: flex; align-items: center; justify-content: center;
+            z-index: 10000; padding: 24px;
+        `;
+
+        const card = document.createElement("div");
+        card.style.cssText = `
+            background: var(--bg-panel, #1e293b); border: 1px solid var(--border-glass, rgba(255,255,255,0.08));
+            border-radius: var(--radius-sm, 8px); width: 100%; max-width: 720px; max-height: 80vh;
+            display: flex; flex-direction: column; overflow: hidden; box-shadow: 0 20px 40px rgba(0,0,0,0.4);
+        `;
+
+        const bodyText = (lines && lines.length > 0)
+            ? lines.join("\n")
+            : "No text could be extracted from this document.";
+
+        card.innerHTML = `
+            <div style="padding: 14px 18px; border-bottom: 1px solid var(--border-color, rgba(255,255,255,0.08)); display: flex; align-items: center; justify-content: space-between; gap: 12px;">
+                <h3 style="margin: 0; font-size: 0.95rem; color: var(--text-primary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
+                    <i class="fa-solid fa-file-lines" style="color: var(--color-primary); margin-right: 8px;"></i>${filename}
+                </h3>
+                <button type="button" id="extraction-preview-close" style="background: transparent; border: none; color: var(--text-secondary); font-size: 1.1rem; cursor: pointer; line-height: 1;">
+                    <i class="fa-solid fa-xmark"></i>
+                </button>
+            </div>
+            <div style="padding: 16px 18px; overflow-y: auto; flex: 1;">
+                <pre style="white-space: pre-wrap; word-break: break-word; font-family: 'Inter', sans-serif; font-size: 0.85rem; line-height: 1.6; color: var(--text-secondary); margin: 0;"></pre>
+            </div>
+        `;
+        card.querySelector("pre").textContent = bodyText;
+
+        overlay.appendChild(card);
+        document.body.appendChild(overlay);
+
+        const closeModal = () => overlay.remove();
+        overlay.querySelector("#extraction-preview-close").addEventListener("click", closeModal);
+        overlay.addEventListener("click", (e) => {
+            if (e.target === overlay) closeModal();
+        });
+    }
+
+    // --- CHECK JUDICIAL ANALYSIS (on-demand, gated on supporting-doc status) ---
+    const checkJudicialAnalysisBtn = document.getElementById("check-judicial-analysis-btn");
+    const judicialAnalysisResult = document.getElementById("judicial-analysis-result");
+
+    // In-memory cache of generated judicial-analysis reports, keyed per document
+    // (case session + OCR text). This means: once a report has been generated
+    // for the currently loaded document, clicking "Check Judicial Analysis"
+    // again simply reopens the same cached report in the modal instead of
+    // calling the backend/LLM again -- so the report never changes between
+    // clicks for the same document.
+    const judicialAnalysisCache = new Map();
+
+    function getJudicialAnalysisCacheKey() {
+        const sessionPart = currentCaseSessionId || "no-session";
+        const trackPart = window.detectedTrack || "high_court";
+        const caseTypePart = caseTypeSelect ? caseTypeSelect.value : "death";
+        // Cheap content fingerprint so a re-upload / different document under
+        // the same session doesn't reuse a stale cached report.
+        const textPart = (currentOcrRawText || []).join("\n").length + ":" + (currentOcrRawText || []).length;
+        return `${sessionPart}|${trackPart}|${caseTypePart}|${textPart}`;
+    }
+
+    function renderJudicialProcessingState(message) {
+        if (!judicialAnalysisResult) return;
+        judicialAnalysisResult.dataset.state = "processing";
+        judicialAnalysisResult.style.display = "block";
+        judicialAnalysisResult.innerHTML = `
+            <div style="padding: 14px; background: rgba(59,130,246,0.08); border: 1px solid rgba(59,130,246,0.25); border-radius: var(--radius-sm); display: flex; align-items: center; gap: 10px; font-size: 0.85rem; color: var(--text-secondary);">
+                <i class="fa-solid fa-spinner fa-spin" style="color: var(--color-primary);"></i>
+                ${message}
+            </div>
+        `;
+    }
+
+    function renderJudicialErrorState(message) {
+        if (!judicialAnalysisResult) return;
+        judicialAnalysisResult.dataset.state = "error";
+        judicialAnalysisResult.style.display = "block";
+        judicialAnalysisResult.innerHTML = `
+            <div style="padding: 14px; background: rgba(239,68,68,0.08); border: 1px solid rgba(239,68,68,0.25); border-radius: var(--radius-sm); font-size: 0.85rem; color: #f87171;">
+                <i class="fa-solid fa-triangle-exclamation"></i> ${message}
+            </div>
+        `;
+    }
+
+    function buildJudicialAnalysisBodyHTML(finalJudicial) {
+        const issueWise = finalJudicial.issue_wise_view || [];
+        const finalPoints = finalJudicial.final_summary_points || [];
+        const probableOutcome = finalJudicial.probable_outcome || "not_determinable";
+        const summarySource = finalJudicial.summary_source || "llm_summary";
+
+        let outcomeBadgeColor = "#6c757d";
+        let outcomeLabel = "Not Determinable";
+        if (probableOutcome === "enhancement") { outcomeBadgeColor = "#22c55e"; outcomeLabel = "Enhancement Likely"; }
+        else if (probableOutcome === "reduction") { outcomeBadgeColor = "#eab308"; outcomeLabel = "Reduction Likely"; }
+        else if (probableOutcome === "exoneration") { outcomeBadgeColor = "#a855f7"; outcomeLabel = "Exoneration / Set Aside"; }
+        else if (probableOutcome === "upheld") { outcomeBadgeColor = "#3b82f6"; outcomeLabel = "Award Upheld"; }
+
+        let degradationNotice = "";
+        if (summarySource === "insufficient_input" || summarySource === "fallback") {
+            const msg = finalPoints.length > 0 ? finalPoints[0] : "Limited automated analysis -- trial court section not fully detected.";
+            degradationNotice = `
+                <div style="padding: 8px 12px; background: rgba(234,179,8,0.1); border: 1px solid rgba(234,179,8,0.3); border-radius: var(--radius-sm); font-size: 0.78rem; color: #eab308; margin-top: 4px; display: flex; align-items: center; gap: 8px;">
+                    <i class="fa-solid fa-triangle-exclamation"></i>
+                    <span>${msg}</span>
+                </div>
+            `;
+        }
+
+        let issueCardsHTML = "";
+        if (issueWise.length > 0) {
+            issueCardsHTML = issueWise.map((item, idx) => `
+                <div style="padding: 10px; background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.08); border-radius: var(--radius-sm); display: flex; flex-direction: column; gap: 6px;">
+                    <div style="font-size: 0.82rem; font-weight: 700; color: var(--color-primary); display: flex; align-items: center; gap: 6px;">
+                        <i class="fa-solid fa-gavel" style="font-size: 0.75rem;"></i> Issue ${idx + 1}: ${item.issue || 'Point for Determination'}
+                    </div>
+                    ${item.trial_court_finding ? `
+                        <div style="font-size: 0.78rem; color: var(--text-secondary); background: rgba(255,255,255,0.02); padding: 6px 8px; border-radius: 4px; border-left: 3px solid var(--color-primary);">
+                            <strong style="color: var(--text-primary);">Trial Court Finding:</strong> ${item.trial_court_finding}
+                        </div>
+                    ` : ''}
+                    ${item.hc_ground_challenge ? `
+                        <div style="font-size: 0.78rem; color: var(--text-secondary); background: rgba(255,255,255,0.02); padding: 6px 8px; border-radius: 4px; border-left: 3px solid #eab308;">
+                            <strong style="color: var(--text-primary);">HC Challenge:</strong> ${item.hc_ground_challenge}
+                        </div>
+                    ` : ''}
+                    ${item.likely_judicial_view ? `
+                        <div style="font-size: 0.78rem; color: var(--text-secondary); background: rgba(34,197,94,0.05); padding: 6px 8px; border-radius: 4px; border-left: 3px solid #22c55e;">
+                            <strong style="color: #22c55e;">Likely Judicial View:</strong> ${item.likely_judicial_view}
+                        </div>
+                    ` : ''}
+                </div>
+            `).join('');
+        }
+
+        let finalBulletsHTML = "";
+        if (finalPoints.length > 0 && summarySource === "llm_summary") {
+            finalBulletsHTML = `
+                <ul style="margin: 4px 0 0 0; padding-left: 16px; display: flex; flex-direction: column; gap: 4px;">
+                    ${finalPoints.map(p => `<li style="font-size: 0.82rem; line-height: 1.3; color: var(--text-secondary);">${p}</li>`).join('')}
+                </ul>
+            `;
+        }
+
+        return `
+            <div style="display: flex; flex-direction: column; gap: 10px;">
+                <div style="display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid rgba(255,255,255,0.06); padding-bottom: 8px;">
+                    <span style="font-size: 0.9rem; font-weight: 700; color: var(--text-primary); text-transform: uppercase; display: inline-flex; align-items: center; gap: 8px;">
+                        <i class="fa-solid fa-scale-balanced" style="color: var(--color-primary);"></i> High Court Judicial Analysis
+                    </span>
+                    <span class="badge" style="background: ${outcomeBadgeColor}; color: #fff; font-weight: 700; padding: 3px 8px; border-radius: var(--radius-sm); font-size: 0.75rem;">
+                        ${outcomeLabel}
+                    </span>
+                </div>
+                ${degradationNotice}
+                ${issueCardsHTML ? `<div style="display: flex; flex-direction: column; gap: 8px;">${issueCardsHTML}</div>` : ''}
+                ${finalBulletsHTML ? `
+                    <div style="display: flex; flex-direction: column; gap: 6px; padding: 8px; background: rgba(255,255,255,0.01); border-radius: 4px;">
+                        <div style="font-size: 0.8rem; font-weight: 700; color: var(--text-primary);">Synthesized Judicial Summary</div>
+                        ${finalBulletsHTML}
+                    </div>
+                ` : ''}
+            </div>
+        `;
+    }
+
+    // Renders the report inside a full modal "window" overlay, following the
+    // same visual pattern as showExtractedTextModal, so the entire
+    // comparison report is visible at once rather than cramped into the
+    // small inline panel.
+    function showJudicialAnalysisModal(finalJudicial, fromCache) {
+        let overlay = document.getElementById("judicial-analysis-overlay");
+        if (overlay) overlay.remove();
+
+        overlay = document.createElement("div");
+        overlay.id = "judicial-analysis-overlay";
+        overlay.style.cssText = `
+            position: fixed; inset: 0; background: rgba(0,0,0,0.6);
+            display: flex; align-items: center; justify-content: center;
+            z-index: 10000; padding: 24px;
+        `;
+
+        const card = document.createElement("div");
+        card.style.cssText = `
+            background: var(--bg-panel, #1e293b); border: 1px solid var(--border-glass, rgba(255,255,255,0.08));
+            border-radius: var(--radius-sm, 8px); width: 100%; max-width: 820px; max-height: 85vh;
+            display: flex; flex-direction: column; overflow: hidden; box-shadow: 0 20px 40px rgba(0,0,0,0.4);
+        `;
+
+        card.innerHTML = `
+            <div style="padding: 14px 18px; border-bottom: 1px solid var(--border-color, rgba(255,255,255,0.08)); display: flex; align-items: center; justify-content: space-between; gap: 12px;">
+                <h3 style="margin: 0; font-size: 0.95rem; color: var(--text-primary); display: flex; align-items: center; gap: 8px;">
+                    <i class="fa-solid fa-scale-balanced" style="color: var(--color-primary);"></i> Judicial Analysis &amp; Summary Comparison Report
+                    ${fromCache ? `<span style="font-size: 0.7rem; font-weight: 600; color: var(--text-secondary); background: rgba(255,255,255,0.06); padding: 2px 8px; border-radius: 999px;"><i class="fa-solid fa-clock-rotate-left"></i> Cached</span>` : ''}
+                </h3>
+                <div style="display: flex; align-items: center; gap: 10px; flex-shrink: 0;">
+                    <button type="button" id="judicial-analysis-regenerate" title="Regenerate (bypass cache)" style="background: transparent; border: 1px solid var(--border-color); color: var(--text-secondary); font-size: 0.75rem; padding: 4px 10px; border-radius: 6px; cursor: pointer;">
+                        <i class="fa-solid fa-rotate"></i> Regenerate
+                    </button>
+                    <button type="button" id="judicial-analysis-close" style="background: transparent; border: none; color: var(--text-secondary); font-size: 1.1rem; cursor: pointer; line-height: 1;">
+                        <i class="fa-solid fa-xmark"></i>
+                    </button>
+                </div>
+            </div>
+            <div style="padding: 16px 18px; overflow-y: auto; flex: 1;">
+                ${buildJudicialAnalysisBodyHTML(finalJudicial)}
+            </div>
+        `;
+
+        overlay.appendChild(card);
+        document.body.appendChild(overlay);
+
+        const closeModal = () => overlay.remove();
+        overlay.querySelector("#judicial-analysis-close").addEventListener("click", closeModal);
+        overlay.addEventListener("click", (e) => {
+            if (e.target === overlay) closeModal();
+        });
+        overlay.querySelector("#judicial-analysis-regenerate").addEventListener("click", () => {
+            closeModal();
+            runJudicialAnalysis({ forceRefresh: true });
+        });
+    }
+
+    async function runJudicialAnalysis({ forceRefresh = false } = {}) {
+        if (!currentOcrRawText || currentOcrRawText.length === 0) {
+            showToast("Please upload and OCR the High Court case file first.", "warning");
+            return;
+        }
+
+        // Gate: if any supporting-doc chip exists but hasn't finished
+        // OCR/indexing yet, show "Processing" instead of running the
+        // comparison against incomplete/missing supporting-doc text.
+        const chips = supportingDocsChips ? Array.from(supportingDocsChips.querySelectorAll(".supporting-doc-chip")) : [];
+        const pendingChip = chips.find(chip => {
+            const badge = chip.querySelector(".status-badge");
+            const status = badge ? badge.className : "";
+            return !status.includes("done") && !status.includes("failed");
+        });
+
+        if (pendingChip) {
+            renderJudicialProcessingState("Processing the file&hellip; Judicial Analysis will be available once the supporting document finishes OCR.");
+            return;
+        }
+
+        const cacheKey = getJudicialAnalysisCacheKey();
+
+        // Cache hit: reopen the exact same report immediately, no backend call.
+        if (!forceRefresh && judicialAnalysisCache.has(cacheKey)) {
+            if (judicialAnalysisResult) {
+                judicialAnalysisResult.dataset.state = "done";
+                judicialAnalysisResult.style.display = "none"; // full report lives in the modal
+            }
+            showJudicialAnalysisModal(judicialAnalysisCache.get(cacheKey), true);
+            return;
+        }
+
+        checkJudicialAnalysisBtn.disabled = true;
+        const origHTML = checkJudicialAnalysisBtn.innerHTML;
+        checkJudicialAnalysisBtn.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i> Generating Judicial Analysis...`;
+        renderJudicialProcessingState("Processing the file&hellip;");
+
+        try {
+            const caseType = caseTypeSelect ? caseTypeSelect.value : "death";
+            const response = await fetch("/api/ocr/refresh-judicial-summary", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    raw_text: currentOcrRawText,
+                    track: window.detectedTrack || "high_court",
+                    case_session_id: currentCaseSessionId,
+                    case_type: caseType,
+                    force_refresh: forceRefresh
+                })
+            });
+
+            if (!response.ok) throw new Error("Judicial analysis request failed");
+            const data = await response.json();
+
+            if (data.success && data.final_judicial_summary) {
+                // Cache client-side too, so a page-local re-click never
+                // re-fetches, and mark the small inline panel "done" (the
+                // full report itself opens in the modal window).
+                judicialAnalysisCache.set(cacheKey, data.final_judicial_summary);
+                if (judicialAnalysisResult) {
+                    judicialAnalysisResult.dataset.state = "done";
+                    judicialAnalysisResult.style.display = "none";
+                }
+                showJudicialAnalysisModal(data.final_judicial_summary, !!data.cached);
+            } else {
+                renderJudicialErrorState("Failed to generate Judicial Analysis. Please try again.");
+            }
+        } catch (err) {
+            console.error("Judicial analysis error:", err);
+            renderJudicialErrorState(`Failed to generate Judicial Analysis: ${err.message}`);
+        } finally {
+            checkJudicialAnalysisBtn.disabled = false;
+            checkJudicialAnalysisBtn.innerHTML = origHTML;
+        }
+    }
+
+    if (checkJudicialAnalysisBtn) {
+        checkJudicialAnalysisBtn.addEventListener("click", () => runJudicialAnalysis({ forceRefresh: false }));
+    }
+
+    async function uploadSupportingDoc(file, file_id, doc_type, enhance_ocr, statusBadge, previewBtn) {
+        statusBadge.textContent = "processing";
+        statusBadge.className = "status-badge processing";
+
+        const formData = new FormData();
+        formData.append("file", file);
+        formData.append("doc_type", doc_type);
+        formData.append("case_session_id", ensureCaseSessionId());
+        formData.append("enhance_ocr", enhance_ocr);
+
+        try {
+            const response = await fetch("/api/ocr/process-supporting-doc", {
+                method: "POST",
+                body: formData
+            });
+
+            if (!response.ok) {
+                throw new Error("Supporting document process initiation failed.");
+            }
+
+            const reader = response.body.getReader();
+            const decoder = new TextDecoder();
+            let buffer = "";
+
+            while (true) {
+                const { done, value } = await reader.read();
+                if (done) break;
+
+                buffer += decoder.decode(value, { stream: true });
+                const lines = buffer.split("\n");
+                buffer = lines.pop();
+
+                for (const line of lines) {
+                    const cleanLine = line.trim();
+                    if (!cleanLine.startsWith("data: ")) continue;
+
+                    const payload = cleanLine.slice(6);
+                    const data = JSON.parse(payload);
+
+                    if (data.message) {
+                        statusBadge.textContent = data.message;
+                    }
+
+                    if (data.status === "done") {
+                        if (data.success) {
+                            statusBadge.textContent = "done";
+                            statusBadge.className = "status-badge done";
+                            showToast(`Supporting document "${file.name}" successfully indexed!`, "success");
+
+                            if (previewBtn) {
+                                const chipEl = statusBadge.closest(".supporting-doc-chip");
+                                if (chipEl) {
+                                    chipEl.dataset.rawText = JSON.stringify(data.raw_text || []);
+                                }
+                                previewBtn.style.display = "inline-flex";
+                            }
+
+                            // If the user already clicked "Check Judicial Analysis" and it's sitting
+                            // in the "Processing the file..." state waiting on this document, auto
+                            // re-run the check now that OCR just finished.
+                            if (checkJudicialAnalysisBtn && judicialAnalysisResult &&
+                                judicialAnalysisResult.dataset.state === "processing") {
+                                checkJudicialAnalysisBtn.click();
+                            }
+                        } else {
+                            statusBadge.textContent = "failed";
+                            statusBadge.className = "status-badge failed";
+                            showToast(`Failed to process "${file.name}": ${data.message || "Unknown error"}`, "error");
+                        }
+                    } else if (data.status === "failed") {
+                        statusBadge.textContent = "failed";
+                        statusBadge.className = "status-badge failed";
+                        showToast(`Failed to process "${file.name}": ${data.message || "Unknown error"}`, "error");
+                    }
+                }
+            }
+        } catch (err) {
+            console.error("Supporting doc upload failed:", err);
+            statusBadge.textContent = "failed";
+            statusBadge.className = "status-badge failed";
+            showToast(`Failed to process "${file.name}": ${err.message}`, "error");
+        }
+    }
+
+
 });
 
 

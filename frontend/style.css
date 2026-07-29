@@ -311,6 +311,13 @@ body {
 
 /* Locked Side-by-Side Desktop Columns Layout (Width > 480px) */
 @media (min-width: 481px) {
+    /* Calculator tab: form | resizer | pdf preview.
+       --split-left is a CSS var so the drag handle in app.js can adjust it live. */
+    #tab-calculator .workspace-grid.split-55-45 {
+        grid-template-columns: var(--split-left, 55%) 10px 1fr !important;
+        gap: 4px !important;
+    }
+
     .workspace-grid.split-55-45 {
         grid-template-columns: 55% 45% !important;
     }
@@ -324,12 +331,88 @@ body {
     }
 }
 
+/* Draggable divider between Case Parameters and PDF Preview */
+.panel-resizer {
+    position: relative;
+    width: 10px;
+    height: 100%;
+    cursor: col-resize;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 20;
+    touch-action: none;
+}
+
+.panel-resizer::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: 50%;
+    width: 2px;
+    transform: translateX(-50%);
+    background: var(--border-glass, rgba(15, 23, 42, 0.1));
+    transition: background 0.15s, width 0.15s;
+}
+
+.panel-resizer:hover::before,
+.panel-resizer.resizing::before {
+    background: var(--color-primary);
+    width: 3px;
+}
+
+.panel-resizer-grip {
+    position: relative;
+    width: 22px;
+    height: 44px;
+    border-radius: 999px;
+    background: var(--bg-panel, #fff);
+    border: 1px solid var(--border-glass, rgba(15, 23, 42, 0.12));
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--text-secondary);
+    font-size: 0.75rem;
+    opacity: 0;
+    transform: scale(0.9);
+    transition: opacity 0.15s, transform 0.15s, color 0.15s;
+    pointer-events: none;
+}
+
+.panel-resizer:hover .panel-resizer-grip,
+.panel-resizer.resizing .panel-resizer-grip {
+    opacity: 1;
+    transform: scale(1);
+}
+
+.panel-resizer.resizing .panel-resizer-grip {
+    color: var(--color-primary);
+}
+
+body.panel-resize-active {
+    cursor: col-resize !important;
+    user-select: none !important;
+}
+
+body.panel-resize-active .pdf-iframe,
+body.panel-resize-active iframe {
+    pointer-events: none !important;
+}
+
+@media (max-width: 1023px) {
+    .panel-resizer {
+        display: none !important;
+    }
+}
+
 /* Stacked Columns Layout (Width < 1024px) */
 @media (max-width: 1023px) {
 
     .workspace-grid.split-55-45,
     .workspace-grid.split-50-50,
-    .workspace-grid.split-40-60 {
+    .workspace-grid.split-40-60,
+    #tab-calculator .workspace-grid.split-55-45 {
         grid-template-columns: 1fr !important;
         height: auto !important;
     }
@@ -1822,22 +1905,26 @@ select.low-confidence-input {
     background: white;
 }
 
-/* Glassmorphic spinner loader inside form panel */
+/* Slim, non-blocking OCR progress banner pinned to the top of the form panel */
 .form-ocr-loader {
-    position: absolute;
+    position: sticky;
     top: 0;
     left: 0;
     right: 0;
-    bottom: 0;
-    background: rgba(255, 255, 255, 0.85);
+    width: 100%;
+    height: auto;
+    background: rgba(255, 255, 255, 0.97);
     backdrop-filter: blur(10px);
     z-index: 100;
     display: flex;
     flex-direction: column;
     align-items: center;
     justify-content: center;
-    gap: 16px;
-    border-radius: var(--radius-lg);
+    gap: 10px;
+    padding: 14px 20px;
+    border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+    border-bottom: 1px solid var(--border-glass);
+    box-shadow: 0 10px 24px rgba(15, 23, 42, 0.10);
 }
 
 .spinner-glow {
@@ -2751,14 +2838,14 @@ select.low-confidence-input {
     font-weight: 600;
 }
 
-/* Premium Glassmorphic OCR Loader Overlay */
+/* Premium Glassmorphic OCR Loader Banner (non-blocking, top of panel only) */
 .form-ocr-loader {
-    position: absolute;
+    position: sticky;
     top: 0;
     left: 0;
     width: 100%;
-    height: 100%;
-    background: rgba(255, 255, 255, 0.85);
+    height: auto;
+    background: rgba(255, 255, 255, 0.97);
     backdrop-filter: blur(8px);
     -webkit-backdrop-filter: blur(8px);
     display: flex;
@@ -2766,16 +2853,18 @@ select.low-confidence-input {
     align-items: center;
     justify-content: center;
     z-index: 100;
-    border-radius: var(--radius-lg);
+    border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+    border-bottom: 1px solid var(--border-glass);
     animation: fadeIn var(--transition-normal) forwards;
     text-align: center;
-    padding: 24px;
+    padding: 14px 20px;
     color: var(--text-primary);
+    box-shadow: 0 10px 24px rgba(15, 23, 42, 0.10);
 }
 
 .spinner-glow {
-    width: 50px;
-    height: 50px;
+    width: 36px;
+    height: 36px;
     border: 3px solid rgba(11, 58, 114, 0.1);
     border-top: 3px solid var(--color-primary);
     border-radius: 50%;
@@ -2939,14 +3028,14 @@ select.low-confidence-input {
         font-weight: 600;
     }
 
-    /* Premium Glassmorphic OCR Loader Overlay */
+    /* Premium Glassmorphic OCR Loader Banner (non-blocking, top of panel only) */
     .form-ocr-loader {
-        position: absolute;
+        position: sticky;
         top: 0;
         left: 0;
         width: 100%;
-        height: 100%;
-        background: rgba(255, 255, 255, 0.85);
+        height: auto;
+        background: rgba(255, 255, 255, 0.97);
         backdrop-filter: blur(8px);
         -webkit-backdrop-filter: blur(8px);
         display: flex;
@@ -2954,16 +3043,17 @@ select.low-confidence-input {
         align-items: center;
         justify-content: center;
         z-index: 100;
-        border-radius: var(--radius-lg);
+        border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+        border-bottom: 1px solid var(--border-glass);
         animation: fadeIn var(--transition-normal) forwards;
         text-align: center;
-        padding: 24px;
+        padding: 14px 20px;
         color: var(--text-primary);
     }
 
     .spinner-glow {
-        width: 50px;
-        height: 50px;
+        width: 36px;
+        height: 36px;
         border: 3px solid rgba(11, 58, 114, 0.1);
         border-top: 3px solid var(--color-primary);
         border-radius: 50%;
@@ -3206,3 +3296,97 @@ select.low-confidence-input {
     .visually-hidden-calc-field {
         display: none !important;
     }
+
+/* Supporting Documents Section Styles */
+#supporting-docs-section {
+    background: rgba(15, 23, 42, 0.02);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md);
+    padding: 16px;
+    margin-top: 16px;
+    box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05);
+}
+
+.supporting-doc-chip {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 10px 14px;
+    background: rgba(255, 255, 255, 0.85);
+    border: 1px solid rgba(226, 232, 240, 0.8);
+    border-radius: 8px;
+    font-size: 0.82rem;
+    transition: all 0.2s ease;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.02);
+    margin-bottom: 8px;
+}
+
+.supporting-doc-chip:hover {
+    background: rgba(255, 255, 255, 0.95);
+    border-color: rgba(11, 58, 114, 0.3);
+    transform: translateY(-1px);
+    box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.06);
+}
+
+.supporting-doc-chip .doc-type-select {
+    background: #fff;
+    border: 1px solid #cbd5e1;
+    color: #334155;
+    padding: 4px 8px;
+    border-radius: 6px;
+    font-size: 0.78rem;
+    cursor: pointer;
+    outline: none;
+    font-weight: 500;
+}
+
+.supporting-doc-chip .enhance-ocr-label {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    font-size: 0.75rem;
+    cursor: pointer;
+    color: #475569;
+    user-select: none;
+}
+
+.supporting-doc-chip .enhance-ocr-checkbox {
+    cursor: pointer;
+    width: 14px;
+    height: 14px;
+    border-radius: 3px;
+    border: 1px solid #cbd5e1;
+    accent-color: var(--color-primary);
+}
+
+.supporting-doc-chip .status-badge {
+    font-weight: 600;
+    padding: 3px 8px;
+    border-radius: 50px;
+    font-size: 0.72rem;
+    text-transform: uppercase;
+}
+
+.supporting-doc-chip .status-badge.queued {
+    background: rgba(100, 116, 139, 0.1);
+    color: #64748b;
+    border: 1px solid rgba(100, 116, 139, 0.2);
+}
+
+.supporting-doc-chip .status-badge.processing {
+    background: rgba(59, 130, 246, 0.1);
+    color: #3b82f6;
+    border: 1px solid rgba(59, 130, 246, 0.2);
+}
+
+.supporting-doc-chip .status-badge.done {
+    background: rgba(34, 197, 94, 0.1);
+    color: #22c55e;
+    border: 1px solid rgba(34, 197, 94, 0.2);
+}
+
+.supporting-doc-chip .status-badge.failed {
+    background: rgba(239, 68, 68, 0.1);
+    color: #ef4444;
+    border: 1px solid rgba(239, 68, 68, 0.2);
+}

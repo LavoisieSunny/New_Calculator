@@ -5,12 +5,25 @@ import urllib.request
 import urllib.error
 import socket
 import re
+import time
 from datetime import datetime
+from rapidfuzz import fuzz
  
 from config.llm import LLM_PROVIDER, LLM_MODEL_NAME, LLM_API_KEY, LLM_API_ENDPOINT
  
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("LLMClient")
+
+import os as _os
+LOG_VERBOSE_GROUNDING_FAILURES = _os.getenv("LOG_VERBOSE_GROUNDING_FAILURES", "false").strip().lower() == "true"
+
+def _redact(text: str, n: int = 24) -> str:
+    if LOG_VERBOSE_GROUNDING_FAILURES:
+        return text
+    text = text or ""
+    if len(text) <= n * 2:
+        return text
+    return f"{text[:n]}...[REDACTED]...{text[-n:]}"
  
 _MONTHS = {
     "jan": 1, "january": 1, "feb": 2, "february": 2, "mar": 3, "march": 3,
@@ -123,8 +136,10 @@ def validate_ollama_setup() -> dict:
         logger.error(f"Ollama startup connection failed at {base_url}: {str(e)}")
     return stats
  
-def generate_response(prompt: str, system_instruction: str = None, response_format: str = None, history: list[dict] | None = None) -> str:
-    logger.info(f"Generating LLM response using provider '{LLM_PROVIDER}', model '{LLM_MODEL_NAME}'")
+def generate_response(prompt: str, system_instruction: str = None, response_format: str = None, history: list[dict] | None = None, model: str = None, temperature: float = None) -> str:
+    effective_model = model or LLM_MODEL_NAME
+    effective_temperature = 0.2 if temperature is None else temperature
+    logger.info(f"Generating LLM response using provider '{LLM_PROVIDER}', model '{effective_model}', temperature {effective_temperature}")
     
     char_count = len(prompt)
     token_est = int(char_count / 4)
@@ -143,7 +158,7 @@ def generate_response(prompt: str, system_instruction: str = None, response_form
 
     try:
         if LLM_PROVIDER == "gemini":
-            url = f"https://generativelanguage.googleapis.com/v1beta/models/{LLM_MODEL_NAME}:generateContent?key={LLM_API_KEY}"
+            url = f"https://generativelanguage.googleapis.com/v1beta/models/{effective_model}:generateContent?key={LLM_API_KEY}"
             headers = {"Content-Type": "application/json"}
             if history_sliced:
                 contents = []
@@ -158,9 +173,15 @@ def generate_response(prompt: str, system_instruction: str = None, response_form
                 payload = {"contents": [{"parts": [{"text": final_prompt}]}]}
                 if system_instruction:
                     payload["systemInstruction"] = {"parts": [{"text": system_instruction}]}
-                    payload["contents"][0]["parts"][0]["text"] = prompt
+            
+            generation_config = {}
             if response_format == "json":
-                payload["generationConfig"] = {"responseMimeType": "application/json"}
+                generation_config["responseMimeType"] = "application/json"
+            if effective_temperature is not None:
+                generation_config["temperature"] = effective_temperature
+            if generation_config:
+                payload["generationConfig"] = generation_config
+                
             req_body = json.dumps(payload).encode("utf-8")
         elif LLM_PROVIDER == "ollama":
             if "v1" in LLM_API_ENDPOINT:
@@ -172,10 +193,10 @@ def generate_response(prompt: str, system_instruction: str = None, response_form
                     messages.extend(history_sliced)
                 messages.append({"role": "user", "content": prompt})
                 payload = {
-                    "model": LLM_MODEL_NAME, 
+                    "model": effective_model, 
                     "messages": messages, 
-                    "temperature": 0.2,
-                    "options": {"temperature": 0.2, "keep_alive": "10m", "num_ctx": 16384}
+                    "temperature": effective_temperature,
+                    "options": {"temperature": effective_temperature, "keep_alive": "10m", "num_ctx": 16384}
                 }
                 if response_format == "json":
                     payload["response_format"] = {"type": "json_object"}
@@ -188,10 +209,10 @@ def generate_response(prompt: str, system_instruction: str = None, response_form
                     messages.extend(history_sliced)
                 messages.append({"role": "user", "content": prompt})
                 payload = {
-                    "model": LLM_MODEL_NAME, 
+                    "model": effective_model, 
                     "messages": messages, 
                     "stream": False, 
-                    "options": {"temperature": 0.2, "keep_alive": "10m", "num_ctx": 16384}
+                    "options": {"temperature": effective_temperature, "keep_alive": "10m", "num_ctx": 16384}
                 }
                 if response_format == "json":
                     payload["format"] = "json"
@@ -208,7 +229,7 @@ def generate_response(prompt: str, system_instruction: str = None, response_form
             if history_sliced:
                 messages.extend(history_sliced)
             messages.append({"role": "user", "content": prompt})
-            payload = {"model": LLM_MODEL_NAME, "messages": messages, "temperature": 0.2}
+            payload = {"model": effective_model, "messages": messages, "temperature": effective_temperature}
             if response_format == "json":
                 payload["response_format"] = {"type": "json_object"}
             req_body = json.dumps(payload).encode("utf-8")
@@ -807,9 +828,25 @@ def ai_data_recovery(raw_ocr_text: str, track: str = "high_court", case_type: st
             confidence_scores["disability"] = {"confidence": 0.0}
         elif dis_val is not None and raw_ocr_text:
             dis_str = str(dis_val).strip()
-            # If numerical disability value does not appear anywhere in source text, clear it
-            if dis_str not in raw_ocr_text and f"{dis_str}%" not in raw_ocr_text and "disability" not in raw_ocr_text.lower():
-                logger.info(f"[DISABILITY-HALLUCINATION-GUARD] Discarding unverified disability '{dis_str}' not present in OCR text.")
+            # Normalize "35.0" / "35" so both forms are checked
+            try:
+                dis_str_int = str(int(float(dis_str)))
+            except (ValueError, TypeError):
+                dis_str_int = dis_str
+            # STRICT CHECK: the exact percentage figure itself must appear literally in
+            # the OCR text. Previously this also allowed the value through if the mere
+            # word "disability" appeared anywhere in the document -- but that word is
+            # almost always present somewhere (statute references, boilerplate, headers)
+            # even when no percentage was ever stated, which let hallucinated numbers
+            # (e.g. a stray "35") slip through untouched. Require the actual figure.
+            number_present = (
+                dis_str in raw_ocr_text
+                or dis_str_int in raw_ocr_text
+                or f"{dis_str}%" in raw_ocr_text
+                or f"{dis_str_int}%" in raw_ocr_text
+            )
+            if not number_present:
+                logger.info(f"[DISABILITY-HALLUCINATION-GUARD] Discarding unverified disability '{dis_str}' -- this exact figure was not found anywhere in the OCR text.")
                 data["disability_percentage"] = None
                 data["disability"] = None
                 confidence_scores["disability_percentage"] = {"confidence": 0.0}
@@ -1145,7 +1182,142 @@ def ai_data_recovery(raw_ocr_text: str, track: str = "high_court", case_type: st
 # FEATURE 1: APPEAL GROUNDS & RELIEF SUMMARY
 # ======================================================
 
-_SUMMARY_CACHE = {}
+class BoundedCache(dict):
+    """Size-bounded in-memory LRU cache to prevent memory growth and retain PII ephemerally, with TTL."""
+    def __init__(self, maxsize=200, ttl=3600):
+        super().__init__()
+        self.maxsize = maxsize
+        self.ttl = ttl
+        self._keys = []
+
+    def __setitem__(self, key, value):
+        if key in self:
+            self._keys.remove(key)
+        self._keys.append(key)
+        if len(self._keys) > self.maxsize:
+            oldest = self._keys.pop(0)
+            super().pop(oldest, None)
+        super().__setitem__(key, (time.time(), value))
+
+    def __getitem__(self, key):
+        self._prune_key_if_expired(key)
+        _, value = super().__getitem__(key)
+        # Move to end to maintain LRU
+        self._keys.remove(key)
+        self._keys.append(key)
+        return value
+
+    def __contains__(self, key):
+        self._prune_key_if_expired(key)
+        return super().__contains__(key)
+
+    def get(self, key, default=None):
+        if key in self:
+            return self[key]
+        return default
+
+    def pop(self, key, default=None):
+        self._prune_key_if_expired(key)
+        if key in self:
+            self._keys.remove(key)
+            _, val = super().pop(key)
+            return val
+        return default
+
+    def _prune_key_if_expired(self, key):
+        if super().__contains__(key):
+            timestamp, _ = super().__getitem__(key)
+            if time.time() - timestamp > self.ttl:
+                if key in self._keys:
+                    self._keys.remove(key)
+                super().pop(key, None)
+
+
+_SUMMARY_CACHE = BoundedCache(maxsize=200)
+_TRANSLATION_CACHE = BoundedCache(maxsize=200)
+_FINAL_SUMMARY_CACHE = BoundedCache(maxsize=200)
+
+
+def validate_final_summary_shape(raw_data: dict) -> bool:
+    if not isinstance(raw_data, dict):
+        return False
+    if not all(k in raw_data for k in ("issue_wise_view", "final_summary_points", "probable_outcome")):
+        return False
+    if not isinstance(raw_data["issue_wise_view"], list):
+        return False
+    if not isinstance(raw_data["final_summary_points"], list):
+        return False
+        
+    valid_outcomes = {"enhancement", "reduction", "exoneration", "upheld", "not_determinable"}
+    outcome = str(raw_data.get("probable_outcome", "")).lower().strip()
+    if outcome not in valid_outcomes:
+        if "enhance" in outcome or "increase" in outcome:
+            raw_data["probable_outcome"] = "enhancement"
+        elif "reduc" in outcome or "lower" in outcome:
+            raw_data["probable_outcome"] = "reduction"
+        elif "exonerat" in outcome or "set aside" in outcome:
+            raw_data["probable_outcome"] = "exoneration"
+        elif "upheld" in outcome or "dismiss" in outcome:
+            raw_data["probable_outcome"] = "upheld"
+        else:
+            raw_data["probable_outcome"] = "not_determinable"
+            
+    for entry in raw_data["issue_wise_view"]:
+        if not isinstance(entry, dict):
+            return False
+        for k in ("issue", "trial_court_finding", "hc_ground_challenge", "likely_judicial_view"):
+            entry.setdefault(k, "")
+            
+    if "factual_discrepancies" not in raw_data or not isinstance(raw_data.get("factual_discrepancies"), list):
+        raw_data["factual_discrepancies"] = []
+    if not isinstance(raw_data.get("rejected_candidate_claims"), list):
+        raw_data["rejected_candidate_claims"] = []
+        
+    return True
+
+
+def _verify_final_summary_grounding(summary: dict, source_text: str) -> dict:
+    """Same numeric-grounding check as _verify_summary_grounding(), applied to
+    likely_judicial_view / trial_court_finding / final_summary_points."""
+    if not summary or not isinstance(summary, dict):
+        return summary
+        
+    source_normalized = (source_text or "").lower().replace(",", "")
+    source_digits = re.sub(r"\D", "", source_text or "")
+    
+    def _numbers(s: str) -> list:
+        return re.findall(r"\b[a-zA-Z]*\d+[\w\d\.,\-%/]*\b", s or "")
+        
+    def _clean_list(items: list) -> list:
+        out = []
+        for item in items:
+            bad = None
+            for raw in _numbers(item):
+                digits = re.sub(r"\D", "", raw)
+                raw_normalized = raw.lower().replace(",", "")
+                if digits and len(digits) >= 2 and digits not in source_digits and raw_normalized not in source_normalized:
+                    bad = raw
+                    logger.warning(f"[FINAL-SUMMARY GROUNDING CHECK] Unverified number '{raw}' in text snippet: {_redact(item)}")
+                    break
+            out.append(item.replace(bad, "[figure unverified]") if bad else item)
+        return out
+
+    if "final_summary_points" in summary and isinstance(summary["final_summary_points"], list):
+        summary["final_summary_points"] = _clean_list(summary["final_summary_points"])
+        
+    if "issue_wise_view" in summary and isinstance(summary["issue_wise_view"], list):
+        for entry in summary["issue_wise_view"]:
+            if isinstance(entry, dict):
+                for fld in ("trial_court_finding", "hc_ground_challenge", "likely_judicial_view"):
+                    if entry.get(fld):
+                        entry[fld] = _clean_list([entry[fld]])[0]
+                        
+    if "factual_discrepancies" in summary and isinstance(summary["factual_discrepancies"], list):
+        for entry in summary["factual_discrepancies"]:
+            if isinstance(entry, dict) and entry.get("note"):
+                entry["note"] = _clean_list([entry["note"]])[0]
+    return summary
+
 
 def validate_summary_shape(raw_data: dict) -> bool:
     if not isinstance(raw_data, dict):
@@ -1205,7 +1377,7 @@ def _verify_summary_grounding(summary: dict, source_text: str) -> dict:
                     continue
                 if norm not in source_normalized and digits not in source_normalized:
                     fig_valid = False
-                    logger.warning(f"[GROUNDING CHECK FAILED] Figure '{raw}' (normalized: '{norm}') from '{fig}' not found in source text.")
+                    logger.warning(f"[GROUNDING CHECK FAILED] Figure '{raw}' (normalized: '{norm}') from: {_redact(fig)}")
                     break
             if fig_valid:
                 verified_figures.append(fig)
@@ -1225,13 +1397,13 @@ def _verify_summary_grounding(summary: dict, source_text: str) -> dict:
                 if norm not in source_normalized and digits not in source_normalized:
                     ground_valid = False
                     offending_raw = raw
-                    logger.warning(f"[GROUNDING CHECK FAILED] Numeric figure '{raw}' (normalized: '{norm}') in ground '{ground}' not found in source text.")
+                    logger.warning(f"[GROUNDING CHECK FAILED] Numeric figure '{raw}' (normalized: '{norm}') in ground: {_redact(ground)}")
                     break
             if ground_valid:
                 verified_grounds.append(ground)
             else:
                 rewritten = ground.replace(offending_raw, "[figure unverified]")
-                logger.warning(f"[GROUNDING REWRITE] Ground bullet rewritten from '{ground}' to '{rewritten}' due to unverified figure '{offending_raw}'")
+                logger.warning(f"[GROUNDING REWRITE] Ground bullet rewritten from: {_redact(ground)} to: {_redact(rewritten)} due to unverified figure '{offending_raw}'")
                 verified_grounds.append(rewritten)
         summary["grounds_of_appeal"] = verified_grounds
 
@@ -1249,13 +1421,13 @@ def _verify_summary_grounding(summary: dict, source_text: str) -> dict:
                 if norm not in source_normalized and digits not in source_normalized:
                     relief_valid = False
                     offending_raw = raw
-                    logger.warning(f"[GROUNDING CHECK FAILED] Numeric figure '{raw}' (normalized: '{norm}') in relief '{relief}' not found in source text.")
+                    logger.warning(f"[GROUNDING CHECK FAILED] Numeric figure '{raw}' (normalized: '{norm}') in relief: {_redact(relief)}")
                     break
             if relief_valid:
                 verified_relief.append(relief)
             else:
                 rewritten = relief.replace(offending_raw, "[figure unverified]")
-                logger.warning(f"[GROUNDING REWRITE] Relief bullet rewritten from '{relief}' to '{rewritten}' due to unverified figure '{offending_raw}'")
+                logger.warning(f"[GROUNDING REWRITE] Relief bullet rewritten from: {_redact(relief)} to: {_redact(rewritten)} due to unverified figure '{offending_raw}'")
                 verified_relief.append(rewritten)
         summary["relief_sought"] = verified_relief
 
@@ -1455,4 +1627,491 @@ def summarize_grounds_and_relief(sections: dict, heuristic_signal: dict, case_ty
 
         _SUMMARY_CACHE[h] = fallback_summary
         return fallback_summary
+
+
+def validate_factual_discrepancies_shape(items) -> list:
+    if not isinstance(items, list):
+        return []
+    cleaned = []
+    for it in items:
+        if not isinstance(it, dict) or not it.get("claim"):
+            continue
+        cleaned.append({
+            "claim": str(it.get("claim", "")),
+            "found_in_grounds": bool(it.get("found_in_grounds", True)),
+            "found_in_trial_court": bool(it.get("found_in_trial_court", False)),
+            "note": str(it.get("note", "")),
+        })
+    return cleaned
+
+
+def translate_trial_court_text(issues_text: str, award_text: str) -> dict:
+    """One LLM call: translates Hindi/mixed trial-court text into precise legal
+    English. This is what replaces the fixed bilingual keyword dictionary --
+    everything downstream (claim extraction, matching) now works on plain
+    English, so it isn't limited to a hardcoded synonym list."""
+    import hashlib
+    from config.llm import (
+        TRIAL_COURT_TRANSLATION_SYSTEM_INSTRUCTION, TRIAL_COURT_TRANSLATION_USER_PROMPT,
+        LLM_TRANSLATION_MODEL_NAME, LLM_TRANSLATION_TEMPERATURE
+    )
+    issues_text = (issues_text or "").strip()
+    award_text = (award_text or "").strip()
+    if not issues_text and not award_text:
+        return {"issues_en": "", "award_en": ""}
+
+    h = hashlib.sha256(f"{issues_text}|||{award_text}".encode("utf-8")).hexdigest()
+    if h in _TRANSLATION_CACHE:
+        return _TRANSLATION_CACHE[h]
+
+    prompt = TRIAL_COURT_TRANSLATION_USER_PROMPT.format(
+        issues_text=issues_text[:4000], award_text=award_text[:3000]
+    )
+    # Safe fallback: if translation fails twice, downstream code still gets the
+    # original text rather than an empty string -- degrades to "no translation"
+    # instead of "no data".
+    result = {"issues_en": issues_text, "award_en": award_text}
+    for attempt in range(2):
+        try:
+            response = generate_response(
+                prompt=prompt,
+                system_instruction=TRIAL_COURT_TRANSLATION_SYSTEM_INSTRUCTION,
+                response_format="json",
+                model=LLM_TRANSLATION_MODEL_NAME,
+                temperature=LLM_TRANSLATION_TEMPERATURE
+            )
+            s = response.find("{"); e = response.rfind("}")
+            candidate = response[s:e+1] if s != -1 and e != -1 and e > s else response
+            parsed = json.loads(candidate)
+            if isinstance(parsed, dict) and parsed.get("issues_en") and parsed.get("award_en"):
+                result = {"issues_en": parsed["issues_en"], "award_en": parsed["award_en"]}
+                break
+        except Exception as ex:
+            logger.warning(f"[TRIAL-COURT-TRANSLATION] attempt {attempt + 1} failed: {ex}")
+
+    _TRANSLATION_CACHE[h] = result
+    return result
+
+
+def validate_claims_shape(items) -> list:
+    if not isinstance(items, list):
+        return []
+    valid_categories = {"injury", "death", "vehicle_damage", "income", "disability", "dependency", "other"}
+    cleaned = []
+    for it in items:
+        if not isinstance(it, dict) or not it.get("claim"):
+            continue
+        cat = str(it.get("category", "other")).strip().lower()
+        if cat not in valid_categories:
+            cat = "other"
+        cleaned.append({
+            "claim": str(it.get("claim", "")).strip(),
+            "category": cat,
+            "text_span": str(it.get("text_span", "")).strip(),
+        })
+    return cleaned
+
+
+def extract_claims(text: str, case_type: str = "death", source_label: str = "") -> dict:
+    """Replaces the fixed injury dictionary's job of 'what facts are we even
+    looking for'. Works for injury, death, vehicle-damage, income, dependency
+    claims -- whatever's actually in this document -- instead of a fixed list."""
+    from config.llm import (
+        CLAIM_EXTRACTION_SYSTEM_INSTRUCTION, CLAIM_EXTRACTION_USER_PROMPT,
+        LLM_CLAIM_EXTRACTION_MODEL_NAME, LLM_CLAIM_EXTRACTION_TEMPERATURE
+    )
+    text = (text or "").strip()
+    if not text:
+        return {"claims": []}
+
+    prompt = CLAIM_EXTRACTION_USER_PROMPT.format(
+        case_type=case_type, source_label=source_label, text=text[:6000]
+    )
+    for attempt in range(2):
+        try:
+            response = generate_response(
+                prompt=prompt,
+                system_instruction=CLAIM_EXTRACTION_SYSTEM_INSTRUCTION,
+                response_format="json",
+                model=LLM_CLAIM_EXTRACTION_MODEL_NAME,
+                temperature=LLM_CLAIM_EXTRACTION_TEMPERATURE
+            )
+            s = response.find("{"); e = response.rfind("}")
+            candidate = response[s:e+1] if s != -1 and e != -1 and e > s else response
+            parsed = json.loads(candidate)
+            if isinstance(parsed, dict) and isinstance(parsed.get("claims"), list):
+                return parsed
+        except Exception as ex:
+            logger.warning(f"[CLAIM-EXTRACTION] attempt {attempt + 1} failed ({source_label}): {ex}")
+    return {"claims": []}
+
+
+_ISSUE_ANCHOR_RE = re.compile(r"(वादप्रश्न|वाद\s*प्रश्न)\s*(क्र?\.?|क0|no\.?)?\s*1\b")
+_OPERATIVE_ANCHOR_RE = re.compile(r"(अधिनिर्णय|आदेश)\s*(खुले न्यायालय|पारित)")
+
+def _split_lower_court_text(text: str):
+    issue_m = _ISSUE_ANCHOR_RE.search(text)
+    op_m = None
+    for m in _OPERATIVE_ANCHOR_RE.finditer(text):
+        op_m = m  # last match = final operative order, not a heading mention
+    if issue_m and op_m and op_m.start() > issue_m.start():
+        return text[issue_m.start():op_m.start()], text[op_m.start():]
+    return None, None  # no reliable anchors — caller should NOT guess-split
+
+
+def classify_doc_type_via_llm(text: str) -> str:
+    """Uses LLM to classify document contents as either 'lower_court' (tribunal judgment) or 'hospital_record' / other."""
+    system_instruction = (
+        "You are a legal and medical document classifier. Your job is to analyze the provided document text "
+        "and determine if it is a 'lower_court' (MACT tribunal judgment, issues framed, award details) "
+        "or a 'hospital_record' (medical bills, discharge summaries, treatment reports, prescriptions, disability certificates) "
+        "or 'other' (FIR copy, insurance policy, etc.).\n"
+        "Return a JSON object with a single key 'doc_type' whose value is either 'lower_court', 'hospital_record', or 'other'."
+    )
+    user_prompt = (
+        f"Classify the following document content. Return ONLY JSON conforming to the requested schema:\n\n"
+        f"{text[:5000]}"
+    )
+    try:
+        from config.llm import LLM_FINAL_SUMMARY_MODEL_NAME
+        response = generate_response(
+            prompt=user_prompt,
+            system_instruction=system_instruction,
+            response_format="json",
+            model=LLM_FINAL_SUMMARY_MODEL_NAME,
+            temperature=0.1
+        )
+        response = re.sub(r"<think>.*?</think>", "", response, flags=re.DOTALL).strip()
+        s = response.find("{")
+        e = response.rfind("}")
+        candidate = response[s:e+1] if s != -1 and e != -1 and e > s else response
+        parsed = json.loads(candidate)
+        return parsed.get("doc_type", "other")
+    except Exception as e:
+        logger.error(f"classify_doc_type_via_llm failed: {e}")
+        return "other"
+
+
+def _looks_like_tribunal_judgment(text: str) -> bool:
+    """Heuristic + LLM fallback to check if the text contents resemble a MACT tribunal judgment."""
+    if not text:
+        return False
+    keywords = [
+        "अधिकरण", "न्यायाधिकरण", "मोटर दुर्घटना", "दावा याचिका", "याचिकाकर्ता", "विपक्षी", 
+        "mact", "tribunal", "motor accident", "claim petition", "issues", "award", "judgment",
+        "वादप्रश्न", "वाद प्रश्न", "अधिनिर्णय", "पंचाट"
+    ]
+    text_lower = text.lower()
+    hits = sum(1 for kw in keywords if kw in text_lower)
+    if hits >= 3:
+        return True
+    doc_type = classify_doc_type_via_llm(text)
+    return doc_type == "lower_court"
+
+
+def classify_sections_via_llm(full_text: str) -> dict:
+    """Uses LLM to identify the main text spans of the core document sections when keyword matching fails."""
+    system_instruction = (
+        "You are an expert Indian court document parser. Your job is to extract the exact text blocks "
+        "belonging to the main structural sections from the provided document text. "
+        "Return a JSON object with the following keys:\n"
+        "- grounds_section: Text explaining the grounds of appeal/challenge (or empty string)\n"
+        "- relief_section: Text of the relief claimed or prayer (or empty string)\n"
+        "- issues_findings_section: Text of issues framed, points for determination, or findings (or empty string)\n"
+        "- award_operative_section: Text of the final award amount calculation table, order, or operative details (or empty string)\n"
+        "Do not summarize or paraphrase the text. Extract the relevant text spans verbatim from the input text."
+    )
+    user_prompt = (
+        f"Extract the sections from the following document text. Return ONLY JSON conforming to the requested schema:\n\n"
+        f"{full_text[:12000]}"
+    )
+    try:
+        from config.llm import LLM_FINAL_SUMMARY_MODEL_NAME
+        response = generate_response(
+            prompt=user_prompt,
+            system_instruction=system_instruction,
+            response_format="json",
+            model=LLM_FINAL_SUMMARY_MODEL_NAME,
+            temperature=0.1
+        )
+        response = re.sub(r"<think>.*?</think>", "", response, flags=re.DOTALL).strip()
+        s = response.find("{")
+        e = response.rfind("}")
+        candidate = response[s:e+1] if s != -1 and e != -1 and e > s else response
+        parsed = json.loads(candidate)
+        
+        sections = {}
+        for sec_name in ["grounds_section", "relief_section", "issues_findings_section", "award_operative_section"]:
+            content = (parsed.get(sec_name) or "").strip()
+            if content:
+                sections[sec_name] = {
+                    "section_name": sec_name,
+                    "start_page": 1,
+                    "end_page": 1,
+                    "content": content,
+                    "strong_match": True
+                }
+        return sections
+    except Exception as e:
+        logger.error(f"classify_sections_via_llm failed: {e}")
+        return None
+
+
+def find_missing_claims(grounds_claims: list, trial_claims: list, match_threshold: float = 72.0) -> list:
+    """Deterministic fuzzy matcher: for every claim raised in the HC grounds of
+    appeal / relief, check whether a sufficiently similar claim was actually
+    addressed in the trial court issues/award text. Anything that doesn't
+    clear the threshold against ANY trial claim is surfaced as a candidate
+    factual discrepancy for the LLM to confirm or reject -- this is what
+    populates `candidate_discrepancies` in generate_final_judicial_summary.
+
+    Returns a list already shaped like validate_factual_discrepancies_shape
+    expects: {"claim", "category", "found_in_grounds", "found_in_trial_court", "note"}.
+    """
+    if not isinstance(grounds_claims, list) or not grounds_claims:
+        return []
+    if not isinstance(trial_claims, list):
+        trial_claims = []
+
+    candidates = []
+    for g in grounds_claims:
+        if not isinstance(g, dict):
+            continue
+        g_claim = str(g.get("claim", "")).strip()
+        if not g_claim:
+            continue
+        g_category = str(g.get("category", "other"))
+
+        best_score = 0.0
+        for t in trial_claims:
+            if not isinstance(t, dict):
+                continue
+            t_claim = str(t.get("claim", "")).strip()
+            if not t_claim:
+                continue
+            score = max(
+                fuzz.partial_ratio(g_claim.lower(), t_claim.lower()),
+                fuzz.token_set_ratio(g_claim.lower(), t_claim.lower()),
+            )
+            if score > best_score:
+                best_score = score
+            if best_score >= match_threshold:
+                break  # good enough match found, no need to keep scanning
+
+        if best_score < match_threshold:
+            candidates.append({
+                "claim": g_claim,
+                "category": g_category,
+                "found_in_grounds": True,
+                "found_in_trial_court": False,
+                "note": (
+                    "Raised in HC grounds/relief but no comparable claim found in the "
+                    f"trial court issues/award (best fuzzy match score={best_score:.0f})."
+                ),
+            })
+
+    return candidates
+
+
+def generate_final_judicial_summary(sections: dict, heuristic_signal: dict = None, case_type: str = "death", supporting_docs: dict = None) -> dict:
+    import hashlib
+    from backend.parser_heuristics import normalize_issues_table
+    from config.llm import (
+        FINAL_JUDICIAL_SUMMARY_SYSTEM_INSTRUCTION,
+        FINAL_JUDICIAL_SUMMARY_USER_PROMPT,
+        LLM_FINAL_SUMMARY_TEMPERATURE,
+        LLM_FINAL_SUMMARY_MODEL_NAME
+    )
+
+    issues_raw = (sections.get("issues_findings_section", "") or "").strip()
+    award_text_raw = (sections.get("award_operative_section", "") or sections.get("award_copy_section", "") or "").strip()
+    grounds_text = (sections.get("grounds_section", "") or sections.get("memo_of_appeal_section", "") or "").strip()
+    relief_text = (sections.get("relief_section", "") or "").strip()
+
+    medical_evidence_text = ""
+    if supporting_docs and supporting_docs.get("hospital_record"):
+        medical_evidence_text = supporting_docs["hospital_record"]
+    else:
+        medical_evidence_text = "(No medical evidence from hospital records provided.)"
+
+    summary_src = "llm_summary"
+
+    if supporting_docs and supporting_docs.get("lower_court"):
+        lower_court_text = supporting_docs["lower_court"]
+        
+        # 1. Content validation guard
+        if not _looks_like_tribunal_judgment(lower_court_text):
+            message = (
+                "The uploaded document tagged as 'Lower Court Judgment' does not appear to "
+                "be a valid trial court judgment -- it lacks expected tribunal layout/keywords. "
+                "Please verify the file and ensure it is uploaded under the correct document type."
+            )
+            return {
+                "issue_wise_view": [],
+                "final_summary_points": [message],
+                "probable_outcome": heuristic_signal.get("verdict", "not_determinable") if heuristic_signal else "not_determinable",
+                "factual_discrepancies": [],
+                "summary_source": "mislabeled_input"
+            }
+
+        from backend.parser_heuristics import detect_document_sections_with_fallback, classify_page_type
+
+        lc_sections_meta = detect_document_sections_with_fallback(lower_court_text, [])
+        lc_sections = {k: v["content"] for k, v in lc_sections_meta.items()}
+        lc_issues_raw = (lc_sections.get("issues_findings_section", "") or "").strip()
+        lc_award_raw = (lc_sections.get("award_operative_section", "") or lc_sections.get("award_copy_section", "") or "").strip()
+
+        # pull out attached exhibit/annexure
+        lc_attachment_text = ""
+        pages = [p.strip() for p in lower_court_text.split("\f") if p.strip()]  # or however pages are delimited
+        attachment_pages = [p for p in pages if classify_page_type(p, 0) in ("annexure", "evidence")]
+        if attachment_pages:
+            lc_attachment_text = "\n---\n".join(attachment_pages)
+
+        # Determine issues and award texts
+        if not lc_issues_raw and not lc_award_raw:
+            anchors_issues, anchors_award = _split_lower_court_text(lower_court_text)
+            if anchors_issues and anchors_award:
+                lc_issues_raw = anchors_issues
+                lc_award_raw = anchors_award
+                summary_src = "structural_anchor_split"
+            else:
+                # fall back to the 70/30 split as a last resort
+                split_point = int(len(lower_court_text) * 0.7)
+                lc_issues_raw = lower_court_text[:split_point]
+                lc_award_raw = lower_court_text[split_point:]
+                summary_src = "guess_split_70_30"
+        else:
+            summary_src = "parsed_sections"
+
+        translation = translate_trial_court_text(lc_issues_raw, lc_award_raw)
+        issues_text_en = translation.get("issues_en") or lc_issues_raw
+        award_text_en = translation.get("award_en") or lc_award_raw
+
+        # fold attachments into medical_evidence_text instead of overwriting it
+        if lc_attachment_text:
+            medical_evidence_text = (medical_evidence_text + "\n\n[From lower court record attachments]\n" + lc_attachment_text).strip()
+    else:
+        logger.info(
+            f"[JUDICIAL-ANALYSIS] issues_raw_len={len(issues_raw)}, award_text_raw_len={len(award_text_raw)}, "
+            f"has_lower_court_supporting_doc={bool(supporting_docs and supporting_docs.get('lower_court'))}"
+        )
+        if not issues_raw and not award_text_raw:
+            no_supporting_doc_uploaded = not (supporting_docs and supporting_docs.get("lower_court"))
+            if no_supporting_doc_uploaded:
+                message = (
+                    "No trial court / tribunal judgment was found for this case -- this is "
+                    "an appeal-side-only view. Upload the original MACT award as a supporting "
+                    "document (doc type: Lower Court Judgment) to get a full trial-court-vs-appeal comparison."
+                )
+            else:
+                message = (
+                    "A lower court document was uploaded, but its issues/award section could not "
+                    "be reliably parsed -- summary limited to appeal-side grounds only."
+                )
+            return {
+                "issue_wise_view": [],
+                "final_summary_points": [message],
+                "probable_outcome": heuristic_signal.get("verdict", "not_determinable") if heuristic_signal else "not_determinable",
+                "factual_discrepancies": [],
+                "summary_source": "insufficient_input"
+            }
+        issues_rows = normalize_issues_table(issues_raw)
+        issues_text_hi = "\n".join(f"{r.get('issue', '')}: {r.get('finding', '')}" for r in issues_rows) or issues_raw
+
+        translation = translate_trial_court_text(issues_text_hi, award_text_raw)
+        issues_text_en = translation.get("issues_en") or issues_text_hi
+        award_text_en = translation.get("award_en") or award_text_raw
+        summary_src = "mact_quoted_fallback"
+
+    concat = f"{issues_text_en}|||{award_text_en}|||{grounds_text}|||{relief_text}|||{medical_evidence_text}"
+    h = hashlib.sha256(concat.encode("utf-8")).hexdigest()
+    if h in _FINAL_SUMMARY_CACHE:
+        logger.info("[FINAL-JUDICIAL-SUMMARY] Returning cached summary.")
+        return _FINAL_SUMMARY_CACHE[h]
+
+    # Step 2: extract structured claims from both sides (generalizes to any case_type)
+    grounds_claims = validate_claims_shape(
+        extract_claims(f"{grounds_text}\n{relief_text}", case_type=case_type,
+                       source_label="HC grounds of appeal / relief").get("claims", [])
+    )
+    trial_claims = validate_claims_shape(
+        extract_claims(f"{issues_text_en}\n{award_text_en}", case_type=case_type,
+                       source_label="trial court issues/award (translated)").get("claims", [])
+    )
+
+    # Step 3: deterministic fuzzy matcher -> candidate list for the LLM to verify
+    candidate_discrepancies = find_missing_claims(grounds_claims, trial_claims)
+    candidate_hint = "\n".join(
+        f"- {d['claim']} ({d['category']})" for d in candidate_discrepancies
+    ) or "(none flagged by automated matcher)"
+
+    prompt = FINAL_JUDICIAL_SUMMARY_USER_PROMPT.format(
+        issues_text=issues_text_en[:4000],
+        award_text=award_text_en[:3000],
+        grounds_text=grounds_text[:4000],
+        relief_text=relief_text[:2000],
+        medical_evidence_text=medical_evidence_text[:4000],
+        candidate_discrepancies=candidate_hint
+    )
+
+    result_dict = {}
+    success = False
+
+    for attempt in range(2):
+        try:
+            response = generate_response(
+                prompt=prompt,
+                system_instruction=FINAL_JUDICIAL_SUMMARY_SYSTEM_INSTRUCTION,
+                response_format="json",
+                model=LLM_FINAL_SUMMARY_MODEL_NAME,
+                temperature=LLM_FINAL_SUMMARY_TEMPERATURE
+            )
+            response = re.sub(r"<think>.*?</think>", "", response, flags=re.DOTALL).strip()
+            s = response.find("{")
+            e = response.rfind("}")
+            candidate = response[s:e+1] if s != -1 and e != -1 and e > s else response
+            parsed = json.loads(candidate)
+
+            if validate_final_summary_shape(parsed):
+                full_source = f"{issues_text_en}\n{award_text_en}\n{grounds_text}\n{relief_text}"
+                result_dict = _verify_final_summary_grounding(parsed, full_source)
+                result_dict["summary_source"] = summary_src
+
+                # Union, not override: the LLM's reviewed list is authoritative for
+                # anything it actually commented on; any matcher candidate the LLM's
+                # JSON silently omitted (rather than explicitly rejecting) still gets
+                # included, so a weak model can't silently wipe out a real hit just
+                # by forgetting to echo it back.
+                llm_discrepancies = validate_factual_discrepancies_shape(parsed.get("factual_discrepancies"))
+                rejected = {c.strip().lower() for c in parsed.get("rejected_candidate_claims", []) if isinstance(c, str)}
+                seen = {d["claim"].strip().lower() for d in llm_discrepancies}
+
+                merged = list(llm_discrepancies)
+                for d in candidate_discrepancies:
+                    key = d["claim"].strip().lower()
+                    if key not in seen and key not in rejected:
+                        merged.append(d)
+
+                result_dict["factual_discrepancies"] = merged
+                success = True
+                break
+        except Exception as e:
+            logger.warning(f"[FINAL-JUDICIAL-SUMMARY] Attempt {attempt + 1} failed: {e}")
+            prompt += "\n\nREMINDER: return ONLY valid JSON matching the schema exactly."
+
+    if not success:
+        result_dict = {
+            "issue_wise_view": [],
+            "final_summary_points": [
+                "Automated issue-wise comparison could not be generated for this document; please review the trial court award and HC grounds manually."
+            ],
+            "probable_outcome": heuristic_signal.get("verdict", "not_determinable") if heuristic_signal else "not_determinable",
+            "factual_discrepancies": candidate_discrepancies,
+            "summary_source": "fallback"
+        }
+
+    _FINAL_SUMMARY_CACHE[h] = result_dict
+    return result_dict
+
 

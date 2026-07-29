@@ -18,7 +18,7 @@ import json
 import urllib.request
 import urllib.error
 import concurrent.futures as _cf
-from fastapi import APIRouter, UploadFile, File, HTTPException, BackgroundTasks
+from fastapi import APIRouter, UploadFile, File, HTTPException, BackgroundTasks, Form
 from fastapi.responses import StreamingResponse
 from pypdf import PdfReader
 import pypdfium2 as pdfium
@@ -394,6 +394,150 @@ def get_ocr_instance(lang: str = None):
             import paddle
             logger.info(f"PaddleOCR confirmed device={paddle.device.get_device()}")
     return _PADDLE_INSTANCES[lang]
+
+
+_SUPPORTING_PADDLE_INSTANCES = {"hi": None, "en": None}
+_SUPPORTING_PADDLE_INIT_LOCK = threading.Lock()
+_SUPPORTING_PADDLE_INFER_LOCK = threading.Lock()
+
+def get_supporting_ocr_instance(lang: str = None):
+    global _SUPPORTING_PADDLE_INSTANCES
+    if lang is None:
+        lang = OCR_PADDLE_LANG
+    if lang not in _SUPPORTING_PADDLE_INSTANCES:
+        _SUPPORTING_PADDLE_INSTANCES[lang] = None
+    if _SUPPORTING_PADDLE_INSTANCES[lang] is not None:
+        return _SUPPORTING_PADDLE_INSTANCES[lang]
+    with _SUPPORTING_PADDLE_INIT_LOCK:
+        if _SUPPORTING_PADDLE_INSTANCES[lang] is None:
+            if not PADDLEOCR_IMPORTED:
+                raise ImportError("paddleocr is not installed or failed to import at startup.")
+            _tlog(f"Loading Supporting PaddleOCR singleton (PP-OCRv5, lang={lang})...")
+            t0 = time.time()
+            _SUPPORTING_PADDLE_INSTANCES[lang] = _init_paddle_engine(
+                PaddleOCR,
+                lang=lang,
+                use_doc_orientation_classify=False,
+                use_doc_unwarping=False,
+                use_textline_orientation=False,
+            )
+            _tlog(f"Supporting PaddleOCR singleton ({lang}) ready in {time.time() - t0:.1f}s.")
+    return _SUPPORTING_PADDLE_INSTANCES[lang]
+
+SUPPORTING_DOCS_POOL = _cf.ThreadPoolExecutor(max_workers=2, thread_name_prefix="supporting_ocr")
+_SUPPORTING_PAGE_SEMAPHORE = threading.Semaphore(4)
+
+
+def ocr_supporting_page(
+    page_idx: int,
+    total_pages: int,
+    rendered_img_path: str,
+    fitz_text: str = "",
+    pdf_path: str = None,
+    doc_type: str = "other",
+    enhance_ocr: bool = False,
+    vision_available: bool = True,
+    paddle_available: bool = True
+) -> tuple:
+    """
+    Fast-path hybrid OCR pipeline for a single page of a supporting document.
+    """
+    page_num = page_idx + 1
+    start = time.time()
+
+    # 1. Fast path: native digital text
+    if fitz_text and len(fitz_text.strip()) > 200:
+        native_lines = [l.strip() for l in fitz_text.split("\n") if l.strip()]
+        if not _looks_like_devanagari_mojibake(native_lines):
+            logger.info(f"[Supporting] Page {page_num}: PyMuPDF fast path ({len(native_lines)} lines)")
+            return native_lines, {
+                "page": page_num, "engine": "PyMuPDF", "dpi": 72,
+                "confidence": 1.0, "lines": len(native_lines)
+            }
+
+    if rendered_img_path is None or rendered_img_path == "error":
+        return [], {"page": page_num, "engine": "Error", "lines": 0}
+
+    try:
+        pil_img = Image.open(rendered_img_path).convert("RGB")
+    except Exception as e:
+        logger.error(f"[Supporting] Page {page_num}: Cannot open image: {e}")
+        return [], {"page": page_num, "engine": "Error", "lines": 0}
+
+    classification = classify_scanned_page(pil_img)
+    if classification == "blank":
+        return [], {"page": page_num, "engine": "Skipped-blank", "lines": 0}
+
+    pil_img = guard_and_downscale_image(pil_img)
+
+    lines = []
+    engine_used = ""
+    confidence = 0.0
+
+    page_lang = "hi" if doc_type == "lower_court" else "en"
+    if paddle_available:
+        if fitz_text and len(fitz_text.strip()) > 10:
+            dev_ratio = _devanagari_ratio(fitz_text)
+            page_lang = "hi" if dev_ratio >= 0.15 else "en"
+        else:
+            page_lang = detect_page_language_from_probe(pil_img, page_num=page_num)
+
+        t0 = time.time()
+        logger.info(f"[Supporting] Page {page_num}: Running PaddleOCR ({page_lang})")
+        
+        with _SUPPORTING_PADDLE_INFER_LOCK:
+            engine = get_supporting_ocr_instance(lang=page_lang)
+            results = engine.predict(rendered_img_path)
+
+        paddle_duration = time.time() - t0
+
+        paddle_lines = []
+        confs = []
+        if results:
+            res0 = results[0]
+            rec_texts = res0.get("rec_texts", []) if hasattr(res0, "get") else getattr(res0, "rec_texts", [])
+            rec_scores = res0.get("rec_scores", []) if hasattr(res0, "get") else getattr(res0, "rec_scores", [])
+            for t, s in zip(rec_texts or [], rec_scores or []):
+                if t and t.strip():
+                    paddle_lines.append(t)
+                    confs.append(s)
+
+        paddle_conf = np.mean(confs) if confs else 0.0
+        paddle_q = score_ocr_page_quality(paddle_lines)
+        paddle_good = _paddle_result_is_trustworthy(paddle_lines, paddle_conf, paddle_q)
+
+        should_escalate = False
+        if not paddle_good:
+            if doc_type == "lower_court":
+                should_escalate = True
+            elif enhance_ocr:
+                should_escalate = True
+
+        if should_escalate and vision_available and not _vision_is_paused():
+            logger.info(f"[Supporting] Page {page_num}: Paddle quality low (conf={paddle_conf:.2f}, q={paddle_q:.2f}) -> escalating to vision model")
+            processed_img = preprocess_for_vision(pil_img)
+            img_b64 = image_to_base64(processed_img, quality=85)
+            t0 = time.time()
+            raw_text = call_vision_model(img_b64, page_num=page_num)
+            vis_lines = [l.strip() for l in raw_text.split("\n") if l.strip()] if raw_text and raw_text.strip() != "[BLANK PAGE]" else []
+            if vis_lines:
+                lines, engine_used, confidence = vis_lines, OCR_VISION_MODEL, 0.90
+            else:
+                lines, engine_used, confidence = paddle_lines, "PaddleOCR", paddle_conf
+        else:
+            lines, engine_used, confidence = paddle_lines, "PaddleOCR", paddle_conf
+
+    if not lines:
+        t0 = time.time()
+        processed_img = preprocess_for_vision(pil_img)
+        lines = run_tesseract_fallback(processed_img)
+        engine_used = "Tesseract"
+        confidence = 0.70 if lines else 0.0
+
+    return lines, {
+        "page": page_num, "engine": engine_used,
+        "confidence": confidence, "lines": len(lines)
+    }
 
 
 def is_paddle_available() -> bool:
@@ -1101,6 +1245,23 @@ def ocr_page_with_vision(
     page_num = page_idx + 1
     start = time.time()
 
+    # ── 0. Check track detection OCR probe cache to prevent redundant OCR ──
+    from backend.track_detection import _OCR_PROBE_CACHE
+    cache_key = (pdf_path, page_num)
+    if pdf_path and cache_key in _OCR_PROBE_CACHE:
+        cached_lines, cached_lang = _OCR_PROBE_CACHE[cache_key]
+        elapsed = time.time() - start
+        logger.info(f"Page {page_num}: Reusing OCR lines from track probe cache ({len(cached_lines)} lines).")
+        return cached_lines, {
+            "page": page_num, "engine": f"PaddleOCR-cached ({cached_lang})", "dpi": 100,
+            "confidence": 0.9, "text_length": len(" ".join(cached_lines)),
+            "quality_score": 0.9, "preprocessing_applied": [],
+            "lines": len(cached_lines), "ocr_boxes": [],
+            "render_time": 0.0, "ocr_time": elapsed, "total_page_time": elapsed,
+            "confidence_untrusted": False,
+            "vision_cross_checked": False
+        }
+
     # ── 1. Fast path: trust fitz digital text ───────────────────────
     if fitz_text and len(fitz_text.strip()) > 200:
         keywords = ["court", "claimant", "petitioner", "respondent", "accident",
@@ -1489,37 +1650,46 @@ def _devanagari_ratio(text: str) -> float:
     return deva / len(alpha)
 
 
+def _save_full_page(pil_img) -> str:
+    tmp_path = os.path.join(tempfile.gettempdir(), f"_full_page_{uuid.uuid4().hex}.png")
+    pil_img.save(tmp_path, format="PNG")
+    return tmp_path
+
+
 def detect_page_language_from_probe(pil_img, page_num: int = 1) -> str:
-    """
-    Crops a small slice of the page image, runs both English and Hindi PaddleOCR,
-    and returns "hi" or "en" based on confidence and Devanagari content.
-    """
     width, height = pil_img.size
-    # Crop the middle 20% height of the page to avoid headers/footers
-    crop_box = (0, int(height * 0.4), width, int(height * 0.6))
+    # middle 60%, much less likely to land on whitespace
+    crop_box = (0, int(height * 0.20), width, int(height * 0.80))
     probe_img = pil_img.crop(crop_box)
-    
+
     tmp_path = os.path.join(tempfile.gettempdir(), f"_lang_probe_{uuid.uuid4().hex}.png")
     try:
         probe_img.save(tmp_path, format="PNG")
-        
-        # Run English probe
         lines_en, conf_en, _ = call_paddle_ocr(tmp_path, page_num=page_num, lang="en")
-        
-        # Run Hindi probe
         lines_hi, conf_hi, _ = call_paddle_ocr(tmp_path, page_num=page_num, lang="hi")
-        
-        text_en = " ".join(lines_en)
         text_hi = " ".join(lines_hi)
-        
         ratio_hi = _devanagari_ratio(text_hi)
-        
-        # If Hindi model detected Devanagari characters, and confidence is decent, it's Hindi
-        if ratio_hi >= 0.15 and conf_hi > 0.4:
-            chosen = "hi"
-        else:
-            chosen = "en"
-            
+
+        # NEW: if the probe genuinely found nothing on either pass, don't
+        # default to "en" — retry once on the full page before giving up.
+        if not lines_en and not lines_hi:
+            full_path = _save_full_page(pil_img)
+            try:
+                lines_hi2, conf_hi2, _ = call_paddle_ocr(
+                    full_path, page_num=page_num, lang="hi"
+                )
+                ratio_hi2 = _devanagari_ratio(" ".join(lines_hi2))
+                if ratio_hi2 >= 0.15 and conf_hi2 > 0.3:
+                    _tlog(f"Page {page_num}: full-page retry found Hindi (deva_ratio={ratio_hi2:.2f})")
+                    return "hi"
+            finally:
+                if os.path.exists(full_path):
+                    try:
+                        os.unlink(full_path)
+                    except Exception:
+                        pass
+
+        chosen = "hi" if (ratio_hi >= 0.15 and conf_hi > 0.4) else "en"
         _tlog(
             f"Page {page_num} lang probe: EN_conf={conf_en:.2f} (lines={len(lines_en)}), "
             f"HI_conf={conf_hi:.2f} (lines={len(lines_hi)}, deva_ratio={ratio_hi:.2f}). "
@@ -1528,7 +1698,7 @@ def detect_page_language_from_probe(pil_img, page_num: int = 1) -> str:
         return chosen
     except Exception as e:
         logger.warning(f"Language probe failed on page {page_num}: {e}")
-        return "hi"  # Default to "hi" (the project default)
+        return "hi"
     finally:
         if os.path.exists(tmp_path):
             try:
@@ -1966,6 +2136,16 @@ def perform_ocr_on_scanned_pdf(
             with _PAGE_MEMORY_SLOTS:
                 _wait_for_memory_headroom(page_num=idx + 1)
                 try:
+                    # Determine track for this page
+                    page_track = "high_court"
+                    if isinstance(track, list):
+                        for p in track:
+                            if p.get("page") == idx + 1:
+                                page_track = p.get("track", "high_court")
+                                break
+                    else:
+                        page_track = track
+
                     lines, meta = ocr_page_with_vision(
                         page_idx=idx,
                         total_pages=total_pages,
@@ -1974,7 +2154,7 @@ def perform_ocr_on_scanned_pdf(
                         pdf_path=file_path,
                         vision_available=vision_available,
                         paddle_available=paddle_available,
-                        track=track
+                        track=page_track
                     )
                 except Exception as e:
                     # Critical: without this, an exception on ANY single page
@@ -2348,14 +2528,34 @@ def run_background_pdf_indexing(file_id: str, temp_path: str, filename: str):
         BATCH_QUEUE[file_id]["progress"] = 20
 
         # Detect court level track
-        track_info = detect_case_track(temp_path)
-        track = track_info.get("track", "high_court")
+        from backend.track_detection import detect_case_track_per_page, TRACK_DECISION_SAMPLE_PAGES
+        track_per_page = detect_case_track_per_page(temp_path)
+
+        # Vote only on the front-matter pages -- see matching comment in the
+        # single-upload SSE endpoint for why voting across the whole bundle
+        # misclassifies HC appeals that annex the (Hindi) lower-court award.
+        voting_pages = track_per_page[:TRACK_DECISION_SAMPLE_PAGES] or track_per_page
+        hc_count = sum(1 for p in voting_pages if p["track"] == "high_court")
+        lc_count = len(voting_pages) - hc_count
+        track = "high_court" if hc_count >= lc_count else "lower_court"
+
+        hc_hits = sum(p["hc_hits"] for p in voting_pages)
+        lc_hits = sum(p["lc_hits"] for p in voting_pages)
+        avg_deva_ratio = sum(p["deva_ratio"] for p in voting_pages) / max(len(voting_pages), 1)
+        track_info = {
+            "track": track,
+            "hc_hits": hc_hits,
+            "lc_hits": lc_hits,
+            "devanagari_ratio": round(avg_deva_ratio, 3),
+            "sampled_pages": len(voting_pages),
+            "total_pages_in_bundle": len(track_per_page)
+        }
 
         text_lines = extract_digital_pdf_text(temp_path)
         fallback_source = "DigitalPDF"
         ocr_debug = _build_ocr_debug("DigitalPDF", 0, 1.0, [], [], [], "", 0.0,
                                       total_ocr_time=time.time() - start_time)
-        ocr_debug["track"] = track_info
+        ocr_debug["track"] = locals().get("track_info", {"track": locals().get("track", "high_court")})
 
         if is_extracted_text_sparse(text_lines):
             logger.info(f"Sparse digital text for {filename}. Running hybrid OCR (PaddleOCR + vision).")
@@ -2364,10 +2564,10 @@ def run_background_pdf_indexing(file_id: str, temp_path: str, filename: str):
             text_lines, ocr_debug = perform_ocr_on_scanned_pdf(
                 temp_path, progress_callback=report_progress,
                 scan_all_pages=True, original_filename=filename,
-                track=track
+                track=track_per_page
             )
             fallback_source = OCR_HYBRID_LABEL
-            ocr_debug["track"] = track_info
+            ocr_debug["track"] = locals().get("track_info", {"track": locals().get("track", "high_court")})
 
         if is_extracted_text_sparse(text_lines):
             alt_lines = extract_alternate_pdf_text(temp_path)
@@ -2441,7 +2641,7 @@ def run_background_pdf_indexing(file_id: str, temp_path: str, filename: str):
         if os.path.exists(temp_path):
             os.unlink(temp_path)
         BATCH_QUEUE[file_id].update({"status": "failed", "error": str(e)})
-        logger.error(f"Background task failed for {filename}: {e}")
+        logger.error(f"Background task failed for {filename}: {e}", exc_info=True)
 
 
 # ======================================================
@@ -2449,7 +2649,10 @@ def run_background_pdf_indexing(file_id: str, temp_path: str, filename: str):
 # ======================================================
 
 @router.post("/process-ocr")
-async def process_single_file(file: UploadFile = File(...)):
+async def process_single_file(
+    file: UploadFile = File(...),
+    case_session_id: str | None = Form(None)
+):
     """Streaming SSE endpoint: upload PDF/image → OCR → autofill suggestions."""
     file_ext = os.path.splitext(file.filename)[1].lower()
     allowed_images = {".png", ".jpg", ".jpeg", ".bmp"}
@@ -2486,9 +2689,33 @@ async def process_single_file(file: UploadFile = File(...)):
                 # to use — English HC bundles vs Hindi lower-court bundles.
                 yield f"data: {json.dumps({'status': 'routing', 'progress': 42, 'message': 'Detecting court level (High Court / Lower Court)...'})}\n\n"
                 await asyncio.sleep(0.01)
-                track_info = await asyncio.to_thread(detect_case_track, temp_path)
-                track = track_info["track"]
-                _tlog(f"[TRACK] {file.filename}: {track_info}")
+                from backend.track_detection import detect_case_track_per_page, TRACK_DECISION_SAMPLE_PAGES
+                track_per_page = await asyncio.to_thread(detect_case_track_per_page, temp_path)
+                # Only the front-matter pages (cause title / computer sheet / memo of
+                # appeal) decide the bundle's overall track. A High Court appeal
+                # always attaches a certified copy of the impugned lower-court award
+                # as an annexure -- in Hindi, and often more pages than the appeal
+                # memo itself -- so voting across the WHOLE document would let that
+                # annexure outvote the appeal's own front matter and misclassify an
+                # HC appeal bundle as "lower_court". Voting on the front matter only
+                # matches the "cheap, 1-3 low-DPI pages" design intent above.
+                voting_pages = track_per_page[:TRACK_DECISION_SAMPLE_PAGES] or track_per_page
+                hc_count = sum(1 for p in voting_pages if p["track"] == "high_court")
+                lc_count = len(voting_pages) - hc_count
+                track = "high_court" if hc_count >= lc_count else "lower_court"
+
+                hc_hits = sum(p["hc_hits"] for p in voting_pages)
+                lc_hits = sum(p["lc_hits"] for p in voting_pages)
+                avg_deva_ratio = sum(p["deva_ratio"] for p in voting_pages) / max(len(voting_pages), 1)
+                track_info = {
+                    "track": track,
+                    "hc_hits": hc_hits,
+                    "lc_hits": lc_hits,
+                    "devanagari_ratio": round(avg_deva_ratio, 3),
+                    "sampled_pages": len(voting_pages),
+                    "total_pages_in_bundle": len(track_per_page)
+                }
+                _tlog(f"[TRACK] {file.filename}: majority={track}, pages={len(track_per_page)}")
 
                 if is_extracted_text_sparse(text_lines):
                     page_event_queue = _queue.Queue()
@@ -2500,22 +2727,16 @@ async def process_single_file(file: UploadFile = File(...)):
 
                     if track == "lower_court":
                         yield f"data: {json.dumps({'status': 'ocr', 'progress': 50, 'message': 'Lower-court bundle detected — running hybrid OCR...'})}\n\n"
-                        await asyncio.sleep(0.01)
-                        ocr_future = loop.run_in_executor(
-                            None,
-                            lambda: perform_ocr_on_scanned_pdf(
-                                temp_path, page_callback=_page_cb, original_filename=file.filename, track="lower_court"
-                            )
-                        )
                     else:
                         yield f"data: {json.dumps({'status': 'ocr', 'progress': 50, 'message': 'Scanned PDF detected — running PaddleOCR + vision OCR...'})}\n\n"
-                        await asyncio.sleep(0.01)
-                        ocr_future = loop.run_in_executor(
-                            None,
-                            lambda: perform_ocr_on_scanned_pdf(
-                                temp_path, page_callback=_page_cb, original_filename=file.filename, track="high_court"
-                            )
+                    await asyncio.sleep(0.01)
+
+                    ocr_future = loop.run_in_executor(
+                        None,
+                        lambda: perform_ocr_on_scanned_pdf(
+                            temp_path, page_callback=_page_cb, original_filename=file.filename, track=track_per_page
                         )
+                    )
 
                     while not ocr_future.done():
                         await asyncio.sleep(0.1)
@@ -2535,7 +2756,7 @@ async def process_single_file(file: UploadFile = File(...)):
 
                     text_lines, ocr_debug = await ocr_future
                     fallback_source = OCR_HYBRID_LABEL
-                    ocr_debug["track"] = track_info
+                    ocr_debug["track"] = locals().get("track_info", {"track": locals().get("track", "high_court")})
 
                 if track == "high_court" and is_extracted_text_sparse(text_lines):
                     yield f"data: {json.dumps({'status': 'checking_alternate', 'progress': 65, 'message': 'Sparse text — trying alternate extraction...'})}\n\n"
@@ -2630,27 +2851,52 @@ async def process_single_file(file: UploadFile = File(...)):
                     "text": "\n".join(current_page_lines)
                 })
             
-            from backend.parser_heuristics import detect_document_sections, classify_enhancement_or_reduction
-            sections_meta = detect_document_sections(full_text, pages_list)
+            from backend.parser_heuristics import detect_document_sections_with_fallback, classify_enhancement_or_reduction
+            sections_meta = detect_document_sections_with_fallback(full_text, pages_list)
             sections_dict = {k: v["content"] for k, v in sections_meta.items()}
             sections_dict["raw_ocr"] = full_text
 
             heuristic_signal = suggestions.get("case_classification") or classify_enhancement_or_reduction(sections_dict)
 
-            from backend.llm_client import summarize_grounds_and_relief
-            summary_res = await asyncio.to_thread(
-                summarize_grounds_and_relief,
-                sections_dict,
-                heuristic_signal,
-                detected_case_type
+            from backend.vector_db import get_supporting_doc_text
+            supporting_docs = {}
+            if case_session_id:
+                supporting_docs = {
+                    "lower_court": get_supporting_doc_text(case_session_id, "lower_court"),
+                    "hospital_record": get_supporting_doc_text(case_session_id, "hospital_record")
+                }
+
+            from backend.llm_client import summarize_grounds_and_relief, generate_final_judicial_summary
+            summary_res, final_judicial_res = await asyncio.gather(
+                asyncio.to_thread(
+                    summarize_grounds_and_relief,
+                    sections_dict,
+                    heuristic_signal,
+                    detected_case_type
+                ),
+                asyncio.to_thread(
+                    generate_final_judicial_summary,
+                    sections_dict,
+                    heuristic_signal,
+                    detected_case_type,
+                    supporting_docs
+                )
             )
             formatted_suggestions["grounds_relief_summary"] = summary_res
+            formatted_suggestions["final_judicial_summary"] = final_judicial_res
 
 
             # Index document into Qdrant in background so Chat Assistant works for this file
             try:
                 from backend.vector_db import index_document
-                asyncio.create_task(asyncio.to_thread(index_document, file.filename, text_lines, suggestions))
+                asyncio.create_task(asyncio.to_thread(
+                    index_document,
+                    file.filename,
+                    text_lines,
+                    suggestions,
+                    case_session_id,
+                    "hc_judgment"
+                ))
             except Exception as index_err:
                 logger.error(f"Failed to index single document {file.filename}: {index_err}")
 
@@ -2658,11 +2904,216 @@ async def process_single_file(file: UploadFile = File(...)):
                 os.unlink(temp_path)
                 temp_path = None
 
-            yield f"data: {json.dumps({'status': 'done', 'progress': 100, 'success': True, 'filename': file.filename, 'ocr_status': 'loaded', 'fallback_source': fallback_source, 'suggestions': formatted_suggestions, 'case_type': detected_case_type, 'track': active_track, 'raw_text': text_lines, 'ocr_debug': ocr_debug, 'grounds_relief_summary': summary_res})}\n\n"
+            yield f"data: {json.dumps({'status': 'done', 'progress': 100, 'success': True, 'filename': file.filename, 'ocr_status': 'loaded', 'fallback_source': fallback_source, 'suggestions': formatted_suggestions, 'case_type': detected_case_type, 'track': active_track, 'raw_text': text_lines, 'ocr_debug': ocr_debug, 'grounds_relief_summary': summary_res, 'final_judicial_summary': final_judicial_res})}\n\n"
+
 
 
         except Exception as e:
-            logger.error(f"Streaming OCR error: {e}")
+            logger.error(f"Streaming OCR error: {e}", exc_info=True)
+            if temp_path and os.path.exists(temp_path):
+                try:
+                    os.unlink(temp_path)
+                except Exception:
+                    pass
+            yield f"data: {json.dumps({'status': 'failed', 'progress': 100, 'success': False, 'message': str(e)})}\n\n"
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"}
+    )
+
+
+@router.post("/process-supporting-doc")
+async def process_supporting_doc(
+    file: UploadFile = File(...),
+    doc_type: str = Form(...),
+    case_session_id: str = Form(...),
+    enhance_ocr: str = Form("false")
+):
+    """
+    Streaming SSE endpoint: upload supporting PDF/image → OCR (fast path) → Qdrant indexing.
+    """
+    file_ext = os.path.splitext(file.filename)[1].lower()
+    allowed_images = {".png", ".jpg", ".jpeg", ".bmp"}
+    allowed_docs = {".pdf"}
+    if file_ext not in allowed_images and file_ext not in allowed_docs:
+        raise HTTPException(status_code=400, detail="Only PNG, JPG, BMP and PDF formats are supported.")
+
+    enhance_bool = enhance_ocr.lower() == "true"
+
+    async def event_generator():
+        temp_path = None
+        try:
+            yield f"data: {json.dumps({'status': 'saving', 'progress': 5, 'message': 'Saving upload...'})}\n\n"
+            await asyncio.sleep(0.01)
+
+            def save_to_temp():
+                with tempfile.NamedTemporaryFile(delete=False, suffix=file_ext) as tmp:
+                    shutil.copyfileobj(file.file, tmp)
+                    return tmp.name
+            temp_path = await asyncio.to_thread(save_to_temp)
+
+            start_time = time.time()
+            vision_available = is_vision_model_available()
+            paddle_available = is_paddle_available()
+
+            # Handle PDF
+            if file_ext == ".pdf":
+                # Pre-cache fitz text
+                fitz_text_cache = []
+                try:
+                    import fitz
+                    with fitz.open(temp_path) as doc:
+                        fitz_text_cache = [page.get_text() for page in doc]
+                except Exception as e:
+                    logger.warning(f"fitz pre-cache failed: {e}")
+
+                with pdfium.PdfDocument(temp_path) as tmp_doc:
+                    total_pages = len(tmp_doc)
+                
+                yield f"data: {json.dumps({'status': 'rendering', 'progress': 20, 'message': f'Rendering {total_pages} page(s)...'})}\n\n"
+                await asyncio.sleep(0.01)
+
+                render_dir = tempfile.mkdtemp(prefix="ocr_render_supp_")
+                rendered_paths = {}
+                render_dpi = OCR_RENDER_DPI if doc_type == "lower_court" else 90
+                scale = render_dpi / 72.0
+
+                digital_idxs = []
+                render_idxs = []
+                for idx in range(total_pages):
+                    ft = fitz_text_cache[idx] if idx < len(fitz_text_cache) else ""
+                    if ft and len(ft.strip()) > 200:
+                        native_lines = [l.strip() for l in ft.split("\n") if l.strip()]
+                        if not _looks_like_devanagari_mojibake(native_lines):
+                            digital_idxs.append(idx)
+                            continue
+                    render_idxs.append(idx)
+
+                for idx in digital_idxs:
+                    rendered_paths[idx] = None
+
+                def render_one_page(idx):
+                    try:
+                        with _PDFIUM_LOCK:
+                            with pdfium.PdfDocument(temp_path) as doc:
+                                page_obj = doc[idx]
+                                bitmap = page_obj.render(scale=scale)
+                                pil_img = bitmap.to_pil()
+                                del bitmap, page_obj
+                        pil_img = guard_and_downscale_image(pil_img)
+                        img_path = os.path.join(render_dir, f"page_{idx:04d}.png")
+                        pil_img.save(img_path, format="PNG")
+                        del pil_img
+                        return idx, img_path
+                    except Exception as e:
+                        logger.error(f"Render failed page {idx+1}: {e}")
+                        return idx, "error"
+
+                if render_idxs:
+                    # Run rendering on the dedicated supporting docs executor pool
+                    loop = asyncio.get_event_loop()
+                    render_futures = [
+                        loop.run_in_executor(SUPPORTING_DOCS_POOL, render_one_page, idx)
+                        for idx in render_idxs
+                    ]
+                    results = await asyncio.gather(*render_futures)
+                    for idx, img_path in results:
+                        rendered_paths[idx] = img_path
+
+                yield f"data: {json.dumps({'status': 'ocr', 'progress': 40, 'message': 'Running fast-path OCR...'})}\n\n"
+                await asyncio.sleep(0.01)
+
+                # Process pages
+                text_lines = []
+                loop = asyncio.get_event_loop()
+                
+                pages_done = 0
+                for idx in range(total_pages):
+                    ft = fitz_text_cache[idx] if idx < len(fitz_text_cache) else ""
+                    img_path = rendered_paths.get(idx, "error")
+
+                    # Run page OCR page-by-page inside the executor, throttling memory
+                    async def run_page_ocr():
+                        with _SUPPORTING_PAGE_SEMAPHORE:
+                            return await loop.run_in_executor(
+                                SUPPORTING_DOCS_POOL,
+                                ocr_supporting_page,
+                                idx,
+                                total_pages,
+                                img_path,
+                                ft,
+                                temp_path,
+                                doc_type,
+                                enhance_bool,
+                                vision_available,
+                                paddle_available
+                            )
+                    
+                    lines, meta = await run_page_ocr()
+                    text_lines.append(f"--- PAGE {idx + 1} ---")
+                    text_lines.extend(lines)
+                    
+                    pages_done += 1
+                    progress_val = 40 + int((pages_done / total_pages) * 40)
+                    yield f"data: {json.dumps({'status': 'page_progress', 'progress': progress_val, 'message': f'Processed page {pages_done}/{total_pages}'})}\n\n"
+                    await asyncio.sleep(0.01)
+
+                if os.path.exists(render_dir):
+                    try:
+                        shutil.rmtree(render_dir)
+                    except Exception:
+                        pass
+            
+            # Handle Image
+            else:
+                yield f"data: {json.dumps({'status': 'ocr', 'progress': 40, 'message': 'Running PaddleOCR on image...'})}\n\n"
+                await asyncio.sleep(0.01)
+                
+                loop = asyncio.get_event_loop()
+                def run_img_ocr():
+                    with _SUPPORTING_PAGE_SEMAPHORE:
+                        with _SUPPORTING_PADDLE_INFER_LOCK:
+                            engine = get_supporting_ocr_instance(lang="en")
+                            results = engine.predict(temp_path)
+                        lines = []
+                        if results:
+                            res0 = results[0]
+                            rec_texts = res0.get("rec_texts", []) if hasattr(res0, "get") else getattr(res0, "rec_texts", [])
+                            for t in (rec_texts or []):
+                                if t and t.strip():
+                                    lines.append(t)
+                        return lines
+                
+                raw_lines = await loop.run_in_executor(SUPPORTING_DOCS_POOL, run_img_ocr)
+                text_lines = ["--- PAGE 1 ---"] + raw_lines
+
+            yield f"data: {json.dumps({'status': 'indexing', 'progress': 90, 'message': 'Indexing document in Qdrant...'})}\n\n"
+            await asyncio.sleep(0.01)
+
+            # Index document into Qdrant in background (fire-and-forget)
+            try:
+                from backend.vector_db import index_document
+                asyncio.create_task(asyncio.to_thread(
+                    index_document, 
+                    file.filename, 
+                    text_lines, 
+                    None, 
+                    case_session_id, 
+                    doc_type
+                ))
+            except Exception as index_err:
+                logger.error(f"Failed to index supporting document {file.filename}: {index_err}")
+
+            if temp_path and os.path.exists(temp_path):
+                os.unlink(temp_path)
+                temp_path = None
+
+            yield f"data: {json.dumps({'status': 'done', 'progress': 100, 'success': True, 'filename': file.filename, 'raw_text': text_lines})}\n\n"
+
+        except Exception as e:
+            logger.error(f"Streaming supporting OCR error: {e}")
             if temp_path and os.path.exists(temp_path):
                 try:
                     os.unlink(temp_path)
@@ -2756,6 +3207,7 @@ from pydantic import BaseModel
 class AIRecoverRequest(BaseModel):
     raw_text: list[str]
     track: str = None   # optional: "high_court" | "lower_court" — inferred from text if omitted
+    case_session_id: str = None
 
 @router.post("/ai-recover")
 async def ai_recover_fields(request: AIRecoverRequest):
@@ -2798,30 +3250,167 @@ async def ai_recover_fields(request: AIRecoverRequest):
                 else:
                     recovered_data["confidence_scores"][field] = {"confidence": 0.85, "reason": "Merged from heuristics parser"}
 
-        from backend.parser_heuristics import format_suggestions_for_calculator, detect_document_sections, classify_enhancement_or_reduction
+        from backend.parser_heuristics import format_suggestions_for_calculator, detect_document_sections_with_fallback, classify_enhancement_or_reduction
         formatted = format_suggestions_for_calculator(recovered_data)
 
         # Generate or attach grounds & relief summary so autofill preserves it
-        sections_meta = detect_document_sections(full_text, [])
+        sections_meta = detect_document_sections_with_fallback(full_text, [])
         sections_dict = {k: v["content"] for k, v in sections_meta.items()}
         sections_dict["raw_ocr"] = full_text
         heuristic_signal = heuristics_data.get("case_classification") or classify_enhancement_or_reduction(sections_dict)
 
-        from backend.llm_client import summarize_grounds_and_relief
-        summary_res = summarize_grounds_and_relief(
-            sections_dict,
-            heuristic_signal,
-            recovered_data.get("case_type") or "death"
-        )
-        formatted["grounds_relief_summary"] = summary_res
-        recovered_data["grounds_relief_summary"] = summary_res
+        # Fetch supporting docs
+        from backend.vector_db import get_supporting_doc_text
+        supporting_docs = {}
+        if request.case_session_id:
+            supporting_docs = {
+                "lower_court": get_supporting_doc_text(request.case_session_id, "lower_court"),
+                "hospital_record": get_supporting_doc_text(request.case_session_id, "hospital_record")
+            }
 
-        return {"success": True, "suggestions": formatted, "raw_recovered": recovered_data, "grounds_relief_summary": summary_res}
+        from backend.llm_client import summarize_grounds_and_relief, generate_final_judicial_summary
+        case_tp = recovered_data.get("case_type") or "death"
+        summary_res = summarize_grounds_and_relief(sections_dict, heuristic_signal, case_tp)
+        final_judicial_res = generate_final_judicial_summary(
+            sections_dict, heuristic_signal, case_tp, supporting_docs=supporting_docs
+        )
+
+        formatted["grounds_relief_summary"] = summary_res
+        formatted["final_judicial_summary"] = final_judicial_res
+        recovered_data["grounds_relief_summary"] = summary_res
+        recovered_data["final_judicial_summary"] = final_judicial_res
+
+        return {
+            "success": True,
+            "suggestions": formatted,
+            "raw_recovered": recovered_data,
+            "grounds_relief_summary": summary_res,
+            "final_judicial_summary": final_judicial_res
+        }
+
     except HTTPException:
         raise
     except Exception as e:
         logger.error(f"AI recovery error: {e}")
         raise HTTPException(status_code=500, detail=f"AI recovery failed: {e}")
+
+
+class RefreshJudicialSummaryRequest(BaseModel):
+    raw_text: list[str]
+    case_session_id: str
+    track: str = None
+    case_type: str = "death"
+    force_refresh: bool = False
+
+
+# --- In-memory cache for the final judicial summary -------------------------
+# Keyed on a hash of everything that actually influences the LLM output
+# (case_session_id + track + case_type + the OCR text itself, plus whatever
+# supporting-doc text is indexed for that session at cache-build time). This
+# guarantees that clicking "Check Judicial Analysis" repeatedly on the same
+# document returns the exact same report instead of re-invoking the LLM and
+# risking a differently-worded (or differently-reasoned) summary each time.
+# The cache is intentionally process-local/in-memory (no persistence) since
+# it only needs to live for the duration of a single review session.
+_JUDICIAL_SUMMARY_CACHE: dict = {}
+_JUDICIAL_SUMMARY_CACHE_LOCK = threading.Lock()
+_JUDICIAL_SUMMARY_CACHE_MAX_ENTRIES = 200
+
+
+def _make_judicial_summary_cache_key(case_session_id: str, track: str, case_type: str,
+                                      full_text: str, supporting_docs: dict) -> str:
+    import hashlib
+    hasher = hashlib.sha256()
+    hasher.update((case_session_id or "").encode("utf-8", "ignore"))
+    hasher.update(b"|")
+    hasher.update((track or "").encode("utf-8", "ignore"))
+    hasher.update(b"|")
+    hasher.update((case_type or "").encode("utf-8", "ignore"))
+    hasher.update(b"|")
+    hasher.update(full_text.encode("utf-8", "ignore"))
+    for key in sorted(supporting_docs.keys()):
+        hasher.update(b"|")
+        hasher.update(key.encode("utf-8", "ignore"))
+        hasher.update(b":")
+        hasher.update((supporting_docs.get(key) or "").encode("utf-8", "ignore"))
+    return hasher.hexdigest()
+
+
+@router.post("/refresh-judicial-summary")
+async def refresh_judicial_summary(request: RefreshJudicialSummaryRequest):
+    """
+    Lightweight endpoint to refresh the final judicial summary without re-running
+    full AI fields recovery.
+
+    Cached: the first successful run for a given (session, track, case_type,
+    OCR text, supporting-doc text) combination is stored in-memory. Every
+    subsequent call with the same inputs returns the cached report instead of
+    calling the LLM again, so the "Check Judicial Analysis" button always
+    shows the same report for the same document. Pass force_refresh=true to
+    bypass the cache and regenerate.
+    """
+    try:
+        full_text = "\n".join(request.raw_text)
+        track = request.track
+        if not track:
+            from backend.track_detection import _devanagari_ratio
+            track = "lower_court" if _devanagari_ratio(full_text) >= 0.30 else "high_court"
+
+        from backend.vector_db import get_supporting_doc_text
+        supporting_docs = {
+            "lower_court": get_supporting_doc_text(request.case_session_id, "lower_court"),
+            "hospital_record": get_supporting_doc_text(request.case_session_id, "hospital_record")
+        }
+
+        cache_key = _make_judicial_summary_cache_key(
+            request.case_session_id, track, request.case_type, full_text, supporting_docs
+        )
+
+        if not request.force_refresh:
+            with _JUDICIAL_SUMMARY_CACHE_LOCK:
+                cached = _JUDICIAL_SUMMARY_CACHE.get(cache_key)
+            if cached is not None:
+                logger.info(f"Judicial summary cache hit for session {request.case_session_id}")
+                return {
+                    "success": True,
+                    "final_judicial_summary": cached["final_judicial_summary"],
+                    "case_classification": cached["case_classification"],
+                    "cached": True
+                }
+
+        from backend.parser_heuristics import detect_document_sections_with_fallback, classify_enhancement_or_reduction
+        sections_meta = detect_document_sections_with_fallback(full_text, [])
+        sections_dict = {k: v["content"] for k, v in sections_meta.items()}
+        sections_dict["raw_ocr"] = full_text
+
+        from backend.llm_client import generate_final_judicial_summary
+        heuristic_signal = classify_enhancement_or_reduction(sections_dict)
+
+        final_judicial_res = generate_final_judicial_summary(
+            sections_dict,
+            heuristic_signal,
+            request.case_type,
+            supporting_docs=supporting_docs
+        )
+
+        with _JUDICIAL_SUMMARY_CACHE_LOCK:
+            if len(_JUDICIAL_SUMMARY_CACHE) >= _JUDICIAL_SUMMARY_CACHE_MAX_ENTRIES:
+                # Evict oldest entry (dicts preserve insertion order in py3.7+)
+                _JUDICIAL_SUMMARY_CACHE.pop(next(iter(_JUDICIAL_SUMMARY_CACHE)))
+            _JUDICIAL_SUMMARY_CACHE[cache_key] = {
+                "final_judicial_summary": final_judicial_res,
+                "case_classification": heuristic_signal
+            }
+
+        return {
+            "success": True,
+            "final_judicial_summary": final_judicial_res,
+            "case_classification": heuristic_signal,
+            "cached": False
+        }
+    except Exception as e:
+        logger.error(f"Error in refresh-judicial-summary: {e}")
+        raise HTTPException(status_code=500, detail=f"Refresh failed: {e}")
 
 
 class SuggestCaseTypeRequest(BaseModel):

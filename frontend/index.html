@@ -14,7 +14,7 @@
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     
     <!-- Custom Application Styling (style.css) -->
-    <link rel="stylesheet" href="style.css?v=2.0.0">
+    <link rel="stylesheet" href="style.css?v=2.1.0">
 </head>
 <body>
     
@@ -88,6 +88,12 @@
                             <span>⏱</span>
                             <span id="header-ocr-timer-elapsed">Ready</span>
                         </span>
+                        <!-- Small non-blocking processing indicator: hidden by default, shown only
+                             while OCR is running. The person can scroll/interact with the page freely. -->
+                        <span class="header-badge" id="header-ocr-processing-badge" style="display: none; align-items: center; gap: 8px; font-family: 'Inter', sans-serif; font-weight: 500; font-size: 0.85rem; color: var(--color-primary); background: rgba(11, 58, 114, 0.06); border: 1px solid var(--border-glass);">
+                            <i class="fa-solid fa-spinner fa-spin" style="font-size: 0.8rem;"></i>
+                            <span>Please wait while we are processing the document</span>
+                        </span>
                     </div>
                     <!-- Connection and Server Status display -->
                     <div style="display: flex; align-items: center; gap: 10px;">
@@ -132,13 +138,12 @@
                             <!-- Single PDF Drag & Drop Uploader (shown after case type selection)
                                  Directly feeds a PDF judgment or claim sheet into the local PaddleOCR pipeline. -->
                             <div id="single-upload-section" class="form-group full-width show-flex">
-                                <label class="main-label">Upload Case PDF for AI Auto-Fill</label>
-                                <div id="single-drop-zone" class="single-drop-zone">
-                                    <div class="single-drop-zone-content full-only">
-                                        <i class="fa-solid fa-file-pdf single-drop-icon" style="color: var(--color-danger); font-size: 2.2rem; margin-bottom: 8px;"></i>
-                                        <p class="single-drop-title">Drag & Drop case PDF here or click to browse</p>
-                                        <p class="single-drop-subtitle">Runs PaddleOCR to autofill previous judgment, petition, and prayer details</p>
-                                        <span class="btn btn-small btn-secondary" style="margin-top: 6px;">Select Document</span>
+                                <label class="main-label">Case Documents</label>
+                                <div style="display: flex; gap: 10px; align-items: stretch; margin-bottom: 4px;">
+                                <div id="single-drop-zone" class="single-drop-zone" style="flex: 1; min-height: 0; padding: 14px 16px;">
+                                    <div class="single-drop-zone-content full-only" style="flex-direction: row; gap: 10px; padding: 0; margin: 0;">
+                                        <i class="fa-solid fa-file-pdf single-drop-icon" style="color: var(--color-danger); font-size: 1.3rem; margin: 0;"></i>
+                                        <span style="font-weight: 700; font-size: 0.88rem; color: var(--text-primary);">Upload Court File</span>
                                     </div>
                                     <div class="compact-only" style="display: none;">
                                         <div style="display: flex; align-items: center; justify-content: space-between; width: 100%; gap: 12px; padding: 12px 16px;">
@@ -152,6 +157,28 @@
                                         </div>
                                     </div>
                                     <input type="file" id="single-file-input" accept="application/pdf" style="display: none;">
+                                </div>
+
+                                <button type="button" id="add-supporting-docs-btn" class="btn btn-secondary" style="flex: 1; display: inline-flex; align-items: center; justify-content: center; gap: 8px; padding: 14px 16px; font-size: 0.88rem; font-weight: 700; border-radius: var(--radius-sm);">
+                                    <i class="fa-solid fa-folder-open"></i> Upload Supporting Document
+                                </button>
+                                </div>
+
+                                <!-- Supporting Documents Section: always visible now, no longer
+                                     gated behind the main court file finishing first. -->
+                                <div id="supporting-docs-section" style="display: block;">
+                                    <input type="file" id="supporting-docs-input" accept="application/pdf,image/png,image/jpeg" multiple style="display: none;">
+                                    <div id="supporting-docs-chips" class="supporting-docs-chips-container" style="display: flex; flex-direction: column; gap: 8px; margin-bottom: 12px;"></div>
+                                </div>
+
+                                <!-- Judicial Analysis: explicit, on-demand comparison of the High
+                                     Court file against any supporting (lower court / hospital) docs.
+                                     Does not auto-run — only when the button below is clicked. -->
+                                <div id="judicial-analysis-section" style="margin-bottom: 12px;">
+                                    <button type="button" id="check-judicial-analysis-btn" class="btn btn-secondary" style="width: 100%; display: inline-flex; align-items: center; justify-content: center; gap: 8px; padding: 12px 16px; font-size: 0.85rem; font-weight: 700; border-radius: var(--radius-sm);">
+                                        <i class="fa-solid fa-scale-balanced"></i> Check Judicial Analysis
+                                    </button>
+                                    <div id="judicial-analysis-result" style="margin-top: 10px; display: none;"></div>
                                 </div>
                                 
                                 <!-- Premium Live OCR Timer Container
@@ -495,6 +522,12 @@
                         </form>
 
 
+                    </div>
+
+                    <!-- Drag Handle: Resizes the Case Parameters / PDF Preview split.
+                         Double-click resets to the default 55/45 split. -->
+                    <div class="panel-resizer" id="calculator-panel-resizer" title="Drag to resize &middot; Double-click to reset">
+                        <div class="panel-resizer-grip"><i class="fa-solid fa-grip-lines-vertical"></i></div>
                     </div>
 
                     <!-- Right: Dynamic Legal Precedents & Live Preview -->
@@ -884,6 +917,6 @@
     </div>
  
     <!-- Core App Logic -->
-    <script src="app.js"></script>
+    <script src="app.js?v=2.1.0"></script>
 </body>
 </html>
