@@ -3412,16 +3412,18 @@ This cannot be undone.`)) return;
         }
 
 
-        // Always append Auto-fill button at the bottom
-        innerHTML += `
-            <div style="margin-top: 14px; border-top: 1px solid rgba(255,255,255,0.06); padding-top: 12px; display: flex; justify-content: center;">
+        container.innerHTML = innerHTML;
+
+        // Render Auto-fill button inside the dedicated container below Check Judicial Analysis
+        const autofillContainer = document.getElementById("autofill-button-container");
+        if (autofillContainer) {
+            autofillContainer.style.display = "block";
+            autofillContainer.innerHTML = `
                 <button type="button" id="btn-trigger-autofill" class="btn btn-success" style="width: 100%; font-weight: 700; display: flex; align-items: center; justify-content: center; gap: 8px; font-size: 0.82rem; padding: 10px 14px; border-radius: var(--radius-sm); border: none; cursor: pointer; transition: all var(--transition-fast) ease;">
                     <i class="fa-solid fa-magic"></i> Auto-fill Workstation Form
                 </button>
-            </div>
-        `;
-
-        container.innerHTML = innerHTML;
+            `;
+        }
 
 
 
@@ -3577,6 +3579,12 @@ This cannot be undone.`)) return;
         if (suggestionDiv) {
             suggestionDiv.innerHTML = "";
             suggestionDiv.classList.add("hidden-section");
+        }
+
+        const autofillContainer = document.getElementById("autofill-button-container");
+        if (autofillContainer) {
+            autofillContainer.innerHTML = "";
+            autofillContainer.style.display = "none";
         }
 
         // Clear all live calculated dashboard elements back to hyphens
@@ -4511,10 +4519,10 @@ This cannot be undone.`)) return;
         });
     }
 
-    // Delegated click handler on case-type-suggestion container for the Auto-fill button
-    const caseTypeSuggestion = document.getElementById("case-type-suggestion");
-    if (caseTypeSuggestion) {
-        caseTypeSuggestion.addEventListener("click", async (e) => {
+    // Delegated click handler on autofill-button-container for the Auto-fill button
+    const autofillContainer = document.getElementById("autofill-button-container");
+    if (autofillContainer) {
+        autofillContainer.addEventListener("click", async (e) => {
             const btn = e.target.closest("#btn-trigger-autofill");
             if (btn) {
                 e.preventDefault();
