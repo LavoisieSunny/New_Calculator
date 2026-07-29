@@ -1954,9 +1954,10 @@ def generate_final_judicial_summary(sections: dict, heuristic_signal: dict = Non
                 "summary_source": "mislabeled_input"
             }
 
-        from backend.parser_heuristics import detect_document_sections_with_fallback, classify_page_type
+        from backend.parser_heuristics import detect_document_sections_with_fallback, classify_page_type, segment_text_lines_into_pages
 
-        lc_sections_meta = detect_document_sections_with_fallback(lower_court_text, [])
+        lc_pages = segment_text_lines_into_pages(lower_court_text.split("\n"))
+        lc_sections_meta = detect_document_sections_with_fallback(lower_court_text, lc_pages)
         lc_sections = {k: v["content"] for k, v in lc_sections_meta.items()}
         lc_issues_raw = (lc_sections.get("issues_findings_section", "") or "").strip()
         lc_award_raw = (lc_sections.get("award_operative_section", "") or lc_sections.get("award_copy_section", "") or "").strip()

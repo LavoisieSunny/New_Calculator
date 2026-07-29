@@ -3264,11 +3264,12 @@ async def ai_recover_fields(request: AIRecoverRequest):
                 else:
                     recovered_data["confidence_scores"][field] = {"confidence": 0.85, "reason": "Merged from heuristics parser"}
 
-        from backend.parser_heuristics import format_suggestions_for_calculator, detect_document_sections_with_fallback, classify_enhancement_or_reduction
+        from backend.parser_heuristics import format_suggestions_for_calculator, detect_document_sections_with_fallback, classify_enhancement_or_reduction, segment_text_lines_into_pages
         formatted = format_suggestions_for_calculator(recovered_data)
 
         # Generate or attach grounds & relief summary so autofill preserves it
-        sections_meta = detect_document_sections_with_fallback(full_text, [])
+        pages_for_sections = segment_text_lines_into_pages(request.raw_text)
+        sections_meta = detect_document_sections_with_fallback(full_text, pages_for_sections)
         sections_dict = {k: v["content"] for k, v in sections_meta.items()}
         sections_dict["raw_ocr"] = full_text
         heuristic_signal = heuristics_data.get("case_classification") or classify_enhancement_or_reduction(sections_dict)
@@ -3386,8 +3387,9 @@ async def refresh_judicial_summary(request: RefreshJudicialSummaryRequest):
                     "cached": True
                 }
 
-        from backend.parser_heuristics import detect_document_sections_with_fallback, classify_enhancement_or_reduction
-        sections_meta = detect_document_sections_with_fallback(full_text, [])
+        from backend.parser_heuristics import detect_document_sections_with_fallback, classify_enhancement_or_reduction, segment_text_lines_into_pages
+        pages_for_sections = segment_text_lines_into_pages(request.raw_text)
+        sections_meta = detect_document_sections_with_fallback(full_text, pages_for_sections)
         sections_dict = {k: v["content"] for k, v in sections_meta.items()}
         sections_dict["raw_ocr"] = full_text
 
