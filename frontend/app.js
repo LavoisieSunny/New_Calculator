@@ -5028,6 +5028,14 @@ This cannot be undone.`)) return;
                                 previewBtn.style.display = "inline-flex";
                             }
 
+                            // A new (or changed) supporting document just finished indexing --
+                            // any previously cached judicial-analysis report is now stale, since
+                            // it was generated without this document's content. Invalidate the
+                            // client-side cache so the next click is forced to hit the backend
+                            // (which will itself only skip regeneration if its OWN cache key --
+                            // which DOES include supporting-doc text -- still matches).
+                            judicialAnalysisCache.clear();
+
                             // If the user already clicked "Check Judicial Analysis" and it's sitting
                             // in the "Processing the file..." state waiting on this document, auto
                             // re-run the check now that OCR just finished.
