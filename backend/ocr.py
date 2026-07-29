@@ -3065,26 +3065,43 @@ async def process_supporting_doc(
             
             # Handle Image
             else:
-                yield f"data: {json.dumps({'status': 'ocr', 'progress': 40, 'message': 'Running PaddleOCR on image...'})}\n\n"
+                yield f"data: {json.dumps({'status': 'ocr', 'progress': 40, 'message': 'Running OCR on image...'})}\n\n"
                 await asyncio.sleep(0.01)
-                
+
                 loop = asyncio.get_event_loop()
+
                 def run_img_ocr():
+                    # Route through the same hybrid single-page pipeline used for
+                    # rendered PDF pages: CLAHE preprocessing + downscaling,
+                    # blank-page skip, language auto-detection, Paddle quality
+                    # scoring, escalation to the vision model on low-confidence
+                    # results, and a Tesseract fallback if Paddle finds nothing.
                     with _SUPPORTING_PAGE_SEMAPHORE:
-                        with _SUPPORTING_PADDLE_INFER_LOCK:
-                            engine = get_supporting_ocr_instance(lang="en")
-                            results = engine.predict(temp_path)
-                        lines = []
-                        if results:
-                            res0 = results[0]
-                            rec_texts = res0.get("rec_texts", []) if hasattr(res0, "get") else getattr(res0, "rec_texts", [])
-                            for t in (rec_texts or []):
-                                if t and t.strip():
-                                    lines.append(t)
-                        return lines
-                
-                raw_lines = await loop.run_in_executor(SUPPORTING_DOCS_POOL, run_img_ocr)
+                        return ocr_supporting_page(
+                            page_idx=0,
+                            total_pages=1,
+                            rendered_img_path=temp_path,
+                            fitz_text="",
+                            pdf_path=None,
+                            doc_type=doc_type,
+                            enhance_ocr=enhance_bool,
+                            vision_available=vision_available,
+                            paddle_available=paddle_available
+                        )
+
+                raw_lines, ocr_meta = await loop.run_in_executor(SUPPORTING_DOCS_POOL, run_img_ocr)
                 text_lines = ["--- PAGE 1 ---"] + raw_lines
+                logger.info(
+                    f"[Supporting] Image upload OCR for {file.filename}: "
+                    f"engine={ocr_meta.get('engine')}, confidence={ocr_meta.get('confidence')}, "
+                    f"lines={ocr_meta.get('lines')}"
+                )
+                if not raw_lines:
+                    logger.warning(
+                        f"[Supporting] Image upload {file.filename} produced NO extracted text "
+                        f"even after fallback -- this document will be indexed empty and cannot "
+                        f"contribute facts to the judicial summary."
+                    )
 
             yield f"data: {json.dumps({'status': 'indexing', 'progress': 90, 'message': 'Indexing document in Qdrant...'})}\n\n"
             await asyncio.sleep(0.01)

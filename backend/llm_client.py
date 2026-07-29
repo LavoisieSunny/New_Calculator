@@ -2042,6 +2042,32 @@ def generate_final_judicial_summary(sections: dict, heuristic_signal: dict = Non
 
     # Step 3: deterministic fuzzy matcher -> candidate list for the LLM to verify
     candidate_discrepancies = find_missing_claims(grounds_claims, trial_claims)
+
+    # Step 3b: same deterministic matcher, but for supporting medical/diagnostic
+    # evidence (X-ray, USG, CT, discharge cards, etc.) against the trial court
+    # record. A clinical finding on an uploaded report may never appear in the
+    # HC grounds text at all, so it needs its own direct check against the
+    # trial court text rather than riding on the grounds-vs-trial check above.
+    medical_discrepancies = []
+    if medical_evidence_text and medical_evidence_text.strip() and not medical_evidence_text.startswith("(No supporting"):
+        medical_claims = validate_claims_shape(
+            extract_claims(medical_evidence_text, case_type=case_type,
+                           source_label="supporting medical/diagnostic evidence").get("claims", [])
+        )
+        medical_discrepancies = find_missing_claims(medical_claims, trial_claims)
+        for d in medical_discrepancies:
+            d["note"] = (
+                "Documented in an uploaded supporting medical/diagnostic report but not "
+                "reflected in the trial court's issues/award text. " + d["note"]
+            )
+
+    seen_claims = {c["claim"].strip().lower() for c in candidate_discrepancies}
+    for d in medical_discrepancies:
+        key = d["claim"].strip().lower()
+        if key not in seen_claims:
+            candidate_discrepancies.append(d)
+            seen_claims.add(key)
+
     candidate_hint = "\n".join(
         f"- {d['claim']} ({d['category']})" for d in candidate_discrepancies
     ) or "(none flagged by automated matcher)"
