@@ -4757,6 +4757,7 @@ This cannot be undone.`)) return;
         const finalPoints = finalJudicial.final_summary_points || [];
         const probableOutcome = finalJudicial.probable_outcome || "not_determinable";
         const summarySource = finalJudicial.summary_source || "llm_summary";
+        const discrepancies = finalJudicial.factual_discrepancies || [];
 
         let outcomeBadgeColor = "#6c757d";
         let outcomeLabel = "Not Determinable";
@@ -4802,6 +4803,27 @@ This cannot be undone.`)) return;
             `).join('');
         }
 
+        let discrepanciesHTML = "";
+        if (discrepancies.length > 0) {
+            discrepanciesHTML = `
+                <div style="display: flex; flex-direction: column; gap: 6px; padding: 10px; background: rgba(239, 68, 68, 0.05); border: 1px solid rgba(239, 68, 68, 0.2); border-radius: var(--radius-sm); margin-top: 4px;">
+                    <div style="font-size: 0.82rem; font-weight: 700; color: #f87171; display: flex; align-items: center; gap: 6px;">
+                        <i class="fa-solid fa-triangle-exclamation"></i> Factual Discrepancies &amp; Missing Claims (vs. Trial Court)
+                    </div>
+                    <ul style="margin: 4px 0 0 0; padding-left: 16px; display: flex; flex-direction: column; gap: 6px;">
+                        ${discrepancies.map(d => `
+                            <li style="font-size: 0.78rem; line-height: 1.3; color: var(--text-secondary);">
+                                <strong style="color: var(--text-primary);">${d.claim}</strong>
+                                <span style="display: block; font-size: 0.72rem; color: #ef4444; margin-top: 1px;">
+                                    ${d.note || 'Claim omitted or uncompensated in trial court findings.'}
+                                </span>
+                            </li>
+                        `).join('')}
+                    </ul>
+                </div>
+            `;
+        }
+
         let finalBulletsHTML = "";
         if (finalPoints.length > 0 && summarySource === "llm_summary") {
             finalBulletsHTML = `
@@ -4823,6 +4845,7 @@ This cannot be undone.`)) return;
                 </div>
                 ${degradationNotice}
                 ${issueCardsHTML ? `<div style="display: flex; flex-direction: column; gap: 8px;">${issueCardsHTML}</div>` : ''}
+                ${discrepanciesHTML}
                 ${finalBulletsHTML ? `
                     <div style="display: flex; flex-direction: column; gap: 6px; padding: 8px; background: rgba(255,255,255,0.01); border-radius: 4px;">
                         <div style="font-size: 0.8rem; font-weight: 700; color: var(--text-primary);">Synthesized Judicial Summary</div>
