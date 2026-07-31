@@ -142,16 +142,16 @@ document.addEventListener("DOMContentLoaded", () => {
             statusIcon.innerHTML = `<i class="fa-solid fa-circle-check" style="color: var(--color-success);"></i>`;
         }
         if (statusText) {
-            statusText.textContent = "✅ OCR Complete";
+            statusText.textContent = "OCR complete";
             statusText.style.color = "var(--color-success)";
         }
         if (elapsedText) {
-            elapsedText.textContent = `Total Time: ${formatTimeMMSS(ocrSecondsElapsed)}`;
+            elapsedText.textContent = `Total time: ${formatTimeMMSS(ocrSecondsElapsed)}`;
             elapsedText.style.color = "var(--color-success)";
         }
 
         if (headerElapsedText && headerTimerContainer) {
-            headerElapsedText.textContent = `✅ Complete: ${formatTimeMMSS(ocrSecondsElapsed)}`;
+            headerElapsedText.textContent = `Complete: ${formatTimeMMSS(ocrSecondsElapsed)}`;
             headerTimerContainer.style.color = "var(--color-success)";
             headerTimerContainer.style.borderColor = "rgba(22, 163, 74, 0.3)";
             headerTimerContainer.style.background = "rgba(22, 163, 74, 0.08)";
@@ -174,16 +174,16 @@ document.addEventListener("DOMContentLoaded", () => {
             statusIcon.innerHTML = `<i class="fa-solid fa-circle-xmark" style="color: var(--color-danger);"></i>`;
         }
         if (statusText) {
-            statusText.textContent = "❌ OCR Failed";
+            statusText.textContent = "OCR failed";
             statusText.style.color = "var(--color-danger)";
         }
         if (elapsedText) {
-            elapsedText.textContent = `OCR Failed after ${formatTimeMMSS(ocrSecondsElapsed)}`;
+            elapsedText.textContent = `Failed after ${formatTimeMMSS(ocrSecondsElapsed)}`;
             elapsedText.style.color = "var(--color-danger)";
         }
 
         if (headerElapsedText && headerTimerContainer) {
-            headerElapsedText.textContent = `❌ Failed: ${formatTimeMMSS(ocrSecondsElapsed)}`;
+            headerElapsedText.textContent = `Failed: ${formatTimeMMSS(ocrSecondsElapsed)}`;
             headerTimerContainer.style.color = "var(--color-danger)";
             headerTimerContainer.style.borderColor = "rgba(220, 38, 38, 0.3)";
             headerTimerContainer.style.background = "rgba(220, 38, 38, 0.08)";
@@ -3412,16 +3412,18 @@ This cannot be undone.`)) return;
         }
 
 
-        // Always append Auto-fill button at the bottom
-        innerHTML += `
-            <div style="margin-top: 14px; border-top: 1px solid rgba(255,255,255,0.06); padding-top: 12px; display: flex; justify-content: center;">
+        container.innerHTML = innerHTML;
+
+        // Render Auto-fill button inside the dedicated container below Check Judicial Analysis
+        const autofillContainer = document.getElementById("autofill-button-container");
+        if (autofillContainer) {
+            autofillContainer.style.display = "block";
+            autofillContainer.innerHTML = `
                 <button type="button" id="btn-trigger-autofill" class="btn btn-success" style="width: 100%; font-weight: 700; display: flex; align-items: center; justify-content: center; gap: 8px; font-size: 0.82rem; padding: 10px 14px; border-radius: var(--radius-sm); border: none; cursor: pointer; transition: all var(--transition-fast) ease;">
                     <i class="fa-solid fa-magic"></i> Auto-fill Workstation Form
                 </button>
-            </div>
-        `;
-
-        container.innerHTML = innerHTML;
+            `;
+        }
 
 
 
@@ -3577,6 +3579,12 @@ This cannot be undone.`)) return;
         if (suggestionDiv) {
             suggestionDiv.innerHTML = "";
             suggestionDiv.classList.add("hidden-section");
+        }
+
+        const autofillContainer = document.getElementById("autofill-button-container");
+        if (autofillContainer) {
+            autofillContainer.innerHTML = "";
+            autofillContainer.style.display = "none";
         }
 
         // Clear all live calculated dashboard elements back to hyphens
@@ -4511,10 +4519,10 @@ This cannot be undone.`)) return;
         });
     }
 
-    // Delegated click handler on case-type-suggestion container for the Auto-fill button
-    const caseTypeSuggestion = document.getElementById("case-type-suggestion");
-    if (caseTypeSuggestion) {
-        caseTypeSuggestion.addEventListener("click", async (e) => {
+    // Delegated click handler on autofill-button-container for the Auto-fill button
+    const autofillContainer = document.getElementById("autofill-button-container");
+    if (autofillContainer) {
+        autofillContainer.addEventListener("click", async (e) => {
             const btn = e.target.closest("#btn-trigger-autofill");
             if (btn) {
                 e.preventDefault();
@@ -4609,28 +4617,32 @@ This cannot be undone.`)) return;
         chip.className = "supporting-doc-chip";
         chip.id = file_id;
         chip.innerHTML = `
-            <div style="display: flex; align-items: center; gap: 10px; overflow: hidden; flex: 1;">
-                <i class="fa-solid fa-file-pdf" style="color: var(--color-danger); font-size: 1.2rem; flex-shrink: 0;"></i>
-                <span class="filename" style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; font-size: 0.85rem; color: var(--text-primary); max-width: 180px;" title="${file.name}">${file.name}</span>
-                
-                <select class="doc-type-select" style="background: var(--bg-panel-light, rgba(255, 255, 255, 0.05)); border: 1px solid var(--border-color); color: var(--text-primary); padding: 4px 8px; border-radius: 6px; font-size: 0.78rem; cursor: pointer; font-weight: 500;">
+            <div class="chip-row chip-row-top">
+                <div class="chip-file-info">
+                    <i class="fa-solid fa-file-pdf chip-file-icon"></i>
+                    <span class="filename" title="${file.name}">${file.name}</span>
+                </div>
+                <div class="action-container">
+                    <span class="status-badge queued">queued</span>
+                    <button type="button" class="preview-extraction-btn" title="View extracted text" style="display: none;">
+                        <i class="fa-solid fa-eye"></i>
+                    </button>
+                </div>
+            </div>
+
+            <div class="chip-row chip-row-bottom">
+                <select class="doc-type-select">
                     <option value="lower_court">Lower Court Judgment</option>
-                    <option value="hospital_record">Hospital Record</option>
-                    <option value="other">Other</option>
+                    <option value="hospital_record">Medical / Hospital Record</option>
+                    <option value="other">Other Supporting Document</option>
                 </select>
 
-                <label class="enhance-ocr-label" style="display: inline-flex; align-items: center; gap: 4px; font-size: 0.75rem; cursor: pointer; color: var(--text-secondary); user-select: none;">
-                    <input type="checkbox" class="enhance-ocr-checkbox" style="cursor: pointer; width: 14px; height: 14px; accent-color: var(--color-primary);">
+                <label class="enhance-ocr-label">
+                    <input type="checkbox" class="enhance-ocr-checkbox">
                     <span>Enhance OCR</span>
                 </label>
-            </div>
-            
-            <div class="action-container" style="display: flex; align-items: center; gap: 10px; flex-shrink: 0;">
-                <span class="status-badge queued">queued</span>
-                <button type="button" class="preview-extraction-btn" title="View extracted text" style="display: none; background: transparent; border: 1px solid var(--border-color); color: var(--text-secondary); width: 26px; height: 26px; border-radius: 6px; cursor: pointer; align-items: center; justify-content: center;">
-                    <i class="fa-solid fa-eye"></i>
-                </button>
-                <button type="button" class="upload-btn btn btn-primary btn-small" style="padding: 4px 10px; font-size: 0.78rem; line-height: 1;">
+
+                <button type="button" class="upload-btn btn btn-primary btn-small">
                     <i class="fa-solid fa-upload"></i> Upload
                 </button>
             </div>
@@ -4757,6 +4769,7 @@ This cannot be undone.`)) return;
         const finalPoints = finalJudicial.final_summary_points || [];
         const probableOutcome = finalJudicial.probable_outcome || "not_determinable";
         const summarySource = finalJudicial.summary_source || "llm_summary";
+        const discrepancies = finalJudicial.factual_discrepancies || [];
 
         let outcomeBadgeColor = "#6c757d";
         let outcomeLabel = "Not Determinable";
@@ -4802,6 +4815,27 @@ This cannot be undone.`)) return;
             `).join('');
         }
 
+        let discrepanciesHTML = "";
+        if (discrepancies.length > 0) {
+            discrepanciesHTML = `
+                <div style="display: flex; flex-direction: column; gap: 6px; padding: 10px; background: rgba(239, 68, 68, 0.05); border: 1px solid rgba(239, 68, 68, 0.2); border-radius: var(--radius-sm); margin-top: 4px;">
+                    <div style="font-size: 0.82rem; font-weight: 700; color: #f87171; display: flex; align-items: center; gap: 6px;">
+                        <i class="fa-solid fa-triangle-exclamation"></i> Factual Discrepancies &amp; Missing Claims (vs. Trial Court)
+                    </div>
+                    <ul style="margin: 4px 0 0 0; padding-left: 16px; display: flex; flex-direction: column; gap: 6px;">
+                        ${discrepancies.map(d => `
+                            <li style="font-size: 0.78rem; line-height: 1.3; color: var(--text-secondary);">
+                                <strong style="color: var(--text-primary);">${d.claim}</strong>
+                                <span style="display: block; font-size: 0.72rem; color: #ef4444; margin-top: 1px;">
+                                    ${d.note || 'Claim omitted or uncompensated in trial court findings.'}
+                                </span>
+                            </li>
+                        `).join('')}
+                    </ul>
+                </div>
+            `;
+        }
+
         let finalBulletsHTML = "";
         if (finalPoints.length > 0 && summarySource === "llm_summary") {
             finalBulletsHTML = `
@@ -4823,6 +4857,7 @@ This cannot be undone.`)) return;
                 </div>
                 ${degradationNotice}
                 ${issueCardsHTML ? `<div style="display: flex; flex-direction: column; gap: 8px;">${issueCardsHTML}</div>` : ''}
+                ${discrepanciesHTML}
                 ${finalBulletsHTML ? `
                     <div style="display: flex; flex-direction: column; gap: 6px; padding: 8px; background: rgba(255,255,255,0.01); border-radius: 4px;">
                         <div style="font-size: 0.8rem; font-weight: 700; color: var(--text-primary);">Synthesized Judicial Summary</div>
@@ -5027,6 +5062,14 @@ This cannot be undone.`)) return;
                                 }
                                 previewBtn.style.display = "inline-flex";
                             }
+
+                            // A new (or changed) supporting document just finished indexing --
+                            // any previously cached judicial-analysis report is now stale, since
+                            // it was generated without this document's content. Invalidate the
+                            // client-side cache so the next click is forced to hit the backend
+                            // (which will itself only skip regeneration if its OWN cache key --
+                            // which DOES include supporting-doc text -- still matches).
+                            judicialAnalysisCache.clear();
 
                             // If the user already clicked "Check Judicial Analysis" and it's sitting
                             // in the "Processing the file..." state waiting on this document, auto

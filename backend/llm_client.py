@@ -235,7 +235,7 @@ def generate_response(prompt: str, system_instruction: str = None, response_form
             req_body = json.dumps(payload).encode("utf-8")
  
         req = urllib.request.Request(url, data=req_body, headers=headers, method="POST")
-        with urllib.request.urlopen(req, timeout=90.0) as response:
+        with urllib.request.urlopen(req, timeout=240.0) as response:
             res_body = response.read().decode("utf-8")
             logger.debug(f"Raw LLM Response: {res_body}")
             res_json = json.loads(res_body)
@@ -270,8 +270,8 @@ def generate_response(prompt: str, system_instruction: str = None, response_form
             is_timeout = True
         
         if is_timeout or "timed out" in str(e).lower():
-            logger.error("LLM Request timed out after 90 seconds.")
-            return "Error connecting to LLM server: Request timed out after 90 seconds"
+            logger.error("LLM Request timed out after 240 seconds.")
+            return "Error connecting to LLM server: Request timed out after 240 seconds"
         
         err_msg = str(e)
         logger.error(f"LLM API URL Error: {err_msg}")
@@ -329,7 +329,7 @@ def generate_response_stream(prompt: str, system_instruction: str = None, histor
             req_body = json.dumps(payload).encode("utf-8")
             
             req = urllib.request.Request(url, data=req_body, headers=headers, method="POST")
-            with urllib.request.urlopen(req, timeout=90.0) as response:
+            with urllib.request.urlopen(req, timeout=240.0) as response:
                 for line in response:
                     if not line:
                         continue
@@ -365,8 +365,8 @@ def generate_response_stream(prompt: str, system_instruction: str = None, histor
             is_timeout = True
         
         if is_timeout or "timed out" in str(e).lower():
-            logger.error("LLM Stream Request timed out after 90 seconds.")
-            yield "Error communicating with LLM stream: Request timed out after 90 seconds"
+            logger.error("LLM Stream Request timed out after 240 seconds.")
+            yield "Error communicating with LLM stream: Request timed out after 240 seconds"
         else:
             yield f"Error communicating with LLM stream: {str(e)}"
     except Exception as e:
@@ -839,11 +839,22 @@ def ai_data_recovery(raw_ocr_text: str, track: str = "high_court", case_type: st
             # almost always present somewhere (statute references, boilerplate, headers)
             # even when no percentage was ever stated, which let hallucinated numbers
             # (e.g. a stray "35") slip through untouched. Require the actual figure.
+            import re as _re
+            def _number_is_a_real_percentage(num_str: str, text: str) -> bool:
+                # Require the digits to be immediately adjacent to a percent sign or
+                # "percent"/"disability"/"प्रतिशत" within a few characters — NOT just
+                # present anywhere in the text as a bare substring (e.g. "30" inside
+                # the date "30.05.2019" was previously matching and slipping through).
+                pattern = _re.compile(
+                    rf'{_re.escape(num_str)}\s*%|%\s*{_re.escape(num_str)}|'
+                    rf'{_re.escape(num_str)}\s*(?:percent|प्रतिशत)',
+                    _re.IGNORECASE
+                )
+                return bool(pattern.search(text))
+
             number_present = (
-                dis_str in raw_ocr_text
-                or dis_str_int in raw_ocr_text
-                or f"{dis_str}%" in raw_ocr_text
-                or f"{dis_str_int}%" in raw_ocr_text
+                _number_is_a_real_percentage(dis_str, raw_ocr_text)
+                or _number_is_a_real_percentage(dis_str_int, raw_ocr_text)
             )
             if not number_present:
                 logger.info(f"[DISABILITY-HALLUCINATION-GUARD] Discarding unverified disability '{dis_str}' -- this exact figure was not found anywhere in the OCR text.")
@@ -1913,7 +1924,7 @@ def find_missing_claims(grounds_claims: list, trial_claims: list, match_threshol
     return candidates
 
 
-def generate_final_judicial_summary(sections: dict, heuristic_signal: dict = None, case_type: str = "death", supporting_docs: dict = None) -> dict:
+def generate_final_judicial_summary(sections: dict, heuristic_signal: dict = None, case_type: str = "death", supporting_docs: dict = None, force_refresh: bool = False) -> dict:
     import hashlib
     from backend.parser_heuristics import normalize_issues_table
     from config.llm import (
@@ -1929,10 +1940,10 @@ def generate_final_judicial_summary(sections: dict, heuristic_signal: dict = Non
     relief_text = (sections.get("relief_section", "") or "").strip()
 
     medical_evidence_text = ""
-    if supporting_docs and supporting_docs.get("hospital_record"):
-        medical_evidence_text = supporting_docs["hospital_record"]
+    if supporting_docs and supporting_docs.get("medical_evidence"):
+        medical_evidence_text = supporting_docs["medical_evidence"]
     else:
-        medical_evidence_text = "(No medical evidence from hospital records provided.)"
+        medical_evidence_text = "(No supporting documents/medical evidence provided.)"
 
     summary_src = "llm_summary"
 
@@ -1954,9 +1965,10 @@ def generate_final_judicial_summary(sections: dict, heuristic_signal: dict = Non
                 "summary_source": "mislabeled_input"
             }
 
-        from backend.parser_heuristics import detect_document_sections_with_fallback, classify_page_type
+        from backend.parser_heuristics import detect_document_sections_with_fallback, classify_page_type, segment_text_lines_into_pages
 
-        lc_sections_meta = detect_document_sections_with_fallback(lower_court_text, [])
+        lc_pages = segment_text_lines_into_pages(lower_court_text.split("\n"))
+        lc_sections_meta = detect_document_sections_with_fallback(lower_court_text, lc_pages)
         lc_sections = {k: v["content"] for k, v in lc_sections_meta.items()}
         lc_issues_raw = (lc_sections.get("issues_findings_section", "") or "").strip()
         lc_award_raw = (lc_sections.get("award_operative_section", "") or lc_sections.get("award_copy_section", "") or "").strip()
@@ -2026,7 +2038,7 @@ def generate_final_judicial_summary(sections: dict, heuristic_signal: dict = Non
 
     concat = f"{issues_text_en}|||{award_text_en}|||{grounds_text}|||{relief_text}|||{medical_evidence_text}"
     h = hashlib.sha256(concat.encode("utf-8")).hexdigest()
-    if h in _FINAL_SUMMARY_CACHE:
+    if not force_refresh and h in _FINAL_SUMMARY_CACHE:
         logger.info("[FINAL-JUDICIAL-SUMMARY] Returning cached summary.")
         return _FINAL_SUMMARY_CACHE[h]
 
@@ -2042,6 +2054,32 @@ def generate_final_judicial_summary(sections: dict, heuristic_signal: dict = Non
 
     # Step 3: deterministic fuzzy matcher -> candidate list for the LLM to verify
     candidate_discrepancies = find_missing_claims(grounds_claims, trial_claims)
+
+    # Step 3b: same deterministic matcher, but for supporting medical/diagnostic
+    # evidence (X-ray, USG, CT, discharge cards, etc.) against the trial court
+    # record. A clinical finding on an uploaded report may never appear in the
+    # HC grounds text at all, so it needs its own direct check against the
+    # trial court text rather than riding on the grounds-vs-trial check above.
+    medical_discrepancies = []
+    if medical_evidence_text and medical_evidence_text.strip() and not medical_evidence_text.startswith("(No supporting"):
+        medical_claims = validate_claims_shape(
+            extract_claims(medical_evidence_text, case_type=case_type,
+                           source_label="supporting medical/diagnostic evidence").get("claims", [])
+        )
+        medical_discrepancies = find_missing_claims(medical_claims, trial_claims)
+        for d in medical_discrepancies:
+            d["note"] = (
+                "Documented in an uploaded supporting medical/diagnostic report but not "
+                "reflected in the trial court's issues/award text. " + d["note"]
+            )
+
+    seen_claims = {c["claim"].strip().lower() for c in candidate_discrepancies}
+    for d in medical_discrepancies:
+        key = d["claim"].strip().lower()
+        if key not in seen_claims:
+            candidate_discrepancies.append(d)
+            seen_claims.add(key)
+
     candidate_hint = "\n".join(
         f"- {d['claim']} ({d['category']})" for d in candidate_discrepancies
     ) or "(none flagged by automated matcher)"
@@ -2067,6 +2105,9 @@ def generate_final_judicial_summary(sections: dict, heuristic_signal: dict = Non
                 model=LLM_FINAL_SUMMARY_MODEL_NAME,
                 temperature=LLM_FINAL_SUMMARY_TEMPERATURE
             )
+            if response.startswith("Error connecting to LLM server") or response.startswith("Error communicating with LLM"):
+                logger.warning(f"[FINAL-JUDICIAL-SUMMARY] Attempt {attempt + 1} hit an LLM transport error, not retrying: {response}")
+                break  # don't waste another 90-240s retrying the same timeout
             response = re.sub(r"<think>.*?</think>", "", response, flags=re.DOTALL).strip()
             s = response.find("{")
             e = response.rfind("}")

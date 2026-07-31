@@ -2858,13 +2858,10 @@ async def process_single_file(
 
             heuristic_signal = suggestions.get("case_classification") or classify_enhancement_or_reduction(sections_dict)
 
-            from backend.vector_db import get_supporting_doc_text
+            from backend.vector_db import build_supporting_docs_bundle
             supporting_docs = {}
             if case_session_id:
-                supporting_docs = {
-                    "lower_court": get_supporting_doc_text(case_session_id, "lower_court"),
-                    "hospital_record": get_supporting_doc_text(case_session_id, "hospital_record")
-                }
+                supporting_docs = build_supporting_docs_bundle(case_session_id)
 
             from backend.llm_client import summarize_grounds_and_relief, generate_final_judicial_summary
             summary_res, final_judicial_res = await asyncio.gather(
@@ -3068,26 +3065,43 @@ async def process_supporting_doc(
             
             # Handle Image
             else:
-                yield f"data: {json.dumps({'status': 'ocr', 'progress': 40, 'message': 'Running PaddleOCR on image...'})}\n\n"
+                yield f"data: {json.dumps({'status': 'ocr', 'progress': 40, 'message': 'Running OCR on image...'})}\n\n"
                 await asyncio.sleep(0.01)
-                
+
                 loop = asyncio.get_event_loop()
+
                 def run_img_ocr():
+                    # Route through the same hybrid single-page pipeline used for
+                    # rendered PDF pages: CLAHE preprocessing + downscaling,
+                    # blank-page skip, language auto-detection, Paddle quality
+                    # scoring, escalation to the vision model on low-confidence
+                    # results, and a Tesseract fallback if Paddle finds nothing.
                     with _SUPPORTING_PAGE_SEMAPHORE:
-                        with _SUPPORTING_PADDLE_INFER_LOCK:
-                            engine = get_supporting_ocr_instance(lang="en")
-                            results = engine.predict(temp_path)
-                        lines = []
-                        if results:
-                            res0 = results[0]
-                            rec_texts = res0.get("rec_texts", []) if hasattr(res0, "get") else getattr(res0, "rec_texts", [])
-                            for t in (rec_texts or []):
-                                if t and t.strip():
-                                    lines.append(t)
-                        return lines
-                
-                raw_lines = await loop.run_in_executor(SUPPORTING_DOCS_POOL, run_img_ocr)
+                        return ocr_supporting_page(
+                            page_idx=0,
+                            total_pages=1,
+                            rendered_img_path=temp_path,
+                            fitz_text="",
+                            pdf_path=None,
+                            doc_type=doc_type,
+                            enhance_ocr=enhance_bool,
+                            vision_available=vision_available,
+                            paddle_available=paddle_available
+                        )
+
+                raw_lines, ocr_meta = await loop.run_in_executor(SUPPORTING_DOCS_POOL, run_img_ocr)
                 text_lines = ["--- PAGE 1 ---"] + raw_lines
+                logger.info(
+                    f"[Supporting] Image upload OCR for {file.filename}: "
+                    f"engine={ocr_meta.get('engine')}, confidence={ocr_meta.get('confidence')}, "
+                    f"lines={ocr_meta.get('lines')}"
+                )
+                if not raw_lines:
+                    logger.warning(
+                        f"[Supporting] Image upload {file.filename} produced NO extracted text "
+                        f"even after fallback -- this document will be indexed empty and cannot "
+                        f"contribute facts to the judicial summary."
+                    )
 
             yield f"data: {json.dumps({'status': 'indexing', 'progress': 90, 'message': 'Indexing document in Qdrant...'})}\n\n"
             await asyncio.sleep(0.01)
@@ -3227,7 +3241,13 @@ async def ai_recover_fields(request: AIRecoverRequest):
         heuristics_data = parse_extracted_text(request.raw_text, case_type=recovered_data.get("case_type") or "death")
         
         # Merge heuristics into recovered_data if LLM missed them or returned low confidence
-        for field in ["monthly_income", "age", "deceased_name", "claimant_name", "date_of_accident", "marital_status"]:
+        merge_fields = [
+            "monthly_income", "age", "deceased_name", "claimant_name", "date_of_accident", "marital_status",
+            "father_name", "dependents", "disability", "medical_expenses", "pain_and_suffering",
+            "transportation", "special_diet", "attender_charges", "loss_of_income", "future_medical_expenses",
+            "consortium", "funeral_expenses", "loss_estate"
+        ]
+        for field in merge_fields:
             heur_val = heuristics_data.get(field)
             llm_val = recovered_data.get(field)
             
@@ -3250,29 +3270,27 @@ async def ai_recover_fields(request: AIRecoverRequest):
                 else:
                     recovered_data["confidence_scores"][field] = {"confidence": 0.85, "reason": "Merged from heuristics parser"}
 
-        from backend.parser_heuristics import format_suggestions_for_calculator, detect_document_sections_with_fallback, classify_enhancement_or_reduction
+        from backend.parser_heuristics import format_suggestions_for_calculator, detect_document_sections_with_fallback, classify_enhancement_or_reduction, segment_text_lines_into_pages
         formatted = format_suggestions_for_calculator(recovered_data)
 
         # Generate or attach grounds & relief summary so autofill preserves it
-        sections_meta = detect_document_sections_with_fallback(full_text, [])
+        pages_for_sections = segment_text_lines_into_pages(request.raw_text)
+        sections_meta = detect_document_sections_with_fallback(full_text, pages_for_sections)
         sections_dict = {k: v["content"] for k, v in sections_meta.items()}
         sections_dict["raw_ocr"] = full_text
         heuristic_signal = heuristics_data.get("case_classification") or classify_enhancement_or_reduction(sections_dict)
 
         # Fetch supporting docs
-        from backend.vector_db import get_supporting_doc_text
+        from backend.vector_db import build_supporting_docs_bundle
         supporting_docs = {}
         if request.case_session_id:
-            supporting_docs = {
-                "lower_court": get_supporting_doc_text(request.case_session_id, "lower_court"),
-                "hospital_record": get_supporting_doc_text(request.case_session_id, "hospital_record")
-            }
+            supporting_docs = build_supporting_docs_bundle(request.case_session_id)
 
         from backend.llm_client import summarize_grounds_and_relief, generate_final_judicial_summary
         case_tp = recovered_data.get("case_type") or "death"
         summary_res = summarize_grounds_and_relief(sections_dict, heuristic_signal, case_tp)
         final_judicial_res = generate_final_judicial_summary(
-            sections_dict, heuristic_signal, case_tp, supporting_docs=supporting_docs
+            sections_dict, heuristic_signal, case_tp, supporting_docs=supporting_docs, force_refresh=True
         )
 
         formatted["grounds_relief_summary"] = summary_res
@@ -3356,11 +3374,8 @@ async def refresh_judicial_summary(request: RefreshJudicialSummaryRequest):
             from backend.track_detection import _devanagari_ratio
             track = "lower_court" if _devanagari_ratio(full_text) >= 0.30 else "high_court"
 
-        from backend.vector_db import get_supporting_doc_text
-        supporting_docs = {
-            "lower_court": get_supporting_doc_text(request.case_session_id, "lower_court"),
-            "hospital_record": get_supporting_doc_text(request.case_session_id, "hospital_record")
-        }
+        from backend.vector_db import build_supporting_docs_bundle
+        supporting_docs = build_supporting_docs_bundle(request.case_session_id)
 
         cache_key = _make_judicial_summary_cache_key(
             request.case_session_id, track, request.case_type, full_text, supporting_docs
@@ -3378,8 +3393,9 @@ async def refresh_judicial_summary(request: RefreshJudicialSummaryRequest):
                     "cached": True
                 }
 
-        from backend.parser_heuristics import detect_document_sections_with_fallback, classify_enhancement_or_reduction
-        sections_meta = detect_document_sections_with_fallback(full_text, [])
+        from backend.parser_heuristics import detect_document_sections_with_fallback, classify_enhancement_or_reduction, segment_text_lines_into_pages
+        pages_for_sections = segment_text_lines_into_pages(request.raw_text)
+        sections_meta = detect_document_sections_with_fallback(full_text, pages_for_sections)
         sections_dict = {k: v["content"] for k, v in sections_meta.items()}
         sections_dict["raw_ocr"] = full_text
 
@@ -3390,7 +3406,8 @@ async def refresh_judicial_summary(request: RefreshJudicialSummaryRequest):
             sections_dict,
             heuristic_signal,
             request.case_type,
-            supporting_docs=supporting_docs
+            supporting_docs=supporting_docs,
+            force_refresh=request.force_refresh
         )
 
         with _JUDICIAL_SUMMARY_CACHE_LOCK:

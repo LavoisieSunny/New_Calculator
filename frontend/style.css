@@ -3309,8 +3309,8 @@ select.low-confidence-input {
 
 .supporting-doc-chip {
     display: flex;
-    align-items: center;
-    justify-content: space-between;
+    flex-direction: column;
+    gap: 8px;
     padding: 10px 14px;
     background: rgba(255, 255, 255, 0.85);
     border: 1px solid rgba(226, 232, 240, 0.8);
@@ -3328,11 +3328,70 @@ select.low-confidence-input {
     box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.06);
 }
 
+.supporting-doc-chip .chip-row-top {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+}
+
+.supporting-doc-chip .chip-file-info {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    overflow: hidden;
+    flex: 1;
+    min-width: 0;
+}
+
+.supporting-doc-chip .chip-file-icon {
+    color: var(--color-danger);
+    font-size: 1.1rem;
+    flex-shrink: 0;
+}
+
+.supporting-doc-chip .filename {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-weight: 600;
+    font-size: 0.85rem;
+    color: var(--text-primary);
+}
+
+.supporting-doc-chip .action-container {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-shrink: 0;
+}
+
+.supporting-doc-chip .preview-extraction-btn {
+    background: transparent;
+    border: 1px solid var(--border-color);
+    color: var(--text-secondary);
+    width: 26px;
+    height: 26px;
+    border-radius: 6px;
+    cursor: pointer;
+    align-items: center;
+    justify-content: center;
+}
+
+.supporting-doc-chip .chip-row-bottom {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+}
+
 .supporting-doc-chip .doc-type-select {
+    flex: 1;
+    min-width: 150px;
     background: #fff;
     border: 1px solid #cbd5e1;
     color: #334155;
-    padding: 4px 8px;
+    padding: 5px 8px;
     border-radius: 6px;
     font-size: 0.78rem;
     cursor: pointer;
@@ -3348,6 +3407,8 @@ select.low-confidence-input {
     cursor: pointer;
     color: #475569;
     user-select: none;
+    white-space: nowrap;
+    flex-shrink: 0;
 }
 
 .supporting-doc-chip .enhance-ocr-checkbox {
@@ -3357,6 +3418,14 @@ select.low-confidence-input {
     border-radius: 3px;
     border: 1px solid #cbd5e1;
     accent-color: var(--color-primary);
+}
+
+.supporting-doc-chip .upload-btn {
+    margin-left: auto;
+    padding: 4px 10px;
+    font-size: 0.78rem;
+    line-height: 1;
+    flex-shrink: 0;
 }
 
 .supporting-doc-chip .status-badge {

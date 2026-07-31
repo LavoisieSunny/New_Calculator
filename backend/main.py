@@ -167,6 +167,69 @@ class PDFChatRequest(BaseModel):
     is_justify: bool = False
     history: list | None = None
 
+def _smart_truncate_ocr_for_chat(ocr_full: str, question_str: str = "", head: int = 6000, tail: int = 8000) -> str:
+    """
+    Builds the OCR text block sent to the LLM for ordinary (non-justify,
+    non-case-summary) chat questions.
+
+    Old logic was a blind first-N + last-M character window, which silently
+    dropped whatever fell in the middle of long documents (e.g. respondent
+    party details on page 3-4 of a 20-page scan). Fix: keep head+tail, but
+    also scan the omitted middle for legally-relevant anchor keywords and
+    splice matching context back in.
+    """
+    import re as _re
+
+    if not ocr_full:
+        return ""
+    if len(ocr_full) <= head + tail:
+        return ocr_full
+
+    head_block = ocr_full[:head]
+    tail_block = ocr_full[-tail:]
+    middle_start = head
+    middle_end = len(ocr_full) - tail
+    middle = ocr_full[middle_start:middle_end]
+
+    anchor_keywords = [
+        r"respondent", r"non[- ]?applicant", r"appellant", r"claimant",
+        r"owner", r"driver", r"insur", r"vehicle", r"registration",
+        r"section\s+\d", r"policy", r"licen[cs]e",
+    ]
+    if question_str:
+        extra_terms = _re.findall(r"[A-Za-z]{4,}", question_str)
+        anchor_keywords.extend(_re.escape(t) for t in extra_terms)
+
+    pattern = _re.compile("|".join(anchor_keywords), _re.IGNORECASE)
+
+    snippets = []
+    seen_spans = []
+    window = 700
+    for m in pattern.finditer(middle):
+        start = max(0, m.start() - window // 2)
+        end = min(len(middle), m.end() + window // 2)
+        if seen_spans and start <= seen_spans[-1][1] + 200:
+            seen_spans[-1] = (seen_spans[-1][0], max(seen_spans[-1][1], end))
+        else:
+            seen_spans.append((start, end))
+        if len(seen_spans) >= 6:
+            break
+
+    for (s, e) in seen_spans:
+        snippets.append(middle[s:e].strip())
+
+    anchored_middle = ("\n\n[...]\n\n".join(snippets)) if snippets else ""
+
+    parts = [head_block]
+    if anchored_middle:
+        parts.append("[... omitted, except the following relevant passages found further into the document ...]")
+        parts.append(anchored_middle)
+    else:
+        parts.append("[... middle pages omitted ...]")
+    parts.append(tail_block)
+
+    return "\n\n".join(parts)
+
 
 def is_case_summary_query(query: str) -> bool:
 
@@ -344,14 +407,7 @@ async def prepare_pdf_chat_prompt(request: PDFChatRequest):
             )
         else:
             ocr_full = request.ocr_text or ""
-            if len(ocr_full) <= 8000:
-                ocr_for_llm = ocr_full
-            else:
-                ocr_for_llm = (
-                    ocr_full[:3000]
-                    + "\n\n[... middle pages omitted ...]\n\n"
-                    + ocr_full[-5000:]
-                )
+            ocr_for_llm = _smart_truncate_ocr_for_chat(ocr_full, question_str)
             workstation_blocks.append(
                 f"[Current PDF Workstation OCR Text]:\n{ocr_for_llm}"
             )

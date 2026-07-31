@@ -137,12 +137,17 @@ FINAL_JUDICIAL_SUMMARY_SYSTEM_INSTRUCTION = (
     "You are simulating how an experienced High Court judge reads a MACT appeal.\n"
     "You will be given: (1) the trial court's issues framed and findings (वादप्रश्न, already "
     "translated to English), (2) the trial court's operative award (अधिनिर्णय, already translated "
-    "to English), (3) the High Court grounds of appeal, (4) the relief sought, and (5) Medical Evidence "
-    "from hospital records (if any).\n\n"
+    "to English), (3) the High Court grounds of appeal, (4) the relief sought, and (5) Supporting "
+    "Documents (if any) -- this may include hospital/medical records, diagnostic reports (X-ray, USG, "
+    "CT scan, etc.), income affidavits, or any other evidentiary attachment the parties uploaded. Each "
+    "supporting document is labeled with its filename so you can attribute facts to the right source.\n\n"
     "CRITICAL RULES:\n"
     "1. Base every statement ONLY on the text given. Never invent names, amounts, or dates.\n"
-    "2. For each issue where a HC ground actually challenges it, produce one issue-wise entry.\n"
-    "3. Write likely_judicial_view as reasoned analysis, not a verdict of fact.\n"
+    "2. For each issue, restrict the analysis ONLY to heads of compensation that map to the calculator input fields. Do NOT generate issue-wise entries for heads of claim that do not exist in the calculator. Allowed heads are:\n"
+    "   - For Injury cases: Permanent Disability (in %), Monthly Income, Medical Expenses, Pain and Suffering, Special Diet, Transportation, Attender Charges, Loss of Income, and Future Medical Expenses.\n"
+    "   - For Death cases: Monthly Income, Age, Dependents, Consortium, Funeral Expenses, and Loss of Estate.\n"
+    "   (Do NOT create entries for loss of amenities, happiness, marriage prospects, or litigation expenses, as there are no corresponding input fields in the UI calculator).\n"
+    "3. Write likely_judicial_view as reasoned analysis, not a verdict of fact. Ensure that the likely_judicial_view systematically addresses and explicitly mentions ALL specific injuries (e.g., organ damage, internal injuries like kidney lacerations, fractures, limb loss, or ear damage) raised in the High Court challenge that were omitted or inadequately addressed by the trial court.\n"
     "4. Do not copy raw OCR text verbatim; synthesize in clear human legal English.\n"
     "5. You are also given a Candidate Fact-Check list -- factual claims an automated matcher "
     "found in the grounds/relief but could NOT locate in the translated trial court text. The "
@@ -151,11 +156,9 @@ FINAL_JUDICIAL_SUMMARY_SYSTEM_INSTRUCTION = (
     "   - If it is genuinely absent, keep it in factual_discrepancies with a short judicial-style note.\n"
     "   - If you can actually find it (even paraphrased) in the trial court text, put its exact "
     "claim string into rejected_candidate_claims instead, and leave it OUT of factual_discrepancies.\n"
-    "   - You may add a claim of your own to factual_discrepancies if you notice a genuine one the "
-    "candidate list missed.\n"
-    "6. If a Medical Evidence block is provided, compare it against the trial court's disability findings. "
-    "Flag any conflicts (e.g. difference in disability percentage, body part injured, or treatment duration) "
-    "as entries in the factual_discrepancies array.\n"
+    "   - You may and should add a claim of your own to factual_discrepancies if you notice a genuine unaddressed claim or medical finding that the automated candidate list missed.\n"
+    "6. If a Supporting Documents block is provided, compare EVERY document in it against the trial "
+    "court's findings. You MUST flag any specific medical/clinical findings, injuries, or diagnoses (such as kidney damage/rent, fractures, internal bleeding, or specific organ trauma) that are documented in the supporting diagnostic reports/medical evidence but were completely omitted, uncompensated, or ignored in the trial court's issues/award text, listing them as entries in the factual_discrepancies array.\n"
     "7. Output strictly valid JSON matching the schema, nothing else."
 )
 
@@ -164,7 +167,7 @@ FINAL_JUDICIAL_SUMMARY_USER_PROMPT = (
     "Trial Court Operative Award (English translation):\n{award_text}\n\n"
     "High Court Grounds of Appeal:\n{grounds_text}\n\n"
     "Relief Sought:\n{relief_text}\n\n"
-    "Medical Evidence (from hospital records, if any):\n{medical_evidence_text}\n\n"
+    "Supporting Documents (medical/diagnostic reports, affidavits, or any other evidence, if any):\n{medical_evidence_text}\n\n"
     "Candidate Fact-Check list (unverified -- review each against the text above):\n"
     "{candidate_discrepancies}\n\n"
     "Return ONLY valid JSON matching this schema exactly:\n"
@@ -183,7 +186,8 @@ FINAL_JUDICIAL_SUMMARY_USER_PROMPT = (
     '    {{"claim": "...", "found_in_grounds": true, "found_in_trial_court": false, "note": "..."}}\n'
     '  ],\n'
     '  "rejected_candidate_claims": ["claim text you found was actually present"]\n'
-    "}}\n"
+    "}}\n\n"
+    "Remember to review the Supporting Documents carefully for any documented injuries/findings (such as kidney trauma, organ damage, or fractures) that were completely omitted or uncompensated in the trial court findings/award and include them in the factual_discrepancies list."
 )
 
 

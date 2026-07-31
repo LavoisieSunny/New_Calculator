@@ -2082,6 +2082,50 @@ def format_suggestions_for_calculator(suggestions):
     }
 
 
+def segment_text_lines_into_pages(text_lines):
+    """
+    Splits a flat OCR line list (delimited by '--- PAGE N ---' marker lines,
+    the convention used across this codebase) into the [{"page_number", "lines",
+    "text"}, ...] structure that detect_document_sections()/detect_document_sections_with_fallback()
+    need for their heading-position and per-page fallback scans.
+
+    Passing pages=[] to those functions is NOT a safe "skip page-aware
+    detection" shortcut -- both the primary heading pass and the keyword
+    fallback pass iterate over `pages`, so an empty list silently disables
+    ALL deterministic section detection and forces 100% reliance on a single
+    LLM classification call with no backup. Always build real pages here
+    before calling detect_document_sections_with_fallback.
+    """
+    pages = []
+    current_page_num = 1
+    current_page_lines = []
+
+    for line in text_lines:
+        line_strip = line.strip()
+        if line_strip.startswith("--- PAGE"):
+            if current_page_lines:
+                pages.append({
+                    "page_number": current_page_num,
+                    "lines": current_page_lines,
+                    "text": "\n".join(current_page_lines)
+                })
+            m = re.search(r'PAGE\s+(\d+)', line_strip, re.IGNORECASE)
+            if m:
+                current_page_num = int(m.group(1))
+            current_page_lines = []
+        else:
+            current_page_lines.append(line)
+
+    if current_page_lines or not pages:
+        pages.append({
+            "page_number": current_page_num,
+            "lines": current_page_lines,
+            "text": "\n".join(current_page_lines)
+        })
+
+    return pages
+
+
 def detect_document_sections(full_text, pages):
     """
     Dynamically identifies sections of the document using semantic heading matching
