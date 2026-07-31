@@ -839,11 +839,22 @@ def ai_data_recovery(raw_ocr_text: str, track: str = "high_court", case_type: st
             # almost always present somewhere (statute references, boilerplate, headers)
             # even when no percentage was ever stated, which let hallucinated numbers
             # (e.g. a stray "35") slip through untouched. Require the actual figure.
+            import re as _re
+            def _number_is_a_real_percentage(num_str: str, text: str) -> bool:
+                # Require the digits to be immediately adjacent to a percent sign or
+                # "percent"/"disability"/"प्रतिशत" within a few characters — NOT just
+                # present anywhere in the text as a bare substring (e.g. "30" inside
+                # the date "30.05.2019" was previously matching and slipping through).
+                pattern = _re.compile(
+                    rf'{_re.escape(num_str)}\s*%|%\s*{_re.escape(num_str)}|'
+                    rf'{_re.escape(num_str)}\s*(?:percent|प्रतिशत)',
+                    _re.IGNORECASE
+                )
+                return bool(pattern.search(text))
+
             number_present = (
-                dis_str in raw_ocr_text
-                or dis_str_int in raw_ocr_text
-                or f"{dis_str}%" in raw_ocr_text
-                or f"{dis_str_int}%" in raw_ocr_text
+                _number_is_a_real_percentage(dis_str, raw_ocr_text)
+                or _number_is_a_real_percentage(dis_str_int, raw_ocr_text)
             )
             if not number_present:
                 logger.info(f"[DISABILITY-HALLUCINATION-GUARD] Discarding unverified disability '{dis_str}' -- this exact figure was not found anywhere in the OCR text.")
