@@ -2342,8 +2342,14 @@ def extract_last_currency_value(line_lower):
     """
     Extracts the last numeric value on the line that looks like a currency amount.
     Handles multiple values on a single line (like formula multipliers).
+
+    Guard: date fragments like "13.10.2009" are stripped before scanning,
+    so a line such as "Date from which interest is awarded : 13.10.2009"
+    doesn't have its year (2009) misread as a rupee amount just because
+    the line also contains the word "award(ed)".
     """
-    matches = re.findall(r'(?:rs\.?|inr|rupees)?\s*([\d,]{4,12}(?:\.\d+)?)\s*(?:rs\.?|inr|rupees|\/\-)?', line_lower)
+    cleaned = re.sub(r'\b\d{1,2}[\.\-/]\d{1,2}[\.\-/]\d{2,4}\b', ' ', line_lower)
+    matches = re.findall(r'(?:rs\.?|inr|rupees)?\s*([\d,]{4,12}(?:\.\d+)?)\s*(?:rs\.?|inr|rupees|\/\-)?', cleaned)
     if matches:
         for m_val in reversed(matches):
             val = parse_indian_rupee_value(m_val)
@@ -2424,7 +2430,10 @@ def extract_compensation_table_fields(section_content, case_type=None):
                     fields["consortium"] = val
             elif any(kw in line_lower for kw in ["total", "award", "awarded sum", "total compensation"]):
                 # Ensure no false positives for claim/interest/petition valuation
-                if not any(kw in line_lower for kw in ["claim", "petition", "sought", "prayed", "valuation", "demand"]):
+                if not any(kw in line_lower for kw in [
+                    "claim", "petition", "sought", "prayed", "valuation", "demand",
+                    "interest", "date from which", "rate at which", "rate of interest",
+                ]):
                     fields["total_compensation"] = val
                 
     if case_type == "injury":
@@ -2603,6 +2612,19 @@ def contextual_extract(patterns, sections, priority_list, type_cast=str, default
                     start_pos = max(0, m.start() - 80)
                     pre_ctx = text[start_pos:m.start()].lower()
                     if any(kw in pre_ctx for kw in CLAIM_LANGUAGE_KEYWORDS):
+                        continue
+                elif field_name in ("claimant_name", "deceased_name", "father_name"):
+                    # Honorific-only patterns (\bsmt\b, \bshri\b, \bmr\b, \bmrs\b, \bkumari\b)
+                    # have no role anchor, so they'll happily match a tribunal member's or
+                    # judge's name (e.g. "The name of the Member : Smt Krishna Paraste").
+                    # Reject matches whose line context names a judicial officer/advocate
+                    # rather than a party.
+                    line_start = text.rfind('\n', 0, m.start()) + 1
+                    line_ctx = text[line_start:m.start()].lower()
+                    if any(kw in line_ctx for kw in [
+                        "member", "judge", "justice", "coram", "presided", "presiding",
+                        "decided by", "advocate", "counsel", "bench", "hon'ble", "honble",
+                    ]):
                         continue
                 matched_source = m.group(0)
                 raw_val = m.group(1).strip()
@@ -2991,6 +3013,45 @@ def deduce_notional_income(award_amount, age, marital_status, dependents, future
     return 5000.0
 
 
+def _extract_cause_title_block(top_pages_text):
+    """
+    Multi-line cause-title fallback for the common MP HC layout where the
+    party name is on its own line under an 'APPELLANT :' / 'RESPONDENT :'
+    label with a standalone 'VERSUS' line in between -- as opposed to a
+    compact single-line 'X -Vs- Y' scrutiny-report heading, which not every
+    bundle (especially older-format filings) attaches.
+    Returns (appellant_raw, respondent_raw) or None.
+    """
+    lines = top_pages_text.split("\n")
+    appellant_label_re = re.compile(r'\b(?:APPELLANT|PETITIONER|APPLICANT)\b', re.IGNORECASE)
+    respondent_label_re = re.compile(r'\b(?:RESPONDENTS?|NON[\s\-]?APPLICANTS?)\b', re.IGNORECASE)
+    versus_line_re = re.compile(r'^\s*(?:VERSUS|VS\.?)\s*$', re.IGNORECASE)
+
+    pending_appellant = None
+    for i, line in enumerate(lines):
+        stripped = line.strip()
+        if not stripped:
+            continue
+        if versus_line_re.match(stripped) and pending_appellant:
+            for j in range(i + 1, min(i + 5, len(lines))):
+                r_line = lines[j].strip()
+                if not r_line:
+                    continue
+                if respondent_label_re.search(r_line):
+                    parts = re.split(r'[:\-]', r_line, maxsplit=1)
+                    r_candidate = parts[1].strip() if len(parts) > 1 else respondent_label_re.sub('', r_line).strip(" :-")
+                    if r_candidate:
+                        return pending_appellant, r_candidate
+                break
+            pending_appellant = None
+        elif appellant_label_re.search(stripped):
+            parts = re.split(r'[:\-]', stripped, maxsplit=1)
+            candidate = parts[1].strip() if len(parts) > 1 else appellant_label_re.sub('', stripped).strip(" :-")
+            if candidate:
+                pending_appellant = candidate
+    return None
+
+
 def parse_extracted_text(text_lines, case_type=None):
     """
     Highly advanced Section-Aware Legal Semantic Parser / Legal Document Intelligence Engine.
@@ -3308,6 +3369,43 @@ def parse_extracted_text(text_lines, case_type=None):
                         break
         if cause_title_claimant:
             break
+
+    if not cause_title_claimant:
+        block_result = _extract_cause_title_block(top_pages_text)
+        if block_result:
+            appellant_raw, respondent_raw = block_result
+            appellant_clean = clean_legal_name(appellant_raw)
+            respondent_clean = clean_legal_name(respondent_raw)
+            is_ins = any(kw in appellant_raw.lower() for kw in
+                         ["insurance", "insur", "ins.", "co.", "ltd", "limited", "corp", "corporation", "gic", "hdi", "magma", "general"])
+            chosen = None
+            if is_ins and respondent_clean and len(respondent_clean) > 2:
+                chosen = respondent_clean
+            elif appellant_clean and len(appellant_clean) > 2 and not is_ins:
+                role_a = determine_name_role(appellant_clean, full_text)
+                role_r = determine_name_role(respondent_clean, full_text) if respondent_clean else "unknown"
+                if role_a == "non-claimant" and role_r == "claimant":
+                    chosen = respondent_clean
+                elif role_r == "non-claimant" and role_a == "claimant":
+                    chosen = appellant_clean
+                elif role_a == "claimant" and role_r != "claimant":
+                    chosen = appellant_clean
+                elif role_r == "claimant" and role_a != "claimant":
+                    chosen = respondent_clean
+                elif role_a == "non-claimant" and respondent_clean:
+                    chosen = respondent_clean
+                elif role_r == "non-claimant" and appellant_clean:
+                    chosen = appellant_clean
+                else:
+                    chosen = appellant_clean
+            elif respondent_clean:
+                chosen = respondent_clean
+            if chosen and len(chosen) > 2:
+                cause_title_claimant = chosen
+                cause_title_conf = 0.90
+                cause_title_page = find_exact_page(chosen, 1, 5, pages) if pages else 1
+                cause_title_sec = "cause_title"
+                logger.info(f"Cause title extraction (multi-line block): chose claimant '{cause_title_claimant}'")
 
     # 1. Claimant Name extraction
     claimant_patterns = [
