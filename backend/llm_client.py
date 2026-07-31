@@ -235,7 +235,7 @@ def generate_response(prompt: str, system_instruction: str = None, response_form
             req_body = json.dumps(payload).encode("utf-8")
  
         req = urllib.request.Request(url, data=req_body, headers=headers, method="POST")
-        with urllib.request.urlopen(req, timeout=90.0) as response:
+        with urllib.request.urlopen(req, timeout=240.0) as response:
             res_body = response.read().decode("utf-8")
             logger.debug(f"Raw LLM Response: {res_body}")
             res_json = json.loads(res_body)
@@ -270,8 +270,8 @@ def generate_response(prompt: str, system_instruction: str = None, response_form
             is_timeout = True
         
         if is_timeout or "timed out" in str(e).lower():
-            logger.error("LLM Request timed out after 90 seconds.")
-            return "Error connecting to LLM server: Request timed out after 90 seconds"
+            logger.error("LLM Request timed out after 240 seconds.")
+            return "Error connecting to LLM server: Request timed out after 240 seconds"
         
         err_msg = str(e)
         logger.error(f"LLM API URL Error: {err_msg}")
@@ -329,7 +329,7 @@ def generate_response_stream(prompt: str, system_instruction: str = None, histor
             req_body = json.dumps(payload).encode("utf-8")
             
             req = urllib.request.Request(url, data=req_body, headers=headers, method="POST")
-            with urllib.request.urlopen(req, timeout=90.0) as response:
+            with urllib.request.urlopen(req, timeout=240.0) as response:
                 for line in response:
                     if not line:
                         continue
@@ -365,8 +365,8 @@ def generate_response_stream(prompt: str, system_instruction: str = None, histor
             is_timeout = True
         
         if is_timeout or "timed out" in str(e).lower():
-            logger.error("LLM Stream Request timed out after 90 seconds.")
-            yield "Error communicating with LLM stream: Request timed out after 90 seconds"
+            logger.error("LLM Stream Request timed out after 240 seconds.")
+            yield "Error communicating with LLM stream: Request timed out after 240 seconds"
         else:
             yield f"Error communicating with LLM stream: {str(e)}"
     except Exception as e:
@@ -2094,6 +2094,9 @@ def generate_final_judicial_summary(sections: dict, heuristic_signal: dict = Non
                 model=LLM_FINAL_SUMMARY_MODEL_NAME,
                 temperature=LLM_FINAL_SUMMARY_TEMPERATURE
             )
+            if response.startswith("Error connecting to LLM server") or response.startswith("Error communicating with LLM"):
+                logger.warning(f"[FINAL-JUDICIAL-SUMMARY] Attempt {attempt + 1} hit an LLM transport error, not retrying: {response}")
+                break  # don't waste another 90-240s retrying the same timeout
             response = re.sub(r"<think>.*?</think>", "", response, flags=re.DOTALL).strip()
             s = response.find("{")
             e = response.rfind("}")
