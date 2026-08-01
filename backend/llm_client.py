@@ -7,6 +7,7 @@ import socket
 import re
 import time
 from datetime import datetime
+from concurrent.futures import ThreadPoolExecutor
 from rapidfuzz import fuzz
  
 from config.llm import LLM_PROVIDER, LLM_MODEL_NAME, LLM_API_KEY, LLM_API_ENDPOINT
@@ -1947,6 +1948,19 @@ def generate_final_judicial_summary(sections: dict, heuristic_signal: dict = Non
 
     summary_src = "llm_summary"
 
+    # Kick off the grounds/relief claim extraction NOW, in the background --
+    # grounds_text/relief_text are already final at this point and don't
+    # depend on anything computed below (translation, lower-court parsing).
+    # This overlaps one full LLM call with the translation call that's about
+    # to run, instead of waiting for it to finish first.
+    _grounds_claims_executor = ThreadPoolExecutor(max_workers=1)
+    _grounds_claims_future = _grounds_claims_executor.submit(
+        lambda: validate_claims_shape(
+            extract_claims(f"{grounds_text}\n{relief_text}", case_type=case_type,
+                           source_label="HC grounds of appeal / relief").get("claims", [])
+        )
+    )
+
     if supporting_docs and supporting_docs.get("lower_court"):
         lower_court_text = supporting_docs["lower_court"]
         
@@ -2043,14 +2057,31 @@ def generate_final_judicial_summary(sections: dict, heuristic_signal: dict = Non
         return _FINAL_SUMMARY_CACHE[h]
 
     # Step 2: extract structured claims from both sides (generalizes to any case_type)
-    grounds_claims = validate_claims_shape(
-        extract_claims(f"{grounds_text}\n{relief_text}", case_type=case_type,
-                       source_label="HC grounds of appeal / relief").get("claims", [])
+    has_medical = bool(
+        medical_evidence_text and medical_evidence_text.strip()
+        and not medical_evidence_text.startswith("(No supporting")
     )
+
+    # Medical-claims extraction is independent of trial_claims too -- kick it
+    # off now (if applicable) so it overlaps with the trial_claims call below
+    # instead of running after it.
+    _medical_claims_future = None
+    if has_medical:
+        _medical_claims_future = _grounds_claims_executor.submit(
+            lambda: validate_claims_shape(
+                extract_claims(medical_evidence_text, case_type=case_type,
+                               source_label="supporting medical/diagnostic evidence").get("claims", [])
+            )
+        )
+
     trial_claims = validate_claims_shape(
         extract_claims(f"{issues_text_en}\n{award_text_en}", case_type=case_type,
                        source_label="trial court issues/award (translated)").get("claims", [])
     )
+
+    # Collect the grounds_claims background result (started earlier, before
+    # the translation call) -- by now it's almost certainly already done.
+    grounds_claims = _grounds_claims_future.result()
 
     # Step 3: deterministic fuzzy matcher -> candidate list for the LLM to verify
     candidate_discrepancies = find_missing_claims(grounds_claims, trial_claims)
@@ -2061,17 +2092,16 @@ def generate_final_judicial_summary(sections: dict, heuristic_signal: dict = Non
     # HC grounds text at all, so it needs its own direct check against the
     # trial court text rather than riding on the grounds-vs-trial check above.
     medical_discrepancies = []
-    if medical_evidence_text and medical_evidence_text.strip() and not medical_evidence_text.startswith("(No supporting"):
-        medical_claims = validate_claims_shape(
-            extract_claims(medical_evidence_text, case_type=case_type,
-                           source_label="supporting medical/diagnostic evidence").get("claims", [])
-        )
+    if _medical_claims_future is not None:
+        medical_claims = _medical_claims_future.result()
         medical_discrepancies = find_missing_claims(medical_claims, trial_claims)
         for d in medical_discrepancies:
             d["note"] = (
                 "Documented in an uploaded supporting medical/diagnostic report but not "
                 "reflected in the trial court's issues/award text. " + d["note"]
             )
+
+    _grounds_claims_executor.shutdown(wait=False)
 
     seen_claims = {c["claim"].strip().lower() for c in candidate_discrepancies}
     for d in medical_discrepancies:
