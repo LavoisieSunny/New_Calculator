@@ -1593,10 +1593,7 @@ This cannot be undone.`)) return;
             applyAllOcrSuggestions(matchedFile.suggestions, null, null, null, true, false);
             window.lastRawText = (matchedFile.raw_text || []).join("\n");
             switchTab("calculator");
-
-            const lowConf = (matchedFile.suggestions && matchedFile.suggestions.low_confidence_fields) || [];
-            const needsRecovery = lowConf.length > 0;
-            if (needsRecovery && currentOcrRawText.length > 0) {
+            if (currentOcrRawText.length > 0) {
                 runAiRecovery(currentOcrRawText);
             }
         } else {
@@ -1693,10 +1690,7 @@ This cannot be undone.`)) return;
                     applyAllOcrSuggestions(data.suggestions, null, null, null, true, false);
                 }
                 switchTab("calculator");
-
-                const lowConf = (data.suggestions && data.suggestions.low_confidence_fields) || [];
-                const needsRecovery = lowConf.length > 0;
-                if (needsRecovery && currentOcrRawText.length > 0) {
+                if (currentOcrRawText.length > 0) {
                     runAiRecovery(currentOcrRawText);
                 }
             } else {
@@ -4540,29 +4534,20 @@ This cannot be undone.`)) return;
                     return;
                 }
 
-                // Only call the slow LLM-based /ai-recover pass when the fast
-                // heuristic pass actually left something missing/low-confidence.
-                const lowConf = data.suggestions.low_confidence_fields || [];
-                const needsRecovery = lowConf.length > 0;
-
                 // Show loading spinner on button
                 const origHTML = btn.innerHTML;
                 btn.disabled = true;
-                btn.innerHTML = needsRecovery
-                    ? `<i class="fa-solid fa-spinner fa-spin"></i> AI Legal LLM is refining extracted fields...`
-                    : `<i class="fa-solid fa-spinner fa-spin"></i> Filling form...`;
+                btn.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i> AI Legal LLM is refining extracted fields...`;
                 setAutofillFieldsPending(true);
 
                 try {
                     let success = false;
-                    if (needsRecovery && currentOcrRawText && currentOcrRawText.length > 0) {
+                    if (currentOcrRawText && currentOcrRawText.length > 0) {
                         success = await runAiRecovery(currentOcrRawText, window.detectedTrack);
                     }
                     if (!success) {
                         applyAllOcrSuggestions(data.suggestions, null, null, null, false, false);
-                        if (needsRecovery) {
-                            showToast("AI refinement unavailable — filled from heuristic OCR extraction only. Please review all fields.", "warning");
-                        }
+                        showToast("AI refinement unavailable — filled from heuristic OCR extraction only. Please review all fields.", "warning");
                     }
                 } catch (err) {
                     console.error("Autofill click handler error:", err);
