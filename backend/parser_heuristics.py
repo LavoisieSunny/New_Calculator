@@ -5388,9 +5388,6 @@ def parse_extracted_text(text_lines, case_type=None):
     if total_compensation:
         summary_blocks.append(f"The total judicial compensation awarded stands at Rs. {int(float(total_compensation)):,}.")
     summary_blocks.append(f"The insurance/claimant appeal requests a {summary_action} of the compensation award.")
-    if anomalies_detected:
-        summary_blocks.append(f"Validation checks: {'; '.join(anomalies_detected)}")
-    legal_ai_summary = " ".join(summary_blocks)
 
     # Set flat 'name' field for the calculator
     flat_name = claimant_name
@@ -5826,6 +5823,10 @@ def parse_extracted_text(text_lines, case_type=None):
         extracted_loexlife = None
         extracted_loveaff = None
         extracted_lossofenjoy = None
+
+    if anomalies_detected:
+        summary_blocks.append(f"Validation checks: {'; '.join(anomalies_detected)}")
+    legal_ai_summary = " ".join(summary_blocks)
 
     suggestions = {
         "case_type": case_type,

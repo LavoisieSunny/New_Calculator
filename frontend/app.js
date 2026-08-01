@@ -59,6 +59,18 @@ document.addEventListener("DOMContentLoaded", () => {
     let lastExtractedConfidences = {};
     let lastExtractedReasons = {};
 
+    // In-memory cache of generated judicial-analysis reports, hoisted to top scope
+    const judicialAnalysisCache = new Map();
+
+    function getJudicialAnalysisCacheKey() {
+        const sessionPart = currentCaseSessionId || "no-session";
+        const trackPart = window.detectedTrack || "high_court";
+        const caseTypeSelectEl = document.getElementById("case-type");
+        const caseTypePart = caseTypeSelectEl ? caseTypeSelectEl.value : "death";
+        const textPart = (currentOcrRawText || []).join("\n").length + ":" + (currentOcrRawText || []).length;
+        return `${sessionPart}|${trackPart}|${caseTypePart}|${textPart}`;
+    }
+
     // --- OCR LIVE TIMER STATE & HELPERS ---
     let ocrTimerInterval = null;
     let ocrSecondsElapsed = 0;
@@ -1176,7 +1188,7 @@ document.addEventListener("DOMContentLoaded", () => {
                         statusText.textContent = data.message;
                     }
 
-                    if (data.status === "done") {
+                    if (data.status === "fields_ready" || data.status === "done") {
                         // Processing finished — hide the small header indicator
                         if (headerProcessingBadge) headerProcessingBadge.style.display = "none";
 
@@ -1261,6 +1273,27 @@ document.addEventListener("DOMContentLoaded", () => {
                         } else {
                             stopOcrTimerFailure();
                             showToast("Failed to extract data from the PDF: " + (data.message || "Unknown OCR error."), "error");
+                        }
+                    } else if (data.status === "summary_ready") {
+                        if (data.success) {
+                            if (window.lastUploadedOcrData) {
+                                window.lastUploadedOcrData.grounds_relief_summary = data.grounds_relief_summary;
+                                window.lastUploadedOcrData.final_judicial_summary = data.final_judicial_summary;
+                                if (window.lastUploadedOcrData.suggestions) {
+                                    window.lastUploadedOcrData.suggestions.grounds_relief_summary = data.grounds_relief_summary;
+                                    window.lastUploadedOcrData.suggestions.final_judicial_summary = data.final_judicial_summary;
+                                }
+                                updateEnhancementCheck(window.lastUploadedOcrData);
+                            }
+                            const cacheKey = getJudicialAnalysisCacheKey();
+                            if (cacheKey) {
+                                judicialAnalysisCache.set(cacheKey, data.final_judicial_summary);
+                            }
+                            // If the inline analysis panel was waiting, mark it done
+                            if (judicialAnalysisResult) {
+                                judicialAnalysisResult.dataset.state = "done";
+                                judicialAnalysisResult.style.display = "none";
+                            }
                         }
                     } else if (data.status === "failed") {
                         if (headerProcessingBadge) headerProcessingBadge.style.display = "none";
@@ -4729,17 +4762,7 @@ This cannot be undone.`)) return;
     // again simply reopens the same cached report in the modal instead of
     // calling the backend/LLM again -- so the report never changes between
     // clicks for the same document.
-    const judicialAnalysisCache = new Map();
 
-    function getJudicialAnalysisCacheKey() {
-        const sessionPart = currentCaseSessionId || "no-session";
-        const trackPart = window.detectedTrack || "high_court";
-        const caseTypePart = caseTypeSelect ? caseTypeSelect.value : "death";
-        // Cheap content fingerprint so a re-upload / different document under
-        // the same session doesn't reuse a stale cached report.
-        const textPart = (currentOcrRawText || []).join("\n").length + ":" + (currentOcrRawText || []).length;
-        return `${sessionPart}|${trackPart}|${caseTypePart}|${textPart}`;
-    }
 
     function renderJudicialProcessingState(message) {
         if (!judicialAnalysisResult) return;
