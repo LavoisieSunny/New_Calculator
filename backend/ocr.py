@@ -2872,11 +2872,6 @@ async def process_single_file(
             from backend.parser_heuristics import format_suggestions_for_calculator
             formatted_suggestions = format_suggestions_for_calculator(suggestions)
 
-            # Fields are ready — send them now so the form can autofill without
-            # waiting on the two slow judicial-summary LLM calls below.
-            yield f"data: {json.dumps({'status': 'fields_ready', 'progress': 82, 'success': True, 'filename': file.filename, 'fallback_source': fallback_source, 'suggestions': formatted_suggestions, 'case_type': detected_case_type, 'track': active_track, 'raw_text': text_lines, 'ocr_debug': ocr_debug})}\n\n"
-            await asyncio.sleep(0.01)
-
             yield f"data: {json.dumps({'status': 'summarizing', 'progress': 88, 'message': 'Generating legal appeal summary...'})}\n\n"
             await asyncio.sleep(0.01)
 
@@ -2956,7 +2951,7 @@ async def process_single_file(
                 os.unlink(temp_path)
                 temp_path = None
 
-            yield f"data: {json.dumps({'status': 'summary_ready', 'progress': 100, 'success': True, 'filename': file.filename, 'ocr_status': 'loaded', 'fallback_source': fallback_source, 'suggestions': formatted_suggestions, 'case_type': detected_case_type, 'track': active_track, 'raw_text': text_lines, 'ocr_debug': ocr_debug, 'grounds_relief_summary': summary_res, 'final_judicial_summary': final_judicial_res})}\n\n"
+            yield f"data: {json.dumps({'status': 'done', 'progress': 100, 'success': True, 'filename': file.filename, 'ocr_status': 'loaded', 'fallback_source': fallback_source, 'suggestions': formatted_suggestions, 'case_type': detected_case_type, 'track': active_track, 'raw_text': text_lines, 'ocr_debug': ocr_debug, 'grounds_relief_summary': summary_res, 'final_judicial_summary': final_judicial_res})}\n\n"
 
 
 
@@ -3344,12 +3339,8 @@ async def ai_recover_fields(request: AIRecoverRequest):
         from backend.llm_client import summarize_grounds_and_relief, generate_final_judicial_summary
         case_tp = recovered_data.get("case_type") or "death"
         summary_res = summarize_grounds_and_relief(sections_dict, heuristic_signal, case_tp)
-        # Don't force-refresh here — this endpoint only needs to fix field values.
-        # Let it reuse the cache the judicial-summary panel builds on demand
-        # (via /refresh-judicial-summary) instead of paying for a fresh 14B
-        # generation on every field-recovery click.
         final_judicial_res = generate_final_judicial_summary(
-            sections_dict, heuristic_signal, case_tp, supporting_docs=supporting_docs, force_refresh=False
+            sections_dict, heuristic_signal, case_tp, supporting_docs=supporting_docs, force_refresh=True
         )
 
         formatted["grounds_relief_summary"] = summary_res

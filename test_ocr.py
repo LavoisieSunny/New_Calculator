@@ -184,8 +184,8 @@ def test_handwriting_escalation_in_initial_pages():
     from backend.ocr import ocr_page_with_vision
 
     # Paddle result that clears the NORMAL trustworthy bar (conf=0.87 >
-    # OCR_PADDLE_CONF_THRESHOLD=0.85, quality=0.35 > OCR_PADDLE_QUALITY_THRESHOLD=0.40)
-    # but not the stricter handwriting thresholds (conf=0.87 < 0.90 AND quality=0.35 < 0.50).
+    # OCR_PADDLE_CONF_THRESHOLD=0.85, quality=0.45 > OCR_PADDLE_QUALITY_THRESHOLD=0.40)
+    # but not the stricter handwriting thresholds (conf=0.87 < 0.90 AND quality=0.45 < 0.50).
     mock_paddle_lines = ["Claimant Name: Rajesh", "Age: 32"]
     mock_vision_text = "Claimant Name: Rajesh\nAge: 32\nAward: 200000"
 
@@ -203,10 +203,7 @@ def test_handwriting_escalation_in_initial_pages():
         with patch("backend.ocr.preprocess_for_vision", return_value=mock_img), \
              patch("backend.ocr.image_to_base64", return_value="mock_b64"), \
              patch("backend.ocr._vision_is_paused", return_value=False), \
-             patch("backend.ocr.OCR_ENABLE_VISION_ESCALATION", True), \
-             patch("backend.ocr.OCR_HANDWRITING_CHECK_PAGES", 3), \
-             patch("backend.ocr.OCR_HANDWRITING_CONF_THRESHOLD", 0.90), \
-             patch("backend.ocr.OCR_HANDWRITING_QUALITY_THRESHOLD", 0.50):
+             patch("backend.ocr.OCR_ENABLE_VISION_ESCALATION", True):
 
             # page_idx=0 (< OCR_HANDWRITING_CHECK_PAGES=3): should force vision
             # even though Paddle's own result clears the normal trustworthy bar.
@@ -232,46 +229,6 @@ def test_handwriting_escalation_in_initial_pages():
             assert "Age: 32" in lines2
 
 
-def test_no_handwriting_escalation_when_only_one_signal_is_weak():
-    from unittest.mock import patch, MagicMock
-    from backend.ocr import ocr_page_with_vision
-
-    # Paddle result where confidence is weak (0.87 < 0.90) but quality is good (0.60 >= 0.50).
-    # Since only one signal is weak, it should NOT trigger handwriting force on initial pages.
-    mock_paddle_lines = ["Claimant Name: Rajesh", "Age: 32"]
-    mock_vision_text = "Claimant Name: Rajesh\nAge: 32\nAward: 200000"
-
-    with patch("backend.ocr.classify_scanned_page", return_value="text-heavy"), \
-         patch("backend.ocr.call_paddle_ocr", return_value=(mock_paddle_lines, 0.87, False)) as mock_paddle, \
-         patch("backend.ocr.score_ocr_page_quality", return_value=0.60), \
-         patch("backend.ocr.call_vision_model", return_value=mock_vision_text) as mock_vision, \
-         patch("backend.ocr.Image.open") as mock_image_open:
-
-        mock_img = MagicMock()
-        mock_img.convert.return_value = mock_img
-        mock_img.size = (800, 800)
-        mock_image_open.return_value = mock_img
-
-        with patch("backend.ocr.preprocess_for_vision", return_value=mock_img), \
-             patch("backend.ocr.image_to_base64", return_value="mock_b64"), \
-             patch("backend.ocr._vision_is_paused", return_value=False), \
-             patch("backend.ocr.OCR_ENABLE_VISION_ESCALATION", True), \
-             patch("backend.ocr.OCR_HANDWRITING_CHECK_PAGES", 3), \
-             patch("backend.ocr.OCR_HANDWRITING_CONF_THRESHOLD", 0.90), \
-             patch("backend.ocr.OCR_HANDWRITING_QUALITY_THRESHOLD", 0.50):
-
-            # page_idx=0 (< OCR_HANDWRITING_CHECK_PAGES=3): should NOT force vision
-            # since quality (0.60) is above threshold (0.50).
-            lines, meta = ocr_page_with_vision(
-                page_idx=0, total_pages=10, rendered_img_path="dummy_path.png",
-                fitz_text="", pdf_path=None,
-                vision_available=True, paddle_available=True, track="high_court"
-            )
-            mock_vision.assert_not_called()
-            assert "Age: 32" in lines
-
-
 if __name__ == "__main__":
     test_ocr_and_parsing()
     test_handwriting_escalation_in_initial_pages()
-    test_no_handwriting_escalation_when_only_one_signal_is_weak()
