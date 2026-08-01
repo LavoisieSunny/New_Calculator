@@ -1204,17 +1204,20 @@ def _looks_like_handwriting(lines, confidence, quality_score):
     """
     Heuristic handwriting/scribble suspicion check, distinct from (and
     stricter than) _paddle_result_is_trustworthy. Flags a page if:
-    1. Paddle's own per-line confidence is below OCR_HANDWRITING_CONF_THRESHOLD, or
-    2. the legal-text quality score is below OCR_HANDWRITING_QUALITY_THRESHOLD, or
-    3. Paddle found visually-plausible content but very few recognizable
+    1. Paddle's own per-line confidence AND the legal-text quality score are
+       BOTH below their respective thresholds at the same time -- a single
+       weak signal alone (e.g. so-so confidence but a perfectly good quality
+       score) is normal printed-scan noise, not handwriting, and forcing a
+       vision-model call for it just burns the serialized qwen2.5vl slot for
+       nothing, since reconcile_paddle_and_vision() would discard the vision
+       output in favor of Paddle's good-quality result anyway, or
+    2. Paddle found visually-plausible content but very few recognizable
        lines/words -- lots of ink, little machine-readable text -- which is
        the classic handwriting signature Paddle's printed-text models choke on.
     """
     if not lines:
         return True
-    if confidence < OCR_HANDWRITING_CONF_THRESHOLD:
-        return True
-    if quality_score < OCR_HANDWRITING_QUALITY_THRESHOLD:
+    if confidence < OCR_HANDWRITING_CONF_THRESHOLD and quality_score < OCR_HANDWRITING_QUALITY_THRESHOLD:
         return True
     word_count = sum(len(l.split()) for l in lines)
     if len(lines) <= 2 and word_count <= 4:

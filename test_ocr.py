@@ -184,14 +184,14 @@ def test_handwriting_escalation_in_initial_pages():
     from backend.ocr import ocr_page_with_vision
 
     # Paddle result that clears the NORMAL trustworthy bar (conf=0.87 >
-    # OCR_PADDLE_CONF_THRESHOLD=0.85) but not the stricter handwriting bar
-    # (OCR_HANDWRITING_CONF_THRESHOLD=0.90).
+    # OCR_PADDLE_CONF_THRESHOLD=0.85, quality=0.45 > OCR_PADDLE_QUALITY_THRESHOLD=0.40)
+    # but not the stricter handwriting thresholds (conf=0.87 < 0.90 AND quality=0.45 < 0.50).
     mock_paddle_lines = ["Claimant Name: Rajesh", "Age: 32"]
     mock_vision_text = "Claimant Name: Rajesh\nAge: 32\nAward: 200000"
 
     with patch("backend.ocr.classify_scanned_page", return_value="text-heavy"), \
          patch("backend.ocr.call_paddle_ocr", return_value=(mock_paddle_lines, 0.87, False)) as mock_paddle, \
-         patch("backend.ocr.score_ocr_page_quality", return_value=0.60), \
+         patch("backend.ocr.score_ocr_page_quality", return_value=0.45), \
          patch("backend.ocr.call_vision_model", return_value=mock_vision_text) as mock_vision, \
          patch("backend.ocr.Image.open") as mock_image_open:
 
