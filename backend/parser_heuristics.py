@@ -5728,6 +5728,7 @@ def parse_extracted_text(text_lines, case_type=None):
 
     # ── Post-Merge Validation Pass ──────────────────────────────────────────
     from backend.calculator import get_multiplier, get_future_prospect, get_deduction
+    multiplier_needs_manual_review = False
     
     try:
         age_val = int(age) if age else None
@@ -5738,10 +5739,23 @@ def parse_extracted_text(text_lines, case_type=None):
         try:
             expected_multiplier = get_multiplier(age_val)
             if int(multiplier) != expected_multiplier:
-                conf_multiplier = 0.40
                 msg = f"Multiplier mismatch: extracted {multiplier}, expected {expected_multiplier} for age {age_val}."
                 logger.warning(msg)
                 anomalies_detected.append(msg)
+                if ai_recovery_triggered:
+                    # Both heuristic AND LLM recovery have independently
+                    # disagreed with the table for this age -- usually means
+                    # this page doesn't contain the real value at all.
+                    conf_multiplier = 0.20
+                    conf_age = min(conf_age, 0.20)
+                    multiplier_needs_manual_review = True
+                    anomalies_detected.append(
+                        f"Multiplier ({multiplier}) still disagrees with the age-based table "
+                        f"({expected_multiplier}) even after AI recovery -- this page likely does not "
+                        f"contain the real multiplier/age; verify against the judgment manually."
+                    )
+                else:
+                    conf_multiplier = 0.40
         except Exception as e:
             logger.error(f"Error validating multiplier: {e}")
             
@@ -5883,6 +5897,7 @@ def parse_extracted_text(text_lines, case_type=None):
         "insurance_company": insurance_company,
 
         "ai_recovery_triggered": ai_recovery_triggered,
+        "multiplier_needs_manual_review": multiplier_needs_manual_review,
         "legal_ai_summary": legal_ai_summary,
         "anomalies_detected": anomalies_detected,
         "case_classification": case_classification,
