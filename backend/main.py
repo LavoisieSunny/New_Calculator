@@ -14,6 +14,9 @@ logger = logging.getLogger("MainApp")
 # Add root folder to sys.path
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+from dotenv import load_dotenv
+load_dotenv()
+
 from backend.calculator import router as calculator_router, CompensationRequest
 from backend.ocr import router as ocr_router
 from backend.vector_db import semantic_search, get_qdrant_client, VECTOR_DB_INITIALIZED
