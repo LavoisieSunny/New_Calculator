@@ -89,6 +89,16 @@ OCR_PADDLE_LANG              = os.getenv("OCR_PADDLE_LANG", "hi")  # "hi" -> PP-
 OCR_PADDLE_CONF_THRESHOLD    = float(os.getenv("OCR_PADDLE_CONF_THRESHOLD", "0.85"))   # avg per-line rec confidence
 OCR_PADDLE_QUALITY_THRESHOLD = float(os.getenv("OCR_PADDLE_QUALITY_THRESHOLD", "0.40")) # heuristic legal-text quality score
 OCR_ENABLE_VISION_ESCALATION = os.getenv("OCR_ENABLE_VISION_ESCALATION", "true").lower() == "true"
+# Number of leading pages (0-indexed page_idx < N) treated as "metadata-
+# critical" — case number, cause title, computer sheet, party details.
+# On these pages we hold Paddle to a stricter bar than elsewhere in the
+# bundle and force a vision escalation even if Paddle's result would
+# otherwise clear the normal OCR_PADDLE_CONF_THRESHOLD/QUALITY_THRESHOLD
+# bar, because handwriting/stamps/skew on these specific pages costs us
+# the fields the whole autofill pipeline depends on.
+OCR_HANDWRITING_CHECK_PAGES = int(os.getenv("OCR_HANDWRITING_CHECK_PAGES", "3"))
+OCR_HANDWRITING_CONF_THRESHOLD = float(os.getenv("OCR_HANDWRITING_CONF_THRESHOLD", "0.90"))
+OCR_HANDWRITING_QUALITY_THRESHOLD = float(os.getenv("OCR_HANDWRITING_QUALITY_THRESHOLD", "0.50"))
 OCR_HYBRID_LABEL = f"PaddleOCR+{OCR_VISION_MODEL}"
 OCR_MEMORY_WARN_MB = int(os.getenv("OCR_MEMORY_WARN_MB", "3000"))  # soft RSS warning threshold
 # NOTE: OCR_MEMORY_WARN_MB previously existed but was never actually enforced
@@ -1190,6 +1200,28 @@ def _paddle_result_is_trustworthy(lines, confidence, quality_score):
     )
 
 
+def _looks_like_handwriting(lines, confidence, quality_score):
+    """
+    Heuristic handwriting/scribble suspicion check, distinct from (and
+    stricter than) _paddle_result_is_trustworthy. Flags a page if:
+    1. Paddle's own per-line confidence is below OCR_HANDWRITING_CONF_THRESHOLD, or
+    2. the legal-text quality score is below OCR_HANDWRITING_QUALITY_THRESHOLD, or
+    3. Paddle found visually-plausible content but very few recognizable
+       lines/words -- lots of ink, little machine-readable text -- which is
+       the classic handwriting signature Paddle's printed-text models choke on.
+    """
+    if not lines:
+        return True
+    if confidence < OCR_HANDWRITING_CONF_THRESHOLD:
+        return True
+    if quality_score < OCR_HANDWRITING_QUALITY_THRESHOLD:
+        return True
+    word_count = sum(len(l.split()) for l in lines)
+    if len(lines) <= 2 and word_count <= 4:
+        return True
+    return False
+
+
 def reconcile_paddle_and_vision(paddle_lines: list, vis_lines: list) -> tuple:
     """
     Reconciles PaddleOCR and Vision outputs by comparing page-level quality scores.
@@ -1397,9 +1429,17 @@ def ocr_page_with_vision(
             paddle_duration += time.time() - t0
             paddle_q = score_ocr_page_quality(paddle_lines)
 
-        if _paddle_result_is_trustworthy(paddle_lines, paddle_conf, paddle_q):
+        handwriting_forced = (
+            page_idx < OCR_HANDWRITING_CHECK_PAGES
+            and _looks_like_handwriting(paddle_lines, paddle_conf, paddle_q)
+        )
+
+        if _paddle_result_is_trustworthy(paddle_lines, paddle_conf, paddle_q) and not handwriting_forced:
             lines, engine_used, confidence = paddle_lines, "PaddleOCR", paddle_conf
         elif vision_available and OCR_ENABLE_VISION_ESCALATION and not _vision_is_paused():
+            if handwriting_forced:
+                _tlog(f"[OCR] Page {page_num}: within first {OCR_HANDWRITING_CHECK_PAGES} pages and "
+                      f"suspected handwriting (conf={paddle_conf:.2f}, q={paddle_q:.2f}) -> forcing vision")
             _tlog(f"[OCR] Page {page_num}: low-content Paddle result untrusted "
                   f"(conf={paddle_conf:.2f}, q={paddle_q:.2f}, lines={len(paddle_lines)}) "
                   f"-> escalating to vision")
@@ -1452,12 +1492,18 @@ def ocr_page_with_vision(
                 table_mds = extract_tables_via_structure(rendered_img_path, page_num=page_num)
                 structure_duration += time.time() - t0
             
-            # Escalate to vision ONLY if Paddle OCR is low confidence / not trustworthy
-            should_escalate = (not paddle_good)
+            # Escalate to vision if Paddle OCR is low confidence/not trustworthy,
+            # OR if this is one of the metadata-critical leading pages and Paddle's
+            # result looks handwriting-suspect even though it clears the normal bar.
+            handwriting_forced = (
+                page_idx < OCR_HANDWRITING_CHECK_PAGES
+                and _looks_like_handwriting(paddle_lines, paddle_conf, paddle_q)
+            )
+            should_escalate = (not paddle_good) or handwriting_forced
 
-            
             if should_escalate and vision_available and OCR_ENABLE_VISION_ESCALATION and not _vision_is_paused():
-                logger.info(f"Page {page_num}: PaddleOCR quality low (conf={paddle_conf:.2f}, q={paddle_q:.2f}) -> escalating to vision model ({OCR_VISION_MODEL})")
+                reason = "quality low" if not paddle_good else f"handwriting-suspect within first {OCR_HANDWRITING_CHECK_PAGES} pages"
+                logger.info(f"Page {page_num}: PaddleOCR {reason} (conf={paddle_conf:.2f}, q={paddle_q:.2f}) -> escalating to vision model ({OCR_VISION_MODEL})")
                 img_b64 = image_to_base64(_get_processed(), quality=85)
                 t0 = time.time()
                 raw_text = call_vision_model(img_b64, page_num=page_num)
@@ -1605,6 +1651,7 @@ def ocr_page_with_vision(
         "lines": len(lines), "ocr_boxes": [],
         "render_time": 0.0, "ocr_time": ocr_time, "total_page_time": elapsed,
         "confidence_untrusted": confidence == 0.0 and bool(lines),
+        "handwriting_forced": locals().get("handwriting_forced", False),
         "vision_cross_checked": is_cross_check,
         "paddle_time": round(paddle_duration, 3),
         "vision_time": round(vision_duration, 3),

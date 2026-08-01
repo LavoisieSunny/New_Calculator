@@ -2614,11 +2614,12 @@ def contextual_extract(patterns, sections, priority_list, type_cast=str, default
                     if any(kw in pre_ctx for kw in CLAIM_LANGUAGE_KEYWORDS):
                         continue
                 elif field_name in ("claimant_name", "deceased_name", "father_name"):
-                    # Honorific-only patterns (\bsmt\b, \bshri\b, \bmr\b, \bmrs\b, \bkumari\b)
-                    # have no role anchor, so they'll happily match a tribunal member's or
-                    # judge's name (e.g. "The name of the Member : Smt Krishna Paraste").
-                    # Reject matches whose line context names a judicial officer/advocate
-                    # rather than a party.
+                    # Honorific-only patterns (\bsmt\b, \bshri\b, \bmr\b, \bmrs\b,
+                    # \bkumari\b) have no role anchor, so they'll happily match a
+                    # tribunal member's or judge's name -- e.g. "The name of the
+                    # Member : Smt Krishna Paraste" -- instead of the actual party.
+                    # Reject matches whose same-line context names a judicial
+                    # officer/advocate rather than a claimant/appellant/respondent.
                     line_start = text.rfind('\n', 0, m.start()) + 1
                     line_ctx = text[line_start:m.start()].lower()
                     if any(kw in line_ctx for kw in [
@@ -3016,10 +3017,10 @@ def deduce_notional_income(award_amount, age, marital_status, dependents, future
 def _extract_cause_title_block(top_pages_text):
     """
     Multi-line cause-title fallback for the common MP HC layout where the
-    party name is on its own line under an 'APPELLANT :' / 'RESPONDENT :'
+    party name sits on its own line under an 'APPELLANT :' / 'RESPONDENT :'
     label with a standalone 'VERSUS' line in between -- as opposed to a
     compact single-line 'X -Vs- Y' scrutiny-report heading, which not every
-    bundle (especially older-format filings) attaches.
+    bundle attaches (older-format filings in particular often omit it).
     Returns (appellant_raw, respondent_raw) or None.
     """
     lines = top_pages_text.split("\n")
@@ -3371,13 +3372,21 @@ def parse_extracted_text(text_lines, case_type=None):
             break
 
     if not cause_title_claimant:
+        # Fallback: standard MP HC cause-title layout where the party name
+        # is on its own line under an 'APPELLANT :' / 'RESPONDENT :' label
+        # with a standalone 'VERSUS' line in between. This is what carries
+        # older-format bundles (no compact "X -Vs- Y" scrutiny-report page)
+        # through correctly instead of falling through to the honorific-only
+        # claimant_patterns below, which can misfire on a tribunal member's
+        # or judge's name.
         block_result = _extract_cause_title_block(top_pages_text)
         if block_result:
             appellant_raw, respondent_raw = block_result
             appellant_clean = clean_legal_name(appellant_raw)
             respondent_clean = clean_legal_name(respondent_raw)
-            is_ins = any(kw in appellant_raw.lower() for kw in
-                         ["insurance", "insur", "ins.", "co.", "ltd", "limited", "corp", "corporation", "gic", "hdi", "magma", "general"])
+            is_ins = any(kw in appellant_raw.lower() for kw in [
+                "insurance", "insur", "ins.", "co.", "ltd", "limited", "corp", "corporation", "gic", "hdi", "magma", "general"
+            ])
             chosen = None
             if is_ins and respondent_clean and len(respondent_clean) > 2:
                 chosen = respondent_clean
@@ -3400,12 +3409,16 @@ def parse_extracted_text(text_lines, case_type=None):
                     chosen = appellant_clean
             elif respondent_clean:
                 chosen = respondent_clean
+
             if chosen and len(chosen) > 2:
                 cause_title_claimant = chosen
                 cause_title_conf = 0.90
                 cause_title_page = find_exact_page(chosen, 1, 5, pages) if pages else 1
                 cause_title_sec = "cause_title"
-                logger.info(f"Cause title extraction (multi-line block): chose claimant '{cause_title_claimant}'")
+                logger.info(
+                    f"Cause title extraction (multi-line block): chose claimant "
+                    f"'{cause_title_claimant}' (appellant='{appellant_clean}', respondent='{respondent_clean}')"
+                )
 
     # 1. Claimant Name extraction
     claimant_patterns = [
