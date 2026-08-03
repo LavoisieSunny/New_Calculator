@@ -3338,9 +3338,13 @@ async def ai_recover_fields(request: AIRecoverRequest):
 
         from backend.llm_client import summarize_grounds_and_relief, generate_final_judicial_summary
         case_tp = recovered_data.get("case_type") or "death"
-        summary_res = summarize_grounds_and_relief(sections_dict, heuristic_signal, case_tp)
-        final_judicial_res = generate_final_judicial_summary(
-            sections_dict, heuristic_signal, case_tp, supporting_docs=supporting_docs, force_refresh=True
+        summary_res, final_judicial_res = await asyncio.gather(
+            asyncio.to_thread(summarize_grounds_and_relief, sections_dict, heuristic_signal, case_tp),
+            asyncio.to_thread(
+                generate_final_judicial_summary,
+                sections_dict, heuristic_signal, case_tp,
+                supporting_docs=supporting_docs, force_refresh=True
+            )
         )
 
         formatted["grounds_relief_summary"] = summary_res
@@ -3452,7 +3456,8 @@ async def refresh_judicial_summary(request: RefreshJudicialSummaryRequest):
         from backend.llm_client import generate_final_judicial_summary
         heuristic_signal = classify_enhancement_or_reduction(sections_dict)
 
-        final_judicial_res = generate_final_judicial_summary(
+        final_judicial_res = await asyncio.to_thread(
+            generate_final_judicial_summary,
             sections_dict,
             heuristic_signal,
             request.case_type,

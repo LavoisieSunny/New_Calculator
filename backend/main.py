@@ -106,7 +106,9 @@ async def legal_ai_chat(request: ChatRequest):
         case_filter = None if request.case_type == "all" else request.case_type
         
         # 1. Perform semantic search
-        logger_results = semantic_search(request.message, limit=3, case_type_filter=case_filter, case_session_id_filter=request.case_session_id)
+        logger_results = await asyncio.to_thread(
+            semantic_search, request.message, limit=3, case_type_filter=case_filter, case_session_id_filter=request.case_session_id
+        )
         
         if not logger_results:
             # Fallback chat response if Qdrant is empty

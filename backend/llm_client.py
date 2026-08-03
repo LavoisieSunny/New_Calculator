@@ -235,29 +235,46 @@ def generate_response(prompt: str, system_instruction: str = None, response_form
             req_body = json.dumps(payload).encode("utf-8")
  
         req = urllib.request.Request(url, data=req_body, headers=headers, method="POST")
-        with urllib.request.urlopen(req, timeout=240.0) as response:
-            res_body = response.read().decode("utf-8")
-            logger.debug(f"Raw LLM Response: {res_body}")
-            res_json = json.loads(res_body)
-            content = ""
-            if LLM_PROVIDER == "gemini":
-                candidates = res_json.get("candidates", [])
-                if candidates:
-                    parts = candidates[0].get("content", {}).get("parts", [])
-                    if parts:
-                        content = parts[0].get("text", "")
-            else:
-                choices = res_json.get("choices", [])
-                if choices:
-                    content = choices[0].get("message", {}).get("content", "")
-                elif "message" in res_json and "content" in res_json["message"]:
-                    content = res_json["message"]["content"]
-            
-            content_stripped = content.strip()
-            if not content_stripped:
-                logger.error(f"LLM returned an empty response. Raw response: {res_body}")
-                return "LLM returned an empty response — the prompt may have exceeded the model's context window"
-            return content_stripped
+
+        use_gate = (LLM_PROVIDER == "ollama")
+        if use_gate:
+            from backend.ollama_gate import generate_slot, record_generate_result, OllamaPausedError
+            try:
+                with generate_slot():
+                    with urllib.request.urlopen(req, timeout=240.0) as response:
+                        res_body = response.read().decode("utf-8")
+                record_generate_result(True)
+            except OllamaPausedError as pe:
+                logger.error(f"LLM generate gate paused: {pe}")
+                return f"Error connecting to LLM server: {pe}"
+            except Exception:
+                record_generate_result(False)
+                raise
+        else:
+            with urllib.request.urlopen(req, timeout=240.0) as response:
+                res_body = response.read().decode("utf-8")
+
+        logger.debug(f"Raw LLM Response: {res_body}")
+        res_json = json.loads(res_body)
+        content = ""
+        if LLM_PROVIDER == "gemini":
+            candidates = res_json.get("candidates", [])
+            if candidates:
+                parts = candidates[0].get("content", {}).get("parts", [])
+                if parts:
+                    content = parts[0].get("text", "")
+        else:
+            choices = res_json.get("choices", [])
+            if choices:
+                content = choices[0].get("message", {}).get("content", "")
+            elif "message" in res_json and "content" in res_json["message"]:
+                content = res_json["message"]["content"]
+        
+        content_stripped = content.strip()
+        if not content_stripped:
+            logger.error(f"LLM returned an empty response. Raw response: {res_body}")
+            return "LLM returned an empty response — the prompt may have exceeded the model's context window"
+        return content_stripped
     except urllib.error.HTTPError as he:
         err_msg = he.read().decode("utf-8") if he.fp else str(he)
         logger.error(f"LLM API HTTP Error ({he.code}): {err_msg}")
@@ -327,33 +344,42 @@ def generate_response_stream(prompt: str, system_instruction: str = None, histor
                 }
             headers = {"Content-Type": "application/json"}
             req_body = json.dumps(payload).encode("utf-8")
-            
             req = urllib.request.Request(url, data=req_body, headers=headers, method="POST")
-            with urllib.request.urlopen(req, timeout=240.0) as response:
-                for line in response:
-                    if not line:
-                        continue
-                    line_str = line.decode("utf-8").strip()
-                    if not line_str:
-                        continue
-                    try:
-                        if "v1" in LLM_API_ENDPOINT:
-                            if line_str.startswith("data:"):
-                                line_str = line_str[5:].strip()
-                            if line_str == "[DONE]":
-                                break
-                            res_json = json.loads(line_str)
-                            choices = res_json.get("choices", [])
-                            if choices:
-                                delta = choices[0].get("delta", {})
-                                if "content" in delta:
-                                    yield delta["content"]
-                        else:
-                            res_json = json.loads(line_str)
-                            if "message" in res_json and "content" in res_json["message"]:
-                                yield res_json["message"]["content"]
-                    except Exception as e:
-                        logger.warning(f"Error parsing stream line: {str(e)}")
+            from backend.ollama_gate import generate_slot, record_generate_result, OllamaPausedError
+            try:
+                with generate_slot():
+                    with urllib.request.urlopen(req, timeout=240.0) as response:
+                        for line in response:
+                            if not line:
+                                continue
+                            line_str = line.decode("utf-8").strip()
+                            if not line_str:
+                                continue
+                            try:
+                                if "v1" in LLM_API_ENDPOINT:
+                                    if line_str.startswith("data:"):
+                                        line_str = line_str[5:].strip()
+                                    if line_str == "[DONE]":
+                                        break
+                                    res_json = json.loads(line_str)
+                                    choices = res_json.get("choices", [])
+                                    if choices:
+                                        delta = choices[0].get("delta", {})
+                                        if "content" in delta:
+                                            yield delta["content"]
+                                else:
+                                    res_json = json.loads(line_str)
+                                    if "message" in res_json and "content" in res_json["message"]:
+                                        yield res_json["message"]["content"]
+                            except Exception as e:
+                                logger.warning(f"Error parsing stream line: {str(e)}")
+                record_generate_result(True)
+            except OllamaPausedError as pe:
+                logger.error(f"LLM stream gate paused: {pe}")
+                yield f"Error communicating with LLM stream: {pe}"
+            except Exception:
+                record_generate_result(False)
+                raise
         else:
             full_resp = generate_response(prompt, system_instruction, history=history_sliced)
             yield full_resp

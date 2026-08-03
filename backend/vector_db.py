@@ -103,17 +103,25 @@ def get_ollama_embedding(text: str) -> list:
         "model": "nomic-embed-text",
         "prompt": clean_text
     }
+    
+    from backend.ollama_gate import embed_slot, record_embed_result, OllamaPausedError
     try:
         req_body = json.dumps(payload).encode("utf-8")
         req = urllib.request.Request(url, data=req_body, headers={"Content-Type": "application/json"}, method="POST")
-        with urllib.request.urlopen(req, timeout=20.0) as response:
-            res_json = json.loads(response.read().decode("utf-8"))
-            vector = res_json.get("embedding")
-            if not vector or not isinstance(vector, list):
-                raise ValueError("Embedding response is empty or invalid.")
-            return vector
+        with embed_slot():
+            with urllib.request.urlopen(req, timeout=20.0) as response:
+                res_json = json.loads(response.read().decode("utf-8"))
+        vector = res_json.get("embedding")
+        if not vector or not isinstance(vector, list):
+            raise ValueError("Embedding response is empty or invalid.")
+        record_embed_result(True)
+        return vector
+    except OllamaPausedError as pe:
+        logger.warning(f"Embedding gate paused: {pe}")
+        return None
     except Exception as e:
         logger.error(f"Failed to fetch Ollama embedding: {str(e)}")
+        record_embed_result(False)
         return None
 
 def get_embedding_model():
@@ -288,6 +296,8 @@ def extract_paragraphs_with_page_info(text_lines: list) -> list:
 def chunk_paragraphs_with_page_info(page_paragraphs: list, chunk_size: int = 1000, overlap: int = 200) -> list:
     """
     Intelligently chunks paragraphs into 1000-char blocks while retaining starting page numbers.
+    When a chunk exceeds chunk_size, seeds the next chunk with trailing overlap characters 
+    from the previous chunk, trimmed to a word boundary.
     Returns list of dict: [{"page": int, "text": str}]
     """
     chunks_with_page = []
@@ -307,14 +317,40 @@ def chunk_paragraphs_with_page_info(page_paragraphs: list, chunk_size: int = 100
             current_chunk_text.append(para_text)
             current_chunk_len += len(para_text) + 2 # +2 for newline
         else:
+            # Current chunk is full, save it
             if current_chunk_text:
+                prev_text = "\n\n".join(current_chunk_text)
                 chunks_with_page.append({
                     "page": current_chunk_page,
-                    "text": "\n\n".join(current_chunk_text)
+                    "text": prev_text
                 })
-            # Start new chunk with current paragraph
-            current_chunk_text = [para_text]
-            current_chunk_len = len(para_text)
+                
+                # Get trailing overlap characters
+                if overlap > 0 and len(prev_text) > 0:
+                    raw_overlap = prev_text[-overlap:] if len(prev_text) > overlap else prev_text
+                    # Trim to first whitespace to align with word boundary
+                    first_ws = -1
+                    for idx, ch in enumerate(raw_overlap):
+                        if ch.isspace():
+                            first_ws = idx
+                            break
+                    if first_ws != -1:
+                        overlap_seed = raw_overlap[first_ws:].strip()
+                    else:
+                        overlap_seed = raw_overlap.strip()
+                else:
+                    overlap_seed = ""
+            else:
+                overlap_seed = ""
+            
+            # Start new chunk with overlap seed (if any) and current paragraph
+            if overlap_seed:
+                current_chunk_text = [overlap_seed, para_text]
+                current_chunk_len = len(overlap_seed) + len(para_text) + 2
+            else:
+                current_chunk_text = [para_text]
+                current_chunk_len = len(para_text)
+            
             current_chunk_page = para_page
             
     if current_chunk_text:
