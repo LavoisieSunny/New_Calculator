@@ -170,17 +170,36 @@
                                     </div>
                                     <input type="file" id="single-file-input" accept="application/pdf" style="display: none;">
                                 </div>
-
-                                <button type="button" id="add-supporting-docs-btn" class="btn btn-secondary" style="width: 100%; display: inline-flex; align-items: center; justify-content: center; gap: 6px; padding: 9px 12px; font-size: 0.8rem; font-weight: 700; border-radius: var(--radius-sm);">
-                                    <i class="fa-solid fa-folder-open"></i> Upload Supporting Document
-                                </button>
                                 </div>
 
-                                <!-- Supporting Documents Section: always visible now, no longer
-                                     gated behind the main court file finishing first. -->
-                                <div id="supporting-docs-section" style="display: block;">
-                                    <input type="file" id="supporting-docs-input" accept="application/pdf,image/png,image/jpeg" multiple style="display: none;">
-                                    <div id="supporting-docs-chips" class="supporting-docs-chips-container" style="display: flex; flex-direction: column; gap: 8px; margin-bottom: 12px;"></div>
+                                <!-- Supporting Documents Dropdown: a dedicated collapsible
+                                     sub-section that sits below the main court file. Keeps the
+                                     "Upload Supporting Document" action and the (potentially long)
+                                     list of supporting docs out of the way to save vertical space,
+                                     without hiding them inside the outer Case Documents collapse. -->
+                                <div id="supporting-docs-dropdown" class="supporting-docs-dropdown">
+                                    <button type="button" id="supporting-docs-toggle" class="supporting-docs-toggle-header" aria-expanded="true">
+                                        <span class="supporting-docs-toggle-left">
+                                            <i class="fa-solid fa-chevron-down supporting-docs-chevron" id="supporting-docs-chevron"></i>
+                                            <i class="fa-solid fa-folder-open" style="color: var(--color-primary); font-size: 0.85rem;"></i>
+                                            <span>Supporting Documents</span>
+                                            <span id="supporting-docs-count-badge" class="case-documents-count-badge" style="display: none;">0</span>
+                                        </span>
+                                        <span class="case-documents-header-hint">Click to expand / collapse</span>
+                                    </button>
+
+                                    <div id="supporting-docs-body" class="supporting-docs-body">
+                                        <button type="button" id="add-supporting-docs-btn" class="btn btn-secondary" style="width: 100%; display: inline-flex; align-items: center; justify-content: center; gap: 6px; padding: 9px 12px; font-size: 0.8rem; font-weight: 700; border-radius: var(--radius-sm); margin-bottom: 8px;">
+                                            <i class="fa-solid fa-folder-open"></i> Upload Supporting Document
+                                        </button>
+
+                                        <!-- Supporting Documents Section: always visible now, no longer
+                                             gated behind the main court file finishing first. -->
+                                        <div id="supporting-docs-section" style="display: block;">
+                                            <input type="file" id="supporting-docs-input" accept="application/pdf,image/png,image/jpeg" multiple style="display: none;">
+                                            <div id="supporting-docs-chips" class="supporting-docs-chips-container" style="display: flex; flex-direction: column; gap: 8px;"></div>
+                                        </div>
+                                    </div>
                                 </div>
                                 </div>
                                 <!-- /#case-documents-body -->

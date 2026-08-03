@@ -3535,6 +3535,70 @@ select.low-confidence-input {
     pointer-events: none;
 }
 
+/* Supporting Documents Dropdown (nested inside Case Documents) */
+.supporting-docs-dropdown {
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-sm);
+    background: var(--bg-panel);
+    margin-bottom: 4px;
+    overflow: hidden;
+}
+
+.supporting-docs-toggle-header {
+    width: 100%;
+    background: transparent;
+    border: none;
+    padding: 8px 10px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    cursor: pointer;
+    color: var(--text-primary);
+    transition: opacity 0.2s, background 0.2s;
+    outline: none;
+    font-family: inherit;
+    font-size: 0.8rem;
+    font-weight: 700;
+}
+
+.supporting-docs-toggle-header:hover {
+    opacity: 0.85;
+    background: rgba(255, 255, 255, 0.02);
+}
+
+.supporting-docs-toggle-left {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.supporting-docs-chevron {
+    font-size: 0.8rem;
+    color: var(--text-muted);
+    transition: transform 0.2s ease;
+}
+
+.supporting-docs-chevron.rotated {
+    transform: rotate(-90deg);
+}
+
+.supporting-docs-body {
+    max-height: 2000px;
+    opacity: 1;
+    overflow: visible;
+    transition: max-height 0.3s ease-out, opacity 0.2s ease, padding 0.3s ease;
+    padding: 0 10px 10px;
+}
+
+.supporting-docs-body.collapsed {
+    max-height: 0;
+    opacity: 0;
+    overflow: hidden;
+    padding-top: 0;
+    padding-bottom: 0;
+    pointer-events: none;
+}
+
 /* Remove Document Button */
 .supporting-doc-chip .remove-doc-btn {
     background: transparent;

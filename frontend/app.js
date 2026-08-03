@@ -996,11 +996,12 @@ document.addEventListener("DOMContentLoaded", () => {
             supportingDocsChips.innerHTML = "";
         }
         setCaseDocumentsCollapsed(false);
+        setSupportingDocsCollapsed(false);
         updateCaseDocumentsBadge();
     }
 
     // ==========================================================================
-    // CASE DOCUMENTS: collapsible section + live document-count badge
+    // CASE DOCUMENTS & SUPPORTING DOCUMENTS: collapsible sections + live badges
     // ==========================================================================
     const caseDocumentsToggle = document.getElementById("case-documents-toggle");
     const caseDocumentsBody = document.getElementById("case-documents-body");
@@ -1017,23 +1018,65 @@ document.addEventListener("DOMContentLoaded", () => {
     }
 
     function updateCaseDocumentsBadge() {
-        if (!caseDocumentsCountBadge) return;
-        let count = 0;
-        if (singleDropZone && singleDropZone.classList.contains("compact")) count += 1;
-        if (supportingDocsChips) count += supportingDocsChips.querySelectorAll(".supporting-doc-chip").length;
+        if (caseDocumentsCountBadge) {
+            let count = 0;
+            if (singleDropZone && singleDropZone.classList.contains("compact")) count += 1;
+            if (supportingDocsChips) count += supportingDocsChips.querySelectorAll(".supporting-doc-chip").length;
 
-        if (count > 0) {
-            caseDocumentsCountBadge.textContent = String(count);
-            caseDocumentsCountBadge.style.display = "inline-flex";
-        } else {
-            caseDocumentsCountBadge.style.display = "none";
+            if (count > 0) {
+                caseDocumentsCountBadge.textContent = String(count);
+                caseDocumentsCountBadge.style.display = "inline-flex";
+            } else {
+                caseDocumentsCountBadge.style.display = "none";
+            }
         }
+        updateSupportingDocsBadge();
     }
 
     if (caseDocumentsToggle) {
         caseDocumentsToggle.addEventListener("click", () => {
             const isCollapsed = caseDocumentsBody ? caseDocumentsBody.classList.contains("collapsed") : false;
             setCaseDocumentsCollapsed(!isCollapsed);
+        });
+    }
+
+    // ==========================================================================
+    // SUPPORTING DOCUMENTS: dedicated collapsible dropdown nested below the
+    // main court file. Independent from the outer Case Documents collapse so
+    // the "Upload Supporting Document" action is never hidden away just
+    // because the main file finished processing.
+    // ==========================================================================
+    const supportingDocsToggle = document.getElementById("supporting-docs-toggle");
+    const supportingDocsBody = document.getElementById("supporting-docs-body");
+    const supportingDocsChevron = document.getElementById("supporting-docs-chevron");
+    const supportingDocsCountBadge = document.getElementById("supporting-docs-count-badge");
+
+    function setSupportingDocsCollapsed(collapsed) {
+        if (!supportingDocsBody || !supportingDocsToggle) return;
+        supportingDocsBody.classList.toggle("collapsed", collapsed);
+        supportingDocsToggle.setAttribute("aria-expanded", (!collapsed).toString());
+        if (supportingDocsChevron) {
+            supportingDocsChevron.classList.toggle("rotated", collapsed);
+        }
+    }
+
+    function updateSupportingDocsBadge() {
+        if (!supportingDocsCountBadge) return;
+        const count = document.getElementById("supporting-docs-chips")
+            ? document.getElementById("supporting-docs-chips").querySelectorAll(".supporting-doc-chip").length
+            : 0;
+        if (count > 0) {
+            supportingDocsCountBadge.textContent = String(count);
+            supportingDocsCountBadge.style.display = "inline-flex";
+        } else {
+            supportingDocsCountBadge.style.display = "none";
+        }
+    }
+
+    if (supportingDocsToggle) {
+        supportingDocsToggle.addEventListener("click", () => {
+            const isCollapsed = supportingDocsBody ? supportingDocsBody.classList.contains("collapsed") : false;
+            setSupportingDocsCollapsed(!isCollapsed);
         });
     }
 
@@ -1287,11 +1330,11 @@ document.addEventListener("DOMContentLoaded", () => {
                                 supportingDocsSection.style.display = "block";
                             }
                             updateCaseDocumentsBadge();
-                            // Documents are processed -- fold the section away so the
-                            // rest of the form has room; the badge + "click to expand"
-                            // hint keeps it discoverable when the person needs to add
-                            // more supporting documents or double-check a file.
-                            setCaseDocumentsCollapsed(true);
+                            // Keep the Case Documents section expanded -- the main file
+                            // switches to its compact one-line view automatically, and the
+                            // "Upload Supporting Document" dropdown right below it must stay
+                            // visible so the person can immediately attach lower-court /
+                            // hospital records without having to hunt for a collapsed panel.
 
 
 
@@ -3623,6 +3666,7 @@ This cannot be undone.`)) return;
             singleDropZone.classList.remove("compact");
         }
         setCaseDocumentsCollapsed(false);
+        setSupportingDocsCollapsed(false);
         updateCaseDocumentsBadge();
 
         window.lastRawText = "";
@@ -4642,6 +4686,7 @@ This cannot be undone.`)) return;
 
     if (addSupportingDocsBtn && supportingDocsInput) {
         addSupportingDocsBtn.addEventListener("click", () => {
+            setSupportingDocsCollapsed(false);
             supportingDocsInput.click();
         });
     }
@@ -4705,6 +4750,7 @@ This cannot be undone.`)) return;
         if (supportingDocsChips) {
             supportingDocsChips.appendChild(chip);
         }
+        setSupportingDocsCollapsed(false);
         updateCaseDocumentsBadge();
 
         const uploadBtn = chip.querySelector(".upload-btn");
