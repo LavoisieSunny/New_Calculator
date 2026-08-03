@@ -240,7 +240,7 @@ def generate_response(prompt: str, system_instruction: str = None, response_form
         if use_gate:
             from backend.ollama_gate import generate_slot, record_generate_result, OllamaPausedError
             try:
-                with generate_slot():
+                with generate_slot(effective_model):
                     with urllib.request.urlopen(req, timeout=240.0) as response:
                         res_body = response.read().decode("utf-8")
                 record_generate_result(True)
@@ -347,7 +347,7 @@ def generate_response_stream(prompt: str, system_instruction: str = None, histor
             req = urllib.request.Request(url, data=req_body, headers=headers, method="POST")
             from backend.ollama_gate import generate_slot, record_generate_result, OllamaPausedError
             try:
-                with generate_slot():
+                with generate_slot(LLM_MODEL_NAME):
                     with urllib.request.urlopen(req, timeout=240.0) as response:
                         for line in response:
                             if not line:
@@ -2022,13 +2022,12 @@ def generate_final_judicial_summary(sections: dict, heuristic_signal: dict = Non
         else:
             summary_src = "parsed_sections"
 
-        translation = translate_trial_court_text(lc_issues_raw, lc_award_raw)
-        issues_text_en = translation.get("issues_en") or lc_issues_raw
-        award_text_en = translation.get("award_en") or lc_award_raw
-
         # fold attachments into medical_evidence_text instead of overwriting it
         if lc_attachment_text:
             medical_evidence_text = (medical_evidence_text + "\n\n[From lower court record attachments]\n" + lc_attachment_text).strip()
+
+        translate_src_issues = lc_issues_raw
+        translate_src_award = lc_award_raw
     else:
         logger.info(
             f"[JUDICIAL-ANALYSIS] issues_raw_len={len(issues_raw)}, award_text_raw_len={len(award_text_raw)}, "
@@ -2057,41 +2056,72 @@ def generate_final_judicial_summary(sections: dict, heuristic_signal: dict = Non
         issues_rows = normalize_issues_table(issues_raw)
         issues_text_hi = "\n".join(f"{r.get('issue', '')}: {r.get('finding', '')}" for r in issues_rows) or issues_raw
 
-        translation = translate_trial_court_text(issues_text_hi, award_text_raw)
-        issues_text_en = translation.get("issues_en") or issues_text_hi
-        award_text_en = translation.get("award_en") or award_text_raw
+        translate_src_issues = issues_text_hi
+        translate_src_award = award_text_raw
         summary_src = "mact_quoted_fallback"
 
+    translation = None
+    issues_text_en = None
+    award_text_en = None
+
+    h_trans = hashlib.sha256(f"{translate_src_issues}|||{translate_src_award}".encode("utf-8")).hexdigest()
+    if h_trans in _TRANSLATION_CACHE:
+        translation = _TRANSLATION_CACHE[h_trans]
+        issues_text_en = translation.get("issues_en") or translate_src_issues
+        award_text_en = translation.get("award_en") or translate_src_award
+        
+        # Check if final summary is also cached
+        concat = f"{issues_text_en}|||{award_text_en}|||{grounds_text}|||{relief_text}|||{medical_evidence_text}"
+        h = hashlib.sha256(concat.encode("utf-8")).hexdigest()
+        if not force_refresh and h in _FINAL_SUMMARY_CACHE:
+            logger.info("[FINAL-JUDICIAL-SUMMARY] Returning cached summary.")
+            return _FINAL_SUMMARY_CACHE[h]
+
+    # If not cached, run translate and extraction parallelly in ThreadPoolExecutor
+    from concurrent.futures import ThreadPoolExecutor
+
+    with ThreadPoolExecutor(max_workers=3) as ex:
+        if issues_text_en is not None:
+            translate_future = None
+        else:
+            translate_future = ex.submit(translate_trial_court_text, translate_src_issues, translate_src_award)
+            
+        grounds_future = ex.submit(
+            extract_claims, f"{grounds_text}\n{relief_text}", case_type=case_type, source_label="HC grounds of appeal / relief"
+        )
+        medical_future = None
+        if medical_evidence_text and medical_evidence_text.strip() and not medical_evidence_text.startswith("(No supporting"):
+            medical_future = ex.submit(
+                extract_claims, medical_evidence_text, case_type=case_type, source_label="supporting medical/diagnostic evidence"
+            )
+
+        if translate_future:
+            translation = translate_future.result()
+            issues_text_en = translation.get("issues_en") or translate_src_issues
+            award_text_en = translation.get("award_en") or translate_src_award
+
+        # trial-claims depends on the translation, so it can only start now
+        trial_claims_future = ex.submit(
+            extract_claims, f"{issues_text_en}\n{award_text_en}", case_type=case_type, source_label="trial court issues/award (translated)"
+        )
+
+        grounds_claims = validate_claims_shape(grounds_future.result().get("claims", []))
+        medical_claims = validate_claims_shape(medical_future.result().get("claims", [])) if medical_future else []
+        trial_claims = validate_claims_shape(trial_claims_future.result().get("claims", []))
+
+    # Compute final summary hash and check cache
     concat = f"{issues_text_en}|||{award_text_en}|||{grounds_text}|||{relief_text}|||{medical_evidence_text}"
     h = hashlib.sha256(concat.encode("utf-8")).hexdigest()
     if not force_refresh and h in _FINAL_SUMMARY_CACHE:
         logger.info("[FINAL-JUDICIAL-SUMMARY] Returning cached summary.")
         return _FINAL_SUMMARY_CACHE[h]
 
-    # Step 2: extract structured claims from both sides (generalizes to any case_type)
-    grounds_claims = validate_claims_shape(
-        extract_claims(f"{grounds_text}\n{relief_text}", case_type=case_type,
-                       source_label="HC grounds of appeal / relief").get("claims", [])
-    )
-    trial_claims = validate_claims_shape(
-        extract_claims(f"{issues_text_en}\n{award_text_en}", case_type=case_type,
-                       source_label="trial court issues/award (translated)").get("claims", [])
-    )
-
     # Step 3: deterministic fuzzy matcher -> candidate list for the LLM to verify
     candidate_discrepancies = find_missing_claims(grounds_claims, trial_claims)
 
-    # Step 3b: same deterministic matcher, but for supporting medical/diagnostic
-    # evidence (X-ray, USG, CT, discharge cards, etc.) against the trial court
-    # record. A clinical finding on an uploaded report may never appear in the
-    # HC grounds text at all, so it needs its own direct check against the
-    # trial court text rather than riding on the grounds-vs-trial check above.
+    # Step 3b: same matcher, but for supporting medical/diagnostic evidence against trial court text
     medical_discrepancies = []
     if medical_evidence_text and medical_evidence_text.strip() and not medical_evidence_text.startswith("(No supporting"):
-        medical_claims = validate_claims_shape(
-            extract_claims(medical_evidence_text, case_type=case_type,
-                           source_label="supporting medical/diagnostic evidence").get("claims", [])
-        )
         medical_discrepancies = find_missing_claims(medical_claims, trial_claims)
         for d in medical_discrepancies:
             d["note"] = (
