@@ -995,6 +995,46 @@ document.addEventListener("DOMContentLoaded", () => {
         if (supportingDocsChips) {
             supportingDocsChips.innerHTML = "";
         }
+        setCaseDocumentsCollapsed(false);
+        updateCaseDocumentsBadge();
+    }
+
+    // ==========================================================================
+    // CASE DOCUMENTS: collapsible section + live document-count badge
+    // ==========================================================================
+    const caseDocumentsToggle = document.getElementById("case-documents-toggle");
+    const caseDocumentsBody = document.getElementById("case-documents-body");
+    const caseDocumentsChevron = document.getElementById("case-documents-chevron");
+    const caseDocumentsCountBadge = document.getElementById("case-documents-count-badge");
+
+    function setCaseDocumentsCollapsed(collapsed) {
+        if (!caseDocumentsBody || !caseDocumentsToggle) return;
+        caseDocumentsBody.classList.toggle("collapsed", collapsed);
+        caseDocumentsToggle.setAttribute("aria-expanded", (!collapsed).toString());
+        if (caseDocumentsChevron) {
+            caseDocumentsChevron.classList.toggle("rotated", collapsed);
+        }
+    }
+
+    function updateCaseDocumentsBadge() {
+        if (!caseDocumentsCountBadge) return;
+        let count = 0;
+        if (singleDropZone && singleDropZone.classList.contains("compact")) count += 1;
+        if (supportingDocsChips) count += supportingDocsChips.querySelectorAll(".supporting-doc-chip").length;
+
+        if (count > 0) {
+            caseDocumentsCountBadge.textContent = String(count);
+            caseDocumentsCountBadge.style.display = "inline-flex";
+        } else {
+            caseDocumentsCountBadge.style.display = "none";
+        }
+    }
+
+    if (caseDocumentsToggle) {
+        caseDocumentsToggle.addEventListener("click", () => {
+            const isCollapsed = caseDocumentsBody ? caseDocumentsBody.classList.contains("collapsed") : false;
+            setCaseDocumentsCollapsed(!isCollapsed);
+        });
     }
 
     // Attach click handler for change-file-btn
@@ -1246,6 +1286,12 @@ document.addEventListener("DOMContentLoaded", () => {
                             if (supportingDocsSection) {
                                 supportingDocsSection.style.display = "block";
                             }
+                            updateCaseDocumentsBadge();
+                            // Documents are processed -- fold the section away so the
+                            // rest of the form has room; the badge + "click to expand"
+                            // hint keeps it discoverable when the person needs to add
+                            // more supporting documents or double-check a file.
+                            setCaseDocumentsCollapsed(true);
 
 
 
@@ -3573,6 +3619,11 @@ This cannot be undone.`)) return;
         if (supportingDocsChips) {
             supportingDocsChips.innerHTML = "";
         }
+        if (singleDropZone) {
+            singleDropZone.classList.remove("compact");
+        }
+        setCaseDocumentsCollapsed(false);
+        updateCaseDocumentsBadge();
 
         window.lastRawText = "";
         const suggestionDiv = document.getElementById("case-type-suggestion");
@@ -4627,6 +4678,9 @@ This cannot be undone.`)) return;
                     <button type="button" class="preview-extraction-btn" title="View extracted text" style="display: none;">
                         <i class="fa-solid fa-eye"></i>
                     </button>
+                    <button type="button" class="remove-doc-btn" title="Remove this document">
+                        <i class="fa-solid fa-xmark"></i>
+                    </button>
                 </div>
             </div>
 
@@ -4651,12 +4705,14 @@ This cannot be undone.`)) return;
         if (supportingDocsChips) {
             supportingDocsChips.appendChild(chip);
         }
+        updateCaseDocumentsBadge();
 
         const uploadBtn = chip.querySelector(".upload-btn");
         const docTypeSelect = chip.querySelector(".doc-type-select");
         const enhanceOcrCheckbox = chip.querySelector(".enhance-ocr-checkbox");
         const statusBadge = chip.querySelector(".status-badge");
         const previewBtn = chip.querySelector(".preview-extraction-btn");
+        const removeBtn = chip.querySelector(".remove-doc-btn");
 
         uploadBtn.addEventListener("click", () => {
             docTypeSelect.disabled = true;
@@ -4669,6 +4725,45 @@ This cannot be undone.`)) return;
             const rawText = chip.dataset.rawText ? JSON.parse(chip.dataset.rawText) : [];
             showExtractedTextModal(file.name, rawText);
         });
+
+        removeBtn.addEventListener("click", () => {
+            removeSupportingDocChip(chip, file, statusBadge);
+        });
+    }
+
+    // Removes a wrongly-uploaded supporting document. If it hasn't finished
+    // indexing yet, this simply drops it from the UI. If it already finished
+    // ("done"), the person is asked to confirm since it also needs to be
+    // deleted from the backend's Qdrant index so it stops influencing the
+    // judicial analysis / autofill.
+    async function removeSupportingDocChip(chip, file, statusBadge) {
+        const currentStatus = statusBadge ? statusBadge.textContent.trim().toLowerCase() : "";
+        const isIndexed = currentStatus === "done";
+        const isProcessing = currentStatus === "processing" || (currentStatus && !["queued", "failed", "done", ""].includes(currentStatus));
+
+        if (isIndexed) {
+            const confirmed = window.confirm(`Remove "${file.name}" from this case? It will also be removed from the processed documents used for judicial analysis.`);
+            if (!confirmed) return;
+        } else if (isProcessing) {
+            const confirmed = window.confirm(`"${file.name}" is still being processed. Remove it anyway?`);
+            if (!confirmed) return;
+        }
+
+        chip.style.opacity = "0.5";
+        chip.style.pointerEvents = "none";
+
+        if (isIndexed || isProcessing) {
+            try {
+                await fetch(`/api/qdrant/document/${encodeURIComponent(file.name)}`, { method: "DELETE" });
+            } catch (err) {
+                console.error("Failed to remove supporting document from index:", err);
+            }
+            judicialAnalysisCache.clear();
+        }
+
+        chip.remove();
+        updateCaseDocumentsBadge();
+        showToast(`Removed "${file.name}" from case documents.`, "success");
     }
 
     function showExtractedTextModal(filename, lines) {
@@ -5078,6 +5173,7 @@ This cannot be undone.`)) return;
                                 judicialAnalysisResult.dataset.state === "processing") {
                                 checkJudicialAnalysisBtn.click();
                             }
+                            updateCaseDocumentsBadge();
                         } else {
                             statusBadge.textContent = "failed";
                             statusBadge.className = "status-badge failed";

@@ -138,9 +138,21 @@
                             <!-- Single PDF Drag & Drop Uploader (shown after case type selection)
                                  Directly feeds a PDF judgment or claim sheet into the local PaddleOCR pipeline. -->
                             <div id="single-upload-section" class="form-group full-width show-flex">
-                                <label class="main-label">Case Documents</label>
-                                <div style="display: flex; gap: 10px; align-items: stretch; margin-bottom: 4px;">
-                                <div id="single-drop-zone" class="single-drop-zone" style="flex: 1; min-height: 0; padding: 8px 12px;">
+                                <!-- Collapsible header: keeps the documents list out of the way
+                                     once files are processed, while still surfacing at a glance
+                                     how many documents are attached to the case. -->
+                                <button type="button" id="case-documents-toggle" class="case-documents-header">
+                                    <span class="case-documents-header-left">
+                                        <i class="fa-solid fa-chevron-down case-documents-chevron" id="case-documents-chevron"></i>
+                                        <span class="main-label" style="margin: 0;">Case Documents</span>
+                                        <span id="case-documents-count-badge" class="case-documents-count-badge" style="display: none;">0</span>
+                                    </span>
+                                    <span class="case-documents-header-hint">Click to expand / collapse</span>
+                                </button>
+
+                                <div id="case-documents-body" class="case-documents-body">
+                                <div style="display: flex; flex-direction: column; gap: 8px; margin-bottom: 4px;">
+                                <div id="single-drop-zone" class="single-drop-zone" style="min-height: 0; padding: 8px 12px;">
                                     <div class="single-drop-zone-content full-only" style="flex-direction: row; gap: 6px; padding: 0; margin: 0;">
                                         <i class="fa-solid fa-file-pdf single-drop-icon" style="color: var(--color-danger); font-size: 1.1rem; margin: 0;"></i>
                                         <span style="font-weight: 700; font-size: 0.8rem; color: var(--text-primary);">Upload Court File</span>
@@ -153,13 +165,13 @@
                                                 <span class="badge badge-success" style="background: rgba(46, 204, 113, 0.15); border: 1px solid rgba(46, 204, 113, 0.3); color: #2ecc71; font-size: 0.7rem; padding: 1px 6px; border-radius: 50px; font-weight: 600; display: inline-flex; align-items: center; gap: 4px; flex-shrink: 0;"><i class="fa-solid fa-check"></i> Extracted</span>
                                                 <span id="compact-duration-caption" style="font-size: 0.72rem; color: var(--text-muted); flex-shrink: 0;"></span>
                                             </div>
-                                            <button type="button" id="change-file-btn" style="background: transparent; border: none; color: var(--color-primary); font-size: 0.78rem; font-weight: 600; cursor: pointer; text-decoration: underline; white-space: nowrap; padding: 0;">Change File</button>
+                                            <button type="button" id="change-file-btn" style="background: transparent; border: none; color: var(--color-primary); font-size: 0.78rem; font-weight: 600; cursor: pointer; text-decoration: underline; white-space: nowrap; padding: 0; flex-shrink: 0;">Change File</button>
                                         </div>
                                     </div>
                                     <input type="file" id="single-file-input" accept="application/pdf" style="display: none;">
                                 </div>
 
-                                <button type="button" id="add-supporting-docs-btn" class="btn btn-secondary" style="flex: 1; display: inline-flex; align-items: center; justify-content: center; gap: 6px; padding: 8px 12px; font-size: 0.8rem; font-weight: 700; border-radius: var(--radius-sm);">
+                                <button type="button" id="add-supporting-docs-btn" class="btn btn-secondary" style="width: 100%; display: inline-flex; align-items: center; justify-content: center; gap: 6px; padding: 9px 12px; font-size: 0.8rem; font-weight: 700; border-radius: var(--radius-sm);">
                                     <i class="fa-solid fa-folder-open"></i> Upload Supporting Document
                                 </button>
                                 </div>
@@ -170,6 +182,8 @@
                                     <input type="file" id="supporting-docs-input" accept="application/pdf,image/png,image/jpeg" multiple style="display: none;">
                                     <div id="supporting-docs-chips" class="supporting-docs-chips-container" style="display: flex; flex-direction: column; gap: 8px; margin-bottom: 12px;"></div>
                                 </div>
+                                </div>
+                                <!-- /#case-documents-body -->
 
                                 <!-- Judicial Analysis: explicit, on-demand comparison of the High
                                      Court file against any supporting (lower court / hospital) docs.

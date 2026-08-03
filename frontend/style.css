@@ -3459,3 +3459,98 @@ select.low-confidence-input {
     color: #ef4444;
     border: 1px solid rgba(239, 68, 68, 0.2);
 }
+
+/* Collapsible Case Documents Header */
+.case-documents-header {
+    width: 100%;
+    background: transparent;
+    border: none;
+    padding: 8px 0;
+    margin-bottom: 8px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    cursor: pointer;
+    color: var(--text-primary);
+    transition: opacity 0.2s;
+    outline: none;
+    font-family: inherit;
+}
+
+.case-documents-header:hover {
+    opacity: 0.85;
+}
+
+.case-documents-header-left {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.case-documents-chevron {
+    font-size: 0.85rem;
+    color: var(--text-muted);
+    transition: transform 0.2s ease;
+}
+
+.case-documents-chevron.rotated {
+    transform: rotate(-90deg);
+}
+
+.case-documents-count-badge {
+    background: var(--color-primary);
+    color: white;
+    font-size: 0.72rem;
+    font-weight: 700;
+    padding: 1px 6px;
+    border-radius: 10px;
+    min-width: 16px;
+    text-align: center;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    line-height: 1.2;
+}
+
+.case-documents-header-hint {
+    font-size: 0.75rem;
+    color: var(--text-muted);
+    font-weight: 500;
+}
+
+/* Case Documents Body */
+.case-documents-body {
+    max-height: 1200px;
+    opacity: 1;
+    overflow: visible;
+    transition: max-height 0.3s ease-out, opacity 0.2s ease, margin 0.3s ease;
+    margin-bottom: 8px;
+}
+
+.case-documents-body.collapsed {
+    max-height: 0;
+    opacity: 0;
+    overflow: hidden;
+    margin-bottom: 0;
+    pointer-events: none;
+}
+
+/* Remove Document Button */
+.supporting-doc-chip .remove-doc-btn {
+    background: transparent;
+    border: none;
+    color: var(--text-muted, #64748b);
+    font-size: 0.85rem;
+    cursor: pointer;
+    padding: 4px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 4px;
+    transition: all 0.2s ease;
+}
+
+.supporting-doc-chip .remove-doc-btn:hover {
+    color: var(--color-danger, #ef4444);
+    background: rgba(239, 68, 68, 0.1);
+}
