@@ -38,14 +38,15 @@ HEADING_KEYWORDS = {
     "claimant_section": [
         "legal representatives", "parties to the", "cause title", "party details",
         "details of claimants", "details of petitioners", "claimant details",
-        "petitioner details", "memo of parties"
+        "petitioner details", "memo of parties", "name and description of the injured person"
     ],
     "accident_section": [
         "manner of accident", "details of accident", "occurrence of accident", "date of accident",
         "particulars of accident"
     ],
     "compensation_section": [
-        "compensation", "quantum", "assessment of compensation", "heads of claim", "calculation"
+        "compensation", "quantum", "assessment of compensation", "heads of claim", "calculation",
+        "non-fatal accident case"
     ],
     "relief_section": [
         "प्रार्थना", "याचना", "अनुतोष", "राहत की प्रार्थना", "अतः प्रार्थना है",
@@ -148,7 +149,7 @@ FIELD_LABEL_ALIASES = {
     "insurance_company": [
         "insurance company", "name of insurance company", "insurer",
         "insurer name", "insurance co", "name of insurer",
-        "respondent insurance"
+        "respondent insurance", "insured by"
     ],
     "marital_status": [
         "marital status", "matrimonial status"
@@ -333,7 +334,7 @@ def parse_mact_tabular_form(text_lines):
     tabular_line_re = re.compile(
         r'^(?:\(?[0-9a-zA-Z]+\)?[\.\)\-\s]+)?'
         r'([A-Za-zऀ-ॿ][A-Za-z0-9ऀ-ॿ\s\./\(\)\-\&]+?)'
-        r'\s*[:|]\s*'
+        r'\s*(?:[:|\-–—]\s*|\s{2,})'
         r'(.+)$'
     )
 
@@ -354,6 +355,9 @@ def parse_mact_tabular_form(text_lines):
         value_raw = m.group(2).strip()
 
         if len(label_raw) < 3 or not value_raw:
+            continue
+        # reject matches where the "value" is really just a continuation word
+        if re.match(r'^[a-z]', value_raw) and len(label_raw.split()) <= 1:
             continue
         if value_raw.lower() in {'nil', 'n/a', '-', '--', '---', 'na', '_', '__'}:
             continue

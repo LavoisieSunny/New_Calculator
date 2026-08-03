@@ -1211,7 +1211,7 @@ def _looks_like_handwriting(lines, confidence, quality_score):
        vision-model call for it just burns the serialized qwen2.5vl slot for
        nothing, since reconcile_paddle_and_vision() would discard the vision
        output in favor of Paddle's good-quality result anyway, or
-    2. Paddle found visually-plausible content but very few recognizable
+       2. Paddle found visually-plausible content but very few recognizable
        lines/words -- lots of ink, little machine-readable text -- which is
        the classic handwriting signature Paddle's printed-text models choke on.
     """
