@@ -109,6 +109,7 @@ OCR_MEMORY_WARN_MB = int(os.getenv("OCR_MEMORY_WARN_MB", "3000"))  # soft RSS wa
 # production. OCR_MEMORY_GATE_MAX_WAIT bounds how long a worker will pause for
 # memory to free up before proceeding anyway (never deadlock the batch).
 OCR_MEMORY_GATE_MAX_WAIT = float(os.getenv("OCR_MEMORY_GATE_MAX_WAIT", "20.0"))
+OCR_VISION_MAX_DIM = int(os.getenv("OCR_VISION_MAX_DIM", "1120"))
 
 # Vision model Ollama concurrency semaphore —
 # qwen2.5vl:7b runs one inference at a time on a single GPU/CPU.
@@ -239,6 +240,12 @@ _LEGAL_QUALITY_KEYWORDS = [
     "tribunal", "claimant", "petitioner", "mact", "mcop", "accident",
     "rs.", "compensation", "disability", "income", "award", "court",
     "deceased", "injured", "monthly", "insurance", "motor", "claim"
+]
+
+_LEGAL_QUALITY_KEYWORDS_HINDI = [
+    "न्यायाधिकरण", "अधिकरण", "दावेदार", "याचिकाकर्ता", "दुर्घटना",
+    "मुआवजा", "क्षतिपूर्ति", "मृतक", "घायल", "बीमा", "न्यायालय",
+    "पंचाट", "रुपये", "मासिक", "आय", "दावा", "प्रार्थी"
 ]
 
 # Devanagari unicode range
@@ -985,11 +992,26 @@ def preprocess_for_vision(pil_img) -> Image.Image:
     """
     Lightweight preprocessing optimised for vision model input:
     - Convert to RGB (model expects colour)
+    - Resize to max_dim (multiple of 28 for Qwen2.5-VL patch alignment) to speed up inference and save memory
     - Mild CLAHE contrast boost (helps faded scans)
     - NO binarization — vision models read grayscale gradients better than hard thresholds
     """
     try:
         import cv2
+        
+        # Resize image to fit max_dim to optimize visual tokens & inference speed
+        w, h = pil_img.size
+        max_dim = OCR_VISION_MAX_DIM
+        if max_dim > 0 and max(w, h) > max_dim:
+            ratio = max_dim / max(w, h)
+            # Align dimensions to multiples of 28 for Qwen2.5-VL patches
+            nw = int(round(w * ratio / 28) * 28)
+            nh = int(round(h * ratio / 28) * 28)
+            nw = max(28, nw)
+            nh = max(28, nh)
+            logger.info(f"Resizing for vision model: {w}x{h} -> {nw}x{nh}")
+            pil_img = pil_img.resize((nw, nh), Image.Resampling.LANCZOS)
+
         img_np = np.array(pil_img.convert("RGB"))
         # Convert to LAB, apply CLAHE to L channel only
         lab = cv2.cvtColor(img_np, cv2.COLOR_RGB2LAB)
@@ -1155,7 +1177,15 @@ def score_ocr_page_quality(text_lines: list) -> float:
         return 0.0
     line_score = min(len(real) / 10.0, 1.0)
     full = " ".join(real).lower()
-    kw_hits = sum(1 for kw in _LEGAL_QUALITY_KEYWORDS if kw in full)
+    
+    # Adapt keyword scoring to support Devanagari (Hindi) pages
+    has_devanagari = bool(_DEVANAGARI_RE.search(full))
+    if has_devanagari:
+        kw_hits = sum(1 for kw in _LEGAL_QUALITY_KEYWORDS_HINDI if kw in full)
+        kw_hits += sum(1 for kw in _LEGAL_QUALITY_KEYWORDS if kw in full)
+    else:
+        kw_hits = sum(1 for kw in _LEGAL_QUALITY_KEYWORDS if kw in full)
+
     kw_score = min(kw_hits / 5.0, 1.0)
     words = full.split()
     if words:
