@@ -434,13 +434,8 @@ def get_supporting_ocr_instance(lang: str = None):
             _tlog(f"Supporting PaddleOCR singleton ({lang}) ready in {time.time() - t0:.1f}s.")
     return _SUPPORTING_PADDLE_INSTANCES[lang]
 
-OCR_SUPPORTING_PAGE_WORKER_POOL_SIZE = int(os.getenv(
-    "OCR_SUPPORTING_PAGE_WORKER_POOL_SIZE", str(min(16, max(4, (os.cpu_count() or 2) * 2)))
-))
-SUPPORTING_DOCS_POOL = _cf.ThreadPoolExecutor(
-    max_workers=OCR_SUPPORTING_PAGE_WORKER_POOL_SIZE, thread_name_prefix="supporting_ocr"
-)
-_SUPPORTING_PAGE_SEMAPHORE = threading.Semaphore(OCR_SUPPORTING_PAGE_WORKER_POOL_SIZE)
+SUPPORTING_DOCS_POOL = _cf.ThreadPoolExecutor(max_workers=2, thread_name_prefix="supporting_ocr")
+_SUPPORTING_PAGE_SEMAPHORE = threading.Semaphore(4)
 
 
 def ocr_supporting_page(
@@ -473,15 +468,6 @@ def ocr_supporting_page(
     if rendered_img_path is None or rendered_img_path == "error":
         return [], {"page": page_num, "engine": "Error", "lines": 0}
 
-    with _PAGE_MEMORY_SLOTS:
-        _wait_for_memory_headroom(page_num=page_num)
-        return _ocr_supporting_page_body(page_idx, rendered_img_path, fitz_text, doc_type, enhance_ocr, vision_available, paddle_available, page_num, start)
-
-
-def _ocr_supporting_page_body(
-    page_idx, rendered_img_path, fitz_text, doc_type, enhance_ocr,
-    vision_available, paddle_available, page_num, start
-):
     try:
         pil_img = Image.open(rendered_img_path).convert("RGB")
     except Exception as e:
@@ -3086,47 +3072,40 @@ async def process_supporting_doc(
                 yield f"data: {json.dumps({'status': 'ocr', 'progress': 40, 'message': 'Running fast-path OCR...'})}\n\n"
                 await asyncio.sleep(0.01)
 
+                # Process pages
                 text_lines = []
                 loop = asyncio.get_event_loop()
-                page_results = {}
-
-                def _submit_page(idx):
+                
+                pages_done = 0
+                for idx in range(total_pages):
                     ft = fitz_text_cache[idx] if idx < len(fitz_text_cache) else ""
                     img_path = rendered_paths.get(idx, "error")
 
+                    # Run page OCR page-by-page inside the executor, throttling memory
                     async def run_page_ocr():
-                        lines, meta = await loop.run_in_executor(
-                            SUPPORTING_DOCS_POOL,
-                            ocr_supporting_page,
-                            idx,
-                            total_pages,
-                            img_path,
-                            ft,
-                            temp_path,
-                            doc_type,
-                            enhance_bool,
-                            vision_available,
-                            paddle_available
-                        )
-                        return idx, lines, meta
-
-                    return asyncio.ensure_future(run_page_ocr())
-
-                pending_tasks = [_submit_page(idx) for idx in range(total_pages)]
-
-                pages_done = 0
-                for finished in asyncio.as_completed(pending_tasks):
-                    idx, lines, meta = await finished
-                    page_results[idx] = lines
-
+                        with _SUPPORTING_PAGE_SEMAPHORE:
+                            return await loop.run_in_executor(
+                                SUPPORTING_DOCS_POOL,
+                                ocr_supporting_page,
+                                idx,
+                                total_pages,
+                                img_path,
+                                ft,
+                                temp_path,
+                                doc_type,
+                                enhance_bool,
+                                vision_available,
+                                paddle_available
+                            )
+                    
+                    lines, meta = await run_page_ocr()
+                    text_lines.append(f"--- PAGE {idx + 1} ---")
+                    text_lines.extend(lines)
+                    
                     pages_done += 1
                     progress_val = 40 + int((pages_done / total_pages) * 40)
                     yield f"data: {json.dumps({'status': 'page_progress', 'progress': progress_val, 'message': f'Processed page {pages_done}/{total_pages}'})}\n\n"
                     await asyncio.sleep(0.01)
-
-                for idx in range(total_pages):
-                    text_lines.append(f"--- PAGE {idx + 1} ---")
-                    text_lines.extend(page_results.get(idx, []))
 
                 if os.path.exists(render_dir):
                     try:
