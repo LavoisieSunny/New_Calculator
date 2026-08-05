@@ -3798,37 +3798,6 @@ This cannot be undone.`)) return;
     const slideover = document.getElementById("right-slideover");
     const closeSlideover = document.getElementById("close-slideover");
     const aiAssistantTrigger = document.getElementById("ai-assistant-trigger");
-    const chatPromptBubble = document.getElementById("chat-prompt-bubble");
-    const chatPromptClose = document.getElementById("chat-prompt-close");
-    const chatPromptText = document.getElementById("chat-prompt-text");
-
-    // Typewriter effect function for query bubble
-    function initTypewriter() {
-        if (!chatPromptText) return;
-        const message = "Ask your query...";
-        let i = 0;
-        chatPromptText.textContent = "";
-        chatPromptText.classList.add("typing");
-        
-        function type() {
-            if (i < message.length) {
-                chatPromptText.textContent += message.charAt(i);
-                i++;
-                setTimeout(type, 100); // 100ms per character
-            } else {
-                // Remove cursor blinking after completion
-                setTimeout(() => {
-                    chatPromptText.classList.remove("typing");
-                    chatPromptText.style.borderRight = "none";
-                }, 1500);
-            }
-        }
-        
-        // Start typing after a short delay (1.2s)
-        setTimeout(type, 1200);
-    }
-
-    initTypewriter();
 
     const assistantChatMessages = document.getElementById("assistant-chat-messages");
     const assistantChatInput = document.getElementById("assistant-chat-input");
@@ -3963,13 +3932,6 @@ This cannot be undone.`)) return;
 
     if (aiAssistantTrigger) {
         aiAssistantTrigger.addEventListener("click", () => {
-            if (chatPromptBubble) {
-                chatPromptBubble.style.opacity = "0";
-                chatPromptBubble.style.visibility = "hidden";
-                chatPromptBubble.style.pointerEvents = "none";
-                chatPromptBubble.style.transform = "translateY(-10px) scale(0.95)";
-            }
-
             if (aiAssistantTrigger.classList.contains("active") && slideover.classList.contains("open")) {
                 closeDrawer();
                 return;
@@ -3980,16 +3942,6 @@ This cannot be undone.`)) return;
 
             // Auto generate CASE BRIEF on open
             generateCaseBrief();
-        });
-    }
-
-    if (chatPromptClose && chatPromptBubble) {
-        chatPromptClose.addEventListener("click", (e) => {
-            e.stopPropagation();
-            chatPromptBubble.style.opacity = "0";
-            chatPromptBubble.style.visibility = "hidden";
-            chatPromptBubble.style.pointerEvents = "none";
-            chatPromptBubble.style.transform = "translateY(-10px) scale(0.95)";
         });
     }
 
@@ -4094,71 +4046,57 @@ This cannot be undone.`)) return;
         appendAssistantChatBubble(userDisplayText, "user");
         assistantChatInput.value = "";
 
-        // Retrieve current workstation inputs for full LLM validation context (Phase 8 integration)
-        const caseType = caseTypeSelect.value;
-        const parsedFields = {
-            case_type: caseType,
-            name: document.getElementById("name")?.value || "",
-            father_name: document.getElementById("father-name")?.value || "",
-            age: parseInt(ageInput.value) || 0,
-            monthly_income: parseFloat(monthlyIncomeInput.value) || 0,
-            disability: parseFloat(document.getElementById("disability")?.value) || 0,
-            dependents: parseInt(dependentsInput.value) || 0,
-            marital_status: maritalStatusSelect.value || "married",
-            future_type: parseInt(document.getElementById("future-type")?.value) || 2,
-            award_amount: lastExtractedFields["total_compensation"] || lastExtractedFields["award_amount"] || "",
-
-            // Tribunal per-head figures from PDF (parsed by OCR) — used to compare against
-            // the calculator's formula-derived figures under "Justify Compensation".
-            tribunal_medical: lastExtractedFields["medical_expenses"] || "",
-            tribunal_pain_suffering: lastExtractedFields["pain_and_suffering"] || "",
-            tribunal_transport: lastExtractedFields["transportation"] || "",
-            tribunal_special_diet: lastExtractedFields["special_diet"] || "",
-            tribunal_attender: lastExtractedFields["attender_charges"] || "",
-            tribunal_loss_of_income: lastExtractedFields["loss_of_income"] || "",
-            tribunal_future_medical: lastExtractedFields["future_medical_expenses"] || "",
-            tribunal_consortium: lastExtractedFields["consortium"] || "",
-            tribunal_funeral: lastExtractedFields["funeral_expenses"] || "",
-            tribunal_estate: lastExtractedFields["loss_estate"] || "",
-            tribunal_loss_of_dependency: lastExtractedFields["loss_of_dependency"] || lastExtractedFields["annual_loss_dependency"] || "",
-            tribunal_multiplier: lastExtractedFields["multiplier"] || "",
-            tribunal_future_prospect_percentage: lastExtractedFields["future_prospect"] || "",
-            tribunal_deduction_percentage: lastExtractedFields["deduction"] || ""
-        };
-
-        const calculatorResult = {
-            case_type: caseType,
-            final_amount: currentCalculationAmount,
-            total_compensation: currentCalculationAmount,
-            multiplier: currentCalculationBreakdown.multiplier || null,
-            annual_income: currentCalculationBreakdown.annual_income || 0,
-            future_income_loss: currentCalculationBreakdown.future_income_loss || 0,
-            medical_expenses: currentCalculationBreakdown.medical_expenses || 0,
-            future_medical_expenses: currentCalculationBreakdown.future_medical_expenses || 0,
-            pain_and_suffering: currentCalculationBreakdown.pain_and_suffering || 0,
-            transportation: currentCalculationBreakdown.transportation || 0,
-            special_diet: currentCalculationBreakdown.special_diet || 0,
-            attender_charges: currentCalculationBreakdown.attender_charges || 0,
-            loss_of_income: currentCalculationBreakdown.loss_of_income || 0,
-            loss_of_dependency: currentCalculationBreakdown.loss_of_dependency || 0,
-            consortium: currentCalculationBreakdown.consortium || 0,
-            funeral_expenses: currentCalculationBreakdown.funeral_expenses || 0,
-            loss_estate: currentCalculationBreakdown.loss_estate || 0,
-            deduction_percentage: currentCalculationBreakdown.deduction_percentage || 0,
-            future_prospect_percentage: currentCalculationBreakdown.future_prospect_percentage || 0
-        };
-
-        // "Justify Compensation" gets an immediate, fully deterministic head-wise
-        // comparison table (tribunal-provided amount vs calculator formula amount vs
-        // absolute difference) rendered client-side — no need to wait on the LLM for
-        // arithmetic. The LLM response that follows explains *why* each difference exists.
-        if (isJustify) {
-            appendJustifyBreakdownTable(parsedFields, calculatorResult);
-        }
-
         const loadingId = appendAssistantChatBubble(`<i class="fa-solid fa-spinner fa-spin"></i> ${isJustify ? "Analysing grounds, facts & compensation heads..." : "Auditing workstation state & searching precedents..."}`, "bot", true);
 
         try {
+            // Retrieve current workstation inputs for full LLM validation context (Phase 8 integration)
+            const caseType = caseTypeSelect.value;
+            const parsedFields = {
+                case_type: caseType,
+                name: document.getElementById("name")?.value || "",
+                father_name: document.getElementById("father-name")?.value || "",
+                age: parseInt(ageInput.value) || 0,
+                monthly_income: parseFloat(monthlyIncomeInput.value) || 0,
+                disability: parseFloat(document.getElementById("disability")?.value) || 0,
+                dependents: parseInt(dependentsInput.value) || 0,
+                marital_status: maritalStatusSelect.value || "married",
+                award_amount: lastExtractedFields["total_compensation"] || lastExtractedFields["award_amount"] || "",
+
+                // Tribunal per-head figures from PDF (parsed by OCR)
+                tribunal_medical: lastExtractedFields["medical_expenses"] || "",
+                tribunal_pain_suffering: lastExtractedFields["pain_and_suffering"] || "",
+                tribunal_transport: lastExtractedFields["transportation"] || "",
+                tribunal_special_diet: lastExtractedFields["special_diet"] || "",
+                tribunal_attender: lastExtractedFields["attender_charges"] || "",
+                tribunal_loss_of_income: lastExtractedFields["loss_of_income"] || "",
+                tribunal_future_medical: lastExtractedFields["future_medical_expenses"] || "",
+                tribunal_consortium: lastExtractedFields["consortium"] || "",
+                tribunal_funeral: lastExtractedFields["funeral_expenses"] || "",
+                tribunal_estate: lastExtractedFields["loss_estate"] || ""
+            };
+
+            const calculatorResult = {
+                case_type: caseType,
+                final_amount: currentCalculationAmount,
+                total_compensation: currentCalculationAmount,
+                multiplier: currentCalculationBreakdown.multiplier || null,
+                annual_income: currentCalculationBreakdown.annual_income || 0,
+                future_income_loss: currentCalculationBreakdown.future_income_loss || 0,
+                medical_expenses: currentCalculationBreakdown.medical_expenses || 0,
+                future_medical_expenses: currentCalculationBreakdown.future_medical_expenses || 0,
+                pain_and_suffering: currentCalculationBreakdown.pain_and_suffering || 0,
+                transportation: currentCalculationBreakdown.transportation || 0,
+                special_diet: currentCalculationBreakdown.special_diet || 0,
+                attender_charges: currentCalculationBreakdown.attender_charges || 0,
+                loss_of_income: currentCalculationBreakdown.loss_of_income || 0,
+                loss_of_dependency: currentCalculationBreakdown.loss_of_dependency || 0,
+                consortium: currentCalculationBreakdown.consortium || 0,
+                funeral_expenses: currentCalculationBreakdown.funeral_expenses || 0,
+                loss_estate: currentCalculationBreakdown.loss_estate || 0,
+                deduction_percentage: currentCalculationBreakdown.deduction_percentage || 0,
+                future_prospect_percentage: currentCalculationBreakdown.future_prospect_percentage || 0
+            };
+
             // Identify current active PDF filename
             let filename = null;
             if (singlePreviewFilename && singlePreviewFilename.innerHTML) {
@@ -4250,6 +4188,11 @@ This cannot be undone.`)) return;
             assistantChatHistory.push({ role: "user", content: query });
             assistantChatHistory.push({ role: "assistant", content: accumulatedText });
 
+            // After justify, inject the "Recalculate Compensation" follow-up action
+            if (isJustify) {
+                appendRecalculateActionPill(parsedFields, calculatorResult);
+            }
+
         } catch (error) {
             console.error("AI Legal Assistant error:", error);
             document.getElementById(loadingId).remove();
@@ -4258,153 +4201,340 @@ This cannot be undone.`)) return;
     }
 
     // -----------------------------------------------------------------------
-    // JUSTIFY COMPENSATION — deterministic head-wise breakdown table
+    // RECALCULATE COMPENSATION — injected after Justify Compensation response
     // -----------------------------------------------------------------------
-    // Renders, entirely client-side (no LLM arithmetic involved), a table of
-    // every compensation head relevant to the case type showing:
-    //   - the amount the tribunal actually awarded/provided (as extracted
-    //     from the uploaded judgment via OCR),
-    //   - the amount the deterministic formula-based calculator computes for
-    //     the same head from the current workstation inputs,
-    //   - the absolute (modulus) difference between the two — always shown
-    //     as a positive number, since "how far apart" matters more here than
-    //     which one is larger.
-    // The narrative explanation for *why* a difference exists is produced by
-    // the LLM response that streams in immediately after this table (see
-    // backend PRECOMPUTED HEAD-WISE COMPARISON block), grounded in the same
-    // exact figures so the two never disagree with each other.
-    function appendJustifyBreakdownTable(parsedFields, calculatorResult) {
-        const caseType = (parsedFields.case_type || "injury").toLowerCase();
+    function appendRecalculateActionPill(parsedFields, calculatorResult) {
+        const caseType = caseTypeSelect.value || parsedFields.case_type || "injury";
         const isDeath = caseType === "death";
+        const tribunalAward = parseFloat(parsedFields.award_amount) || 0;
 
-        function toNumOrNull(val) {
-            if (val === null || val === undefined || val === "") return null;
-            if (typeof val === "number") return isNaN(val) ? null : val;
-            let s = String(val).trim();
-            if (!s || /^(nil|n\/a|na|none|null|-|not found)$/i.test(s)) return null;
-            s = s.replace(/[₹,]/g, "").replace(/rs\.?/gi, "").trim().replace(/\/?-$/, "").trim();
-            const n = parseFloat(s);
-            return isNaN(n) ? null : n;
+        // Current workstation values — read from DOM inputs for accuracy
+        function getDomVal(id, fallback) {
+            const el = document.getElementById(id);
+            const v = el ? parseFloat(el.value) : NaN;
+            return isNaN(v) ? fallback : v;
         }
-
-        // [Label, tribunal-provided value, calculator-computed value]
-        const heads = isDeath ? [
-            ["Loss of Dependency", parsedFields.tribunal_loss_of_dependency, calculatorResult.loss_of_dependency],
-            ["Loss of Consortium", parsedFields.tribunal_consortium, calculatorResult.consortium],
-            ["Funeral Expenses", parsedFields.tribunal_funeral, calculatorResult.funeral_expenses],
-            ["Loss of Estate", parsedFields.tribunal_estate, calculatorResult.loss_estate]
-        ] : [
-            ["Medical Expenses", parsedFields.tribunal_medical, calculatorResult.medical_expenses],
-            ["Future Medical Expenses", parsedFields.tribunal_future_medical, calculatorResult.future_medical_expenses],
-            ["Pain & Suffering", parsedFields.tribunal_pain_suffering, calculatorResult.pain_and_suffering],
-            ["Transportation", parsedFields.tribunal_transport, calculatorResult.transportation],
-            ["Special Diet", parsedFields.tribunal_special_diet, calculatorResult.special_diet],
-            ["Attender Charges", parsedFields.tribunal_attender, calculatorResult.attender_charges],
-            ["Loss of (Future) Income", parsedFields.tribunal_loss_of_income, calculatorResult.future_income_loss || calculatorResult.loss_of_income]
-        ];
-
-        const tribunalTotal = toNumOrNull(parsedFields.award_amount);
-        const calcTotal = toNumOrNull(calculatorResult.final_amount ?? calculatorResult.total_compensation);
-
-        // Build working rows [label, tribunalAmt, calcAmt, inferred]
-        const workingRows = heads.map(function (h) {
-            return { label: h[0], tribunalAmt: toNumOrNull(h[1]), calcAmt: toNumOrNull(h[2]), inferred: false };
-        });
-
-        // Deterministic subtraction-based reconciliation (mirrors backend logic):
-        // if the tribunal total is known and every head's tribunal figure is known
-        // except exactly one, that one is fully determined by arithmetic.
-        if (tribunalTotal !== null) {
-            const known = workingRows.filter(r => r.tribunalAmt !== null);
-            const missing = workingRows.filter(r => r.tribunalAmt === null);
-            if (missing.length === 1 && known.length === workingRows.length - 1) {
-                const knownSum = known.reduce((s, r) => s + r.tribunalAmt, 0);
-                const inferredAmt = tribunalTotal - knownSum;
-                if (inferredAmt > 0) {
-                    missing[0].tribunalAmt = Math.round(inferredAmt);
-                    missing[0].inferred = true;
-                }
-            }
+        function getDomStr(id, fallback) {
+            const el = document.getElementById(id);
+            return (el && el.value.trim()) ? el.value.trim() : fallback;
         }
+        const baseValues = isDeath ? {
+            case_type: caseType,
+            age: getDomVal("age", parsedFields.age || 30),
+            monthly_income: getDomVal("monthly-income", parsedFields.monthly_income || 0),
+            dependents: getDomVal("dependents", parsedFields.dependents || 0),
+            marital_status: getDomStr("marital-status", parsedFields.marital_status || "married"),
+            future_type: getDomVal("future-type", 2),
+            consortium: calculatorResult.consortium || 48400,
+            funeral_expenses: calculatorResult.funeral_expenses || 18150,
+            loss_estate: calculatorResult.loss_estate || 18150
+        } : {
+            case_type: caseType,
+            age: getDomVal("age", parsedFields.age || 30),
+            monthly_income: getDomVal("monthly-income", parsedFields.monthly_income || 0),
+            disability: getDomVal("disability", parsedFields.disability || 0),
+            medical_expenses: getDomVal("medical-expenses", calculatorResult.medical_expenses || 0),
+            future_medical_expenses: getDomVal("future-medical-expenses", calculatorResult.future_medical_expenses || 0),
+            pain_and_suffering: getDomVal("pain-and-suffering", calculatorResult.pain_and_suffering || 0),
+            transportation: getDomVal("transportation", calculatorResult.transportation || 0),
+            special_diet: getDomVal("special-diet", calculatorResult.special_diet || 0),
+            attender_charges: getDomVal("attender-charges", calculatorResult.attender_charges || 0),
+            loss_of_income: getDomVal("loss-of-income", calculatorResult.loss_of_income || 0)
+        };
 
-        let rowsHtml = "";
-        let anyComparable = false;
-        workingRows.forEach(function (r) {
-            const label = r.label;
-            const tribunalAmt = r.tribunalAmt;
-            const calcAmt = r.calcAmt;
+        // ── Outer wrapper ──
+        const wrapper = document.createElement("div");
+        wrapper.style.cssText = "margin: 8px 0 0 48px;";
 
-            let tribunalDisp;
-            if (tribunalAmt !== null && r.inferred) {
-                tribunalDisp = "\u20b9 " + tribunalAmt.toLocaleString("en-IN") +
-                    ' <span style="color:#a78bfa;font-size:0.68rem;font-style:italic;" title="Derived by subtracting every other awarded head from the tribunal total — not literally printed in the judgment">(inferred)</span>';
-            } else if (tribunalAmt !== null) {
-                tribunalDisp = "\u20b9 " + tribunalAmt.toLocaleString("en-IN");
-            } else {
-                tribunalDisp = '<span style="color:var(--text-muted);font-style:italic;">Not stated in judgment</span>';
-            }
-            const calcDisp = calcAmt !== null
-                ? "\u20b9 " + calcAmt.toLocaleString("en-IN")
-                : '<span style="color:var(--text-muted);font-style:italic;">Not computed</span>';
+        // ── Pill button ──
+        const pill = document.createElement("button");
+        pill.type = "button";
+        pill.innerHTML = `<i class="fa-solid fa-calculator"></i> Recalculate Compensation`;
+        pill.style.cssText = [
+            "display:inline-flex; align-items:center; gap:8px;",
+            "padding:9px 18px; border-radius:20px; font-size:0.82rem; font-weight:700;",
+            "background:rgba(16,185,129,0.10); border:1.5px solid rgba(16,185,129,0.40);",
+            "color:#34d399; cursor:pointer; font-family:'Outfit',sans-serif;",
+            "transition:all 0.2s ease;"
+        ].join("");
+        pill.onmouseover = () => { pill.style.background = "rgba(16,185,129,0.20)"; };
+        pill.onmouseout = () => { pill.style.background = "rgba(16,185,129,0.10)"; };
 
-            let diffDisp;
-            if (tribunalAmt !== null && calcAmt !== null) {
-                const diff = Math.abs(Math.round(calcAmt) - Math.round(tribunalAmt));
-                anyComparable = true;
-                diffDisp = diff === 0
-                    ? '<span style="color:#34d399;">Rs. 0 (match)</span>'
-                    : '<span style="color:#f59e0b;font-weight:700;">\u20b9 ' + diff.toLocaleString("en-IN") + '</span>';
-            } else {
-                diffDisp = '<span style="color:var(--text-muted);font-style:italic;">N/A</span>';
-            }
-
-            rowsHtml += '<tr>' +
-                '<td style="padding:6px 8px;color:var(--text-secondary);font-size:0.78rem;border-bottom:1px solid var(--border-glass);">' + label + '</td>' +
-                '<td style="padding:6px 8px;text-align:right;font-weight:600;font-size:0.78rem;color:var(--text-primary);border-bottom:1px solid var(--border-glass);">' + tribunalDisp + '</td>' +
-                '<td style="padding:6px 8px;text-align:right;font-weight:600;font-size:0.78rem;color:var(--text-primary);border-bottom:1px solid var(--border-glass);">' + calcDisp + '</td>' +
-                '<td style="padding:6px 8px;text-align:right;font-size:0.78rem;border-bottom:1px solid var(--border-glass);">' + diffDisp + '</td>' +
-                '</tr>';
-        });
-
-        let totalRowHtml = "";
-        if (tribunalTotal !== null || calcTotal !== null) {
-            const totalDiff = (tribunalTotal !== null && calcTotal !== null)
-                ? Math.abs(Math.round(calcTotal) - Math.round(tribunalTotal))
-                : null;
-            totalRowHtml = '<tr style="border-top:2px solid var(--border-glass);background:rgba(16,185,129,0.05);">' +
-                '<td style="padding:7px 8px;font-weight:800;color:#34d399;font-size:0.82rem;">Total Compensation</td>' +
-                '<td style="padding:7px 8px;text-align:right;font-weight:800;color:#60a5fa;font-size:0.85rem;">' +
-                (tribunalTotal !== null ? "\u20b9 " + tribunalTotal.toLocaleString("en-IN") : "\u2014") + '</td>' +
-                '<td style="padding:7px 8px;text-align:right;font-weight:800;color:#34d399;font-size:0.85rem;">' +
-                (calcTotal !== null ? "\u20b9 " + calcTotal.toLocaleString("en-IN") : "\u2014") + '</td>' +
-                '<td style="padding:7px 8px;text-align:right;font-weight:800;font-size:0.85rem;color:' + (totalDiff ? '#f59e0b' : '#34d399') + ';">' +
-                (totalDiff !== null ? "\u20b9 " + totalDiff.toLocaleString("en-IN") : "N/A") + '</td>' +
-                '</tr>';
-        }
-
-        const html = [
-            '<div style="font-family:\'Outfit\',sans-serif; font-size:0.82rem; font-weight:700;',
-            'color:#34d399; text-transform:uppercase; letter-spacing:0.5px; margin-bottom:8px;">',
-            '<i class="fa-solid fa-scale-balanced"></i>&nbsp; Head-wise Compensation Comparison</div>',
-            '<table style="width:100%;border-collapse:collapse;">',
-            '<thead><tr>',
-            '<th style="text-align:left;padding:6px 8px;font-size:0.72rem;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.3px;border-bottom:1px solid var(--border-glass);">Head</th>',
-            '<th style="text-align:right;padding:6px 8px;font-size:0.72rem;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.3px;border-bottom:1px solid var(--border-glass);">Tribunal Amount</th>',
-            '<th style="text-align:right;padding:6px 8px;font-size:0.72rem;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.3px;border-bottom:1px solid var(--border-glass);">Calculator Amount</th>',
-            '<th style="text-align:right;padding:6px 8px;font-size:0.72rem;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.3px;border-bottom:1px solid var(--border-glass);">Difference</th>',
-            '</tr></thead><tbody>',
-            rowsHtml,
-            totalRowHtml,
-            '</tbody></table>',
-            anyComparable
-                ? '<p style="font-size:0.74rem;color:var(--text-muted);margin:8px 0 0 0;line-height:1.5;">' +
-                  'Difference is shown as an absolute value. A detailed, evidence-grounded explanation for ' +
-                  'each non-zero difference follows below.</p>'
-                : '<p style="font-size:0.74rem;color:var(--text-muted);margin:8px 0 0 0;line-height:1.5;">' +
-                  'Not enough tribunal figures were extracted from the document to compute per-head differences.</p>'
+        // ── Conversational panel ──
+        const panel = document.createElement("div");
+        panel.style.cssText = [
+            "display:none; margin-top:12px; padding:16px;",
+            "background:var(--bg-card); border:1px solid var(--border-glass);",
+            "border-radius:10px;"
         ].join("");
 
-        appendAssistantChatBubble(html, "bot");
+        // Header + hint text
+        const header = document.createElement("div");
+        header.innerHTML = [
+            '<div style="font-family:\'Outfit\',sans-serif; font-size:0.82rem; font-weight:700;',
+            'color:#34d399; text-transform:uppercase; letter-spacing:0.5px; margin-bottom:6px;">',
+            '<i class="fa-solid fa-calculator"></i>&nbsp; What-If Recalculation</div>',
+            '<p style="font-size:0.78rem; color:var(--text-muted); margin:0 0 12px 0; line-height:1.5;">',
+            'Change any field — age, disability %, income, medical expenses, or any compensation head — and see the revised total.<br>',
+            'For example: <em style="color:var(--text-secondary);">"disability is 40"</em>',
+            ' or <em style="color:var(--text-secondary);">"age is 35"</em>',
+            ' or <em style="color:var(--text-secondary);">"medical expenses is 80000"</em></p>'
+        ].join("");
+        panel.appendChild(header);
+
+        // Chat log area
+        const chatLog = document.createElement("div");
+        chatLog.style.cssText = [
+            "display:flex; flex-direction:column; gap:10px;",
+            "max-height:260px; overflow-y:auto; margin-bottom:10px;",
+            "padding:10px; background:var(--bg-panel);",
+            "border-radius:8px; border:1px solid var(--border-glass);"
+        ].join("");
+        panel.appendChild(chatLog);
+
+        // Input bar
+        const inputBar = document.createElement("div");
+        inputBar.style.cssText = "display:flex; gap:8px; margin-top:4px;";
+        const rcInput = document.createElement("input");
+        rcInput.type = "text";
+        rcInput.placeholder = 'e.g. "disability is 40" or "age is 35" or "medical expenses is 80000"';
+        rcInput.style.cssText = [
+            "flex:1; padding:9px 12px; background:var(--bg-panel);",
+            "border:1px solid var(--border-glass); border-radius:6px;",
+            "color:var(--text-primary); font-size:0.82rem; outline:none;",
+            "font-family:'Inter',sans-serif;"
+        ].join("");
+        const rcSendBtn = document.createElement("button");
+        rcSendBtn.type = "button";
+        rcSendBtn.innerHTML = '<i class="fa-solid fa-paper-plane"></i> Calculate';
+        rcSendBtn.style.cssText = [
+            "padding:9px 16px; border-radius:6px; font-size:0.8rem; font-weight:700;",
+            "background:rgba(16,185,129,0.15); border:1.5px solid rgba(16,185,129,0.45);",
+            "color:#34d399; cursor:pointer; font-family:'Outfit',sans-serif;",
+            "display:flex; align-items:center; gap:6px; white-space:nowrap;"
+        ].join("");
+        inputBar.appendChild(rcInput);
+        inputBar.appendChild(rcSendBtn);
+        panel.appendChild(inputBar);
+
+        // ── Helper: add bubble inside panel chat log ──
+        function addPanelBubble(html, type) {
+            const bub = document.createElement("div");
+            bub.style.cssText = "display:flex; gap:8px; align-items:flex-start;" +
+                (type === "user" ? "flex-direction:row-reverse;" : "");
+            const avatar = document.createElement("div");
+            avatar.style.cssText = [
+                "width:24px; height:24px; border-radius:50%; flex-shrink:0;",
+                "display:flex; align-items:center; justify-content:center; font-size:0.7rem;",
+                "background:" + (type === "user" ? "rgba(139,92,246,0.2)" : "rgba(16,185,129,0.15)") + ";",
+                "color:" + (type === "user" ? "#a78bfa" : "#34d399") + ";"
+            ].join("");
+            avatar.innerHTML = type === "user"
+                ? '<i class="fa-solid fa-user-tie"></i>'
+                : '<i class="fa-solid fa-calculator"></i>';
+            const textEl = document.createElement("div");
+            textEl.style.cssText = [
+                "font-size:0.8rem; line-height:1.5; padding:8px 10px;",
+                "border-radius:8px; max-width:85%; color:var(--text-primary);",
+                "background:var(--bg-card);",
+                "border:1px solid var(--border-glass);"
+            ].join("");
+            textEl.innerHTML = html;
+            bub.appendChild(avatar);
+            bub.appendChild(textEl);
+            chatLog.appendChild(bub);
+            chatLog.scrollTop = chatLog.scrollHeight;
+            return textEl; // return the text div so we can update it
+        }
+
+        // ── Helper: render result breakdown table ──
+        function renderResultTable(result) {
+            const bd = result.breakdown || result;
+            const newTotal = result.final_amount || result.total_compensation || 0;
+            const diff = newTotal - tribunalAward;
+            const diffSign = diff >= 0 ? "+" : "−";
+            const diffColor = diff >= 0 ? "#34d399" : "#f87171";
+            const diffAbs = Math.abs(diff);
+
+            const pairs = isDeath ? [
+                ["Loss of Dependency", bd.loss_of_dependency],
+                ["Loss of Consortium", bd.consortium],
+                ["Funeral Expenses", bd.funeral_expenses],
+                ["Loss of Estate", bd.loss_estate],
+                ["Multiplier", bd.multiplier ? (bd.multiplier + "\xd7") : null],
+                ["Age Used", bd.age ? (bd.age + " yrs") : null],
+                ["Future Prospect", bd.future_prospect_percentage != null ? (bd.future_prospect_percentage + "%") : null]
+            ] : [
+                ["Future Income Loss", bd.future_income_loss],
+                ["Medical Expenses", bd.medical_expenses],
+                ["Pain & Suffering", bd.pain_and_suffering],
+                ["Transportation", bd.transportation],
+                ["Special Diet", bd.special_diet],
+                ["Attender Charges", bd.attender_charges],
+                ["Loss of Income", bd.loss_of_income],
+                ["Future Medical", bd.future_medical_expenses],
+                ["Multiplier", bd.multiplier ? (bd.multiplier + "\xd7") : null],
+                ["Disability %", bd.disability != null ? (bd.disability + "%") : null],
+                ["Annual Income", bd.annual_income]
+            ];
+
+            let rowsHtml = "";
+            pairs.forEach(function (pair) {
+                const label = pair[0], val = pair[1];
+                if (val === null || val === undefined || val === 0 || val === "") return;
+                const display = typeof val === "string" ? val : "\u20b9 " + Number(val).toLocaleString("en-IN");
+                rowsHtml += '<tr>' +
+                    '<td style="padding:4px 8px;color:var(--text-secondary);font-size:0.78rem;">' + label + '</td>' +
+                    '<td style="padding:4px 8px;text-align:right;font-weight:600;font-size:0.78rem;color:var(--text-primary);">' + display + '</td>' +
+                    '</tr>';
+            });
+
+            const tribunalRow = tribunalAward > 0 ? (
+                '<tr style="border-top:1px solid var(--border-glass);">' +
+                '<td style="padding:5px 8px;color:#60a5fa;font-size:0.78rem;">Tribunal Award</td>' +
+                '<td style="padding:5px 8px;text-align:right;font-weight:700;color:#60a5fa;font-size:0.78rem;">\u20b9 ' + tribunalAward.toLocaleString("en-IN") + '</td>' +
+                '</tr>' +
+                '<tr>' +
+                '<td style="padding:4px 8px;color:' + diffColor + ';font-size:0.78rem;">Difference</td>' +
+                '<td style="padding:4px 8px;text-align:right;font-weight:700;color:' + diffColor + ';font-size:0.78rem;">' + diffSign + ' \u20b9 ' + diffAbs.toLocaleString("en-IN") + '</td>' +
+                '</tr>'
+            ) : "";
+
+            return '<table style="width:100%;border-collapse:collapse;margin-top:6px;"><tbody>' +
+                rowsHtml +
+                '<tr style="border-top:2px solid var(--border-glass);background:rgba(16,185,129,0.05);">' +
+                '<td style="padding:7px 8px;font-weight:800;color:#34d399;font-size:0.88rem;">Revised Total</td>' +
+                '<td style="padding:7px 8px;text-align:right;font-weight:800;color:#34d399;font-size:0.95rem;">\u20b9 ' + newTotal.toLocaleString("en-IN") + '</td>' +
+                '</tr>' +
+                tribunalRow +
+                '</tbody></table>';
+        }
+
+        // ── Field name map — what user types → API key ──
+        const FIELD_MAP = isDeath ? {
+            "age": "age", "victim age": "age", "claimant age": "age",
+            "monthly income": "monthly_income", "income": "monthly_income", "salary": "monthly_income", "wages": "monthly_income",
+            "dependents": "dependents", "dependent": "dependents", "number of dependents": "dependents", "number of dependent": "dependents", "no of dependents": "dependents", "no. of dependents": "dependents",
+            "consortium": "consortium", "loss of consortium": "consortium",
+            "funeral expenses": "funeral_expenses", "funeral": "funeral_expenses", "funeral costs": "funeral_expenses",
+            "loss of estate": "loss_estate", "estate": "loss_estate", "loss estate": "loss_estate"
+        } : {
+            "age": "age", "victim age": "age", "claimant age": "age",
+            "disability": "disability", "disability percentage": "disability", "disability percent": "disability", "impairment": "disability", "disability %": "disability", "disability percenatge": "disability", "disability perc": "disability",
+            "monthly income": "monthly_income", "income": "monthly_income", "salary": "monthly_income", "wages": "monthly_income",
+            "medical expenses": "medical_expenses", "medical": "medical_expenses", "treatment": "medical_expenses", "medical bills": "medical_expenses", "hospital bills": "medical_expenses",
+            "future medical expenses": "future_medical_expenses", "future medical": "future_medical_expenses", "future treatment": "future_medical_expenses",
+            "pain and suffering": "pain_and_suffering", "pain": "pain_and_suffering", "suffering": "pain_and_suffering", "pain suffering": "pain_and_suffering",
+            "transportation": "transportation", "transport": "transportation", "travel": "transportation", "travel expenses": "transportation",
+            "special diet": "special_diet", "diet": "special_diet", "food": "special_diet", "dietary expenses": "special_diet",
+            "attender charges": "attender_charges", "attender": "attender_charges", "attendant": "attender_charges", "nurse": "attender_charges", "caretaker": "attender_charges",
+            "loss of income": "loss_of_income", "income loss": "loss_of_income", "past income loss": "loss_of_income"
+        };
+
+        // ── Fields that are NOT rupee amounts ──
+        const PERCENT_FIELDS = new Set(["disability"]);          // shown as %
+        const COUNT_FIELDS = new Set(["age", "dependents"]);   // shown as plain number
+        const UNIT_LABEL = function (fieldKey) {
+            if (PERCENT_FIELDS.has(fieldKey)) return "%";
+            if (COUNT_FIELDS.has(fieldKey)) return "";
+            return "₹";
+        };
+        const UNIT_PREFIX = function (fieldKey) {
+            return (PERCENT_FIELDS.has(fieldKey) || COUNT_FIELDS.has(fieldKey)) ? "" : "₹ ";
+        };
+        const UNIT_SUFFIX = function (fieldKey) {
+            return PERCENT_FIELDS.has(fieldKey) ? "%" : "";
+        };
+
+        // ── Parse natural language → { fieldKey, fieldLabel, amount } ──
+        function parseIntent(text) {
+            const lower = text.toLowerCase().trim();
+            // Extract ALL numbers — use the LAST one (it is typically the value the user stated)
+            const allNums = lower.match(/(\d[\d,\.]*)/g);
+            if (!allNums || allNums.length === 0) return null;
+            const amount = parseFloat(allNums[allNums.length - 1].replace(/,/g, ""));
+            if (isNaN(amount)) return null;
+            // Match field — longest phrase wins so "disability percentage" beats "disability"
+            const keys = Object.keys(FIELD_MAP).sort(function (a, b) { return b.length - a.length; });
+            for (let i = 0; i < keys.length; i++) {
+                if (lower.indexOf(keys[i]) !== -1) {
+                    return { fieldKey: FIELD_MAP[keys[i]], fieldLabel: keys[i], amount: amount };
+                }
+            }
+            return null;
+        }
+
+        // ── Handle send ──
+        async function handleRcSend() {
+            const text = rcInput.value.trim();
+            if (!text) return;
+            rcInput.value = "";
+
+            addPanelBubble(text, "user");
+
+            const intent = parseIntent(text);
+            if (!intent) {
+                addPanelBubble(
+                    "I couldn\u2019t identify a compensation head and amount. Try something like:<br>" +
+                    '<em style="color:var(--text-muted);">"disability is 40"</em>, ' +
+                    '<em style="color:var(--text-muted);">"age is 35"</em> or ' +
+                    '<em style="color:var(--text-muted);">"medical expenses is 80000"</em>',
+                    "bot"
+                );
+                return;
+            }
+
+            const loadingTextEl = addPanelBubble(
+                '<i class="fa-solid fa-spinner fa-spin"></i> Recalculating with <strong>' +
+                intent.fieldLabel + '</strong> = ' +
+                UNIT_PREFIX(intent.fieldKey) + intent.amount.toLocaleString("en-IN") + UNIT_SUFFIX(intent.fieldKey) + '...',
+                "bot"
+            );
+
+            const payload = Object.assign({}, baseValues);
+            payload[intent.fieldKey] = intent.amount;
+
+            try {
+                const res = await fetch("/api/calculate/", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify(payload)
+                });
+                if (!res.ok) throw new Error("API error");
+                const result = await res.json();
+
+                loadingTextEl.innerHTML =
+                    'If <strong>' + intent.fieldLabel + '</strong> were <strong>' +
+                    UNIT_PREFIX(intent.fieldKey) + intent.amount.toLocaleString("en-IN") + UNIT_SUFFIX(intent.fieldKey) +
+                    '</strong>, the revised compensation would be:' +
+                    renderResultTable(result);
+
+                // Stack changes — next question builds on this
+                baseValues[intent.fieldKey] = intent.amount;
+
+            } catch (err) {
+                loadingTextEl.innerHTML =
+                    '<span style="color:#f87171;"><i class="fa-solid fa-circle-exclamation"></i> Calculation failed. Please ensure the backend is running.</span>';
+            }
+        }
+
+        rcSendBtn.addEventListener("click", handleRcSend);
+        rcInput.addEventListener("keypress", function (e) { if (e.key === "Enter") handleRcSend(); });
+
+        // Toggle panel on pill click
+        pill.addEventListener("click", function () {
+            const open = panel.style.display !== "none";
+            panel.style.display = open ? "none" : "block";
+            pill.innerHTML = open
+                ? '<i class="fa-solid fa-calculator"></i> Recalculate Compensation'
+                : '<i class="fa-solid fa-chevron-up"></i> Close Recalculator';
+            if (!open) setTimeout(function () { rcInput.focus(); }, 50);
+        });
+
+        wrapper.appendChild(pill);
+        wrapper.appendChild(panel);
+        assistantChatMessages.appendChild(wrapper);
+        assistantChatMessages.scrollTop = assistantChatMessages.scrollHeight;
     }
 
     function appendAssistantChatBubble(text, sender, isLoader = false) {

@@ -17,13 +17,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from dotenv import load_dotenv
 load_dotenv()
 
-from backend.calculator import (
-    router as calculator_router,
-    CompensationRequest,
-    get_multiplier,
-    get_future_prospect,
-    get_deduction,
-)
+from backend.calculator import router as calculator_router, CompensationRequest
 from backend.ocr import router as ocr_router
 from backend.vector_db import semantic_search, get_qdrant_client, VECTOR_DB_INITIALIZED
 from backend.evaluator import evaluate_compensation_precedents
@@ -242,431 +236,6 @@ def _smart_truncate_ocr_for_chat(ocr_full: str, question_str: str = "", head: in
     return "\n\n".join(parts)
 
 
-def _parse_amount_or_none(val):
-    if val is None:
-        return None
-    if isinstance(val, (int, float)):
-        return float(val)
-    s = str(val).strip()
-    if s == "" or s.lower() in ("nil", "n/a", "na", "none", "null", "not found", "-"):
-        return None
-    s = s.replace(",", "").replace("₹", "").replace("Rs.", "").replace("Rs", "").strip()
-    s = s.rstrip("/-").strip()
-    try:
-        return float(s)
-    except (TypeError, ValueError):
-        return None
-
-
-def _pct_or_none(val):
-    """Parse a percentage-like value (e.g. '40', '40%', 40.0) to a float number of percent, or None."""
-    n = _parse_amount_or_none(val)
-    if n is None:
-        return None
-    return n
-
-
-def _income_head_formula(is_death, monthly_income, multiplier, future_prospect_pct, deduction_pct, disability_pct=None):
-    """
-    Recomputes the income-driven compensation head (Loss of Dependency for death,
-    Future Income Loss for injury) using the SAME formula as backend/calculator.py,
-    given an arbitrary combination of parameters. Used purely to quantify how much
-    of a Rs. gap is attributable to a single parameter differing, by swapping that
-    one parameter and holding the rest constant — never to invent a value.
-    """
-    monthly_income = monthly_income or 0.0
-    multiplier = multiplier or 0.0
-    if is_death:
-        fp = (future_prospect_pct or 0.0) / 100.0
-        ded = (deduction_pct or 0.0) / 100.0
-        annual = monthly_income * 12.0 * (1.0 + fp)
-        return annual * (1.0 - ded) * multiplier
-    else:
-        disability_pct = disability_pct or 0.0
-        annual = monthly_income * 12.0
-        return annual * (disability_pct / 100.0) * multiplier
-
-
-def _attribute_income_head_difference(pf, cr, is_death, tribunal_amt, calc_amt, inferred):
-    """
-    Produces a quantified, non-hardcoded explanation for a Rs. gap on the income-driven
-    head (Loss of Dependency / Future Income Loss) by decomposing the calculator's own
-    formula parameter-by-parameter (multiplier, future-prospects %, deduction %) and
-    checking each one against:
-      1. What the tribunal itself is recorded as having applied (OCR-extracted
-         tribunal_multiplier / tribunal_future_prospect_percentage / tribunal_deduction_percentage),
-         if that was found in the judgment text, OR
-      2. The statutory Sarla Verma / Pranay Sethi standard for this case's own
-         age / dependents / marital status / employment-type inputs, if the tribunal's
-         own figure was not separately stated.
-    Every number used is either the calculator's own applied parameter, an OCR-extracted
-    tribunal figure, or a value derived from a published statutory table indexed by this
-    case's own inputs — nothing case-specific is invented.
-    """
-    try:
-        monthly_income = float(pf.get("monthly_income") or 0)
-    except (TypeError, ValueError):
-        monthly_income = 0.0
-    if monthly_income <= 0 or calc_amt is None or tribunal_amt is None:
-        return None
-
-    total_gap = tribunal_amt - calc_amt  # signed: negative => tribunal lower than calc
-    if abs(total_gap) < 1:
-        return None
-
-    try:
-        age = int(float(pf.get("age") or 30))
-    except (TypeError, ValueError):
-        age = 30
-
-    calc_multiplier = cr.get("multiplier")
-    try:
-        calc_multiplier = float(calc_multiplier)
-    except (TypeError, ValueError):
-        calc_multiplier = get_multiplier(age)
-
-    expected_multiplier = get_multiplier(age)
-
-    params = []  # (name, calc_value, reference_value, reference_source, unit)
-
-    # Multiplier — reference: tribunal's own stated multiplier if OCR-extracted, else statutory slab.
-    trib_mult = _pct_or_none(pf.get("tribunal_multiplier"))
-    if trib_mult is not None and abs(trib_mult - calc_multiplier) > 1e-6:
-        params.append(("multiplier", calc_multiplier, trib_mult, "tribunal's own stated multiplier (found in judgment text)", ""))
-    elif trib_mult is None and abs(expected_multiplier - calc_multiplier) > 1e-6:
-        params.append(("multiplier", calc_multiplier, expected_multiplier,
-                        f"statutory Sarla Verma age-slab multiplier for age {age} (tribunal's own figure not stated in judgment)", ""))
-
-    if is_death:
-        calc_fp = cr.get("future_prospect_percentage")
-        try:
-            calc_fp = float(calc_fp)
-        except (TypeError, ValueError):
-            calc_fp = 0.0
-        calc_ded = cr.get("deduction_percentage")
-        try:
-            calc_ded = float(calc_ded)
-        except (TypeError, ValueError):
-            calc_ded = 0.0
-
-        try:
-            dependents = int(float(pf.get("dependents") or 0))
-        except (TypeError, ValueError):
-            dependents = 0
-        marital_status = str(pf.get("marital_status") or "married")
-        try:
-            future_type = int(float(pf.get("future_type") or 2))
-        except (TypeError, ValueError):
-            future_type = 2
-        expected_fp = round(get_future_prospect(age, future_type) * 100)
-        expected_ded = round(get_deduction(dependents, marital_status) * 100)
-
-        trib_fp = _pct_or_none(pf.get("tribunal_future_prospect_percentage"))
-        if trib_fp is not None and abs(trib_fp - calc_fp) > 1e-6:
-            params.append(("future-prospects %", calc_fp, trib_fp, "tribunal's own stated future-prospects % (found in judgment text)", "%"))
-        elif trib_fp is None and abs(expected_fp - calc_fp) > 1e-6:
-            params.append(("future-prospects %", calc_fp, expected_fp,
-                            f"statutory Pranay Sethi future-prospects % for age {age} (tribunal's own figure not stated in judgment)", "%"))
-
-        trib_ded = _pct_or_none(pf.get("tribunal_deduction_percentage"))
-        if trib_ded is not None and abs(trib_ded - calc_ded) > 1e-6:
-            params.append(("deduction for personal/living expenses %", calc_ded, trib_ded, "tribunal's own stated deduction % (found in judgment text)", "%"))
-        elif trib_ded is None and abs(expected_ded - calc_ded) > 1e-6:
-            params.append(("deduction for personal/living expenses %", calc_ded, expected_ded,
-                            f"statutory Sarla Verma deduction % for {dependents} dependents / {marital_status} claimant "
-                            f"(tribunal's own figure not stated in judgment)", "%"))
-
-        base_kwargs = dict(is_death=True, monthly_income=monthly_income, multiplier=calc_multiplier,
-                            future_prospect_pct=calc_fp, deduction_pct=calc_ded)
-    else:
-        base_kwargs = dict(is_death=False, monthly_income=monthly_income, multiplier=calc_multiplier,
-                            future_prospect_pct=None, deduction_pct=None,
-                            disability_pct=float(pf.get("disability") or 0))
-
-    if not params:
-        return None
-
-    bullet_lines = []
-    explained_total = 0.0
-    for (name, calc_val, ref_val, ref_source, unit) in params:
-        swapped_kwargs = dict(base_kwargs)
-        key_map = {"multiplier": "multiplier", "future-prospects %": "future_prospect_pct",
-                   "deduction for personal/living expenses %": "deduction_pct"}
-        swapped_kwargs[key_map[name]] = ref_val
-        recomputed = _income_head_formula(**swapped_kwargs)
-        baseline = _income_head_formula(**base_kwargs)
-        delta = recomputed - baseline  # effect of moving calc -> reference value
-        explained_total += delta
-        direction = "increases" if delta > 0 else "decreases"
-        bullet_lines.append(
-            f"  - {name}: calculator used {calc_val:g}{unit}, vs {ref_source}: {ref_val:g}{unit}. "
-            f"Using the {ref_source.split(' (')[0]} instead of the calculator's value {direction} the head by "
-            f"Rs. {abs(round(delta)):,.0f}."
-        )
-
-    abs_gap = abs(total_gap)
-    abs_explained = abs(explained_total)
-    coverage_pct = (abs_explained / abs_gap * 100.0) if abs_gap > 0 else 0.0
-
-    header = (
-        f"Quantified parameter attribution (derived from the calculator's own formula, not invented): "
-        f"the tribunal figure differs from the calculator figure by Rs. {round(abs_gap):,.0f}. "
-        f"Recomputing the formula with each parameter swapped individually gives:"
-    )
-
-    if coverage_pct >= 90.0 and coverage_pct <= 115.0:
-        tail = (
-            f"Together these parameter differences (net effect Rs. {round(abs_explained):,.0f}) are "
-            f"sufficient to account for essentially the entire observed gap of Rs. {round(abs_gap):,.0f}."
-        )
-    elif coverage_pct > 115.0:
-        tail = (
-            f"Note: the net effect of these parameter differences alone (Rs. {round(abs_explained):,.0f}) is "
-            f"LARGER than the actual observed gap (Rs. {round(abs_gap):,.0f}). This means these parameter "
-            f"differences are partially offset by something else in the calculation not captured above "
-            f"(e.g. a different income figure or rounding actually used by the tribunal) — the identified "
-            f"parameters are still the dominant, evidenced driver of the divergence, but the net figure "
-            f"should not be read as an exact reconciliation."
-        )
-    elif abs_explained < 1:
-        tail = (
-            "None of the parameters checked against the tribunal's own stated figures or the statutory "
-            "standard differ meaningfully, so this gap is not traceable to multiplier, future-prospects %, "
-            "or deduction % — it likely reflects the Tribunal's discretionary assessment of the evidence, "
-            "or a head/component the calculator does not separately model."
-        )
-    else:
-        tail = (
-            f"These accounted-for parameter differences explain approximately Rs. {round(abs_explained):,.0f} "
-            f"({coverage_pct:.0f}%) of the Rs. {round(abs_gap):,.0f} gap; the remaining "
-            f"Rs. {round(abs_gap - abs_explained):,.0f} is not traceable to a specific parameter in the "
-            f"record and likely reflects the Tribunal's discretionary assessment of the evidence, or a "
-            f"head/component the calculator does not separately model."
-        )
-
-    note = "" if not inferred else (
-        " (Note: the tribunal amount used for this comparison was itself inferred by subtraction — "
-        "see the reconciliation note above — so this attribution explains the inferred figure, not a "
-        "directly OCR-extracted one.)"
-    )
-
-    return header + "\n" + "\n".join(bullet_lines) + "\n" + tail + note
-
-
-def _fallback_extract_award_total(ocr_text):
-    """
-    Last-resort extraction of the tribunal's total awarded compensation directly from
-    the raw OCR text, used only when the workstation's cached 'award_amount' field is
-    blank (e.g. autofill wasn't run, or the field was cleared). This does not replace
-    the primary heuristic parser (backend/parser_heuristics.py) — it exists purely so
-    that "Justify Compensation" can still perform its Python-side arithmetic (verdict,
-    subtraction-reconciliation of missing heads) instead of silently giving up and
-    reporting 'not available in workstation' when the number is, in fact, sitting in
-    the document text. Every candidate must be explicitly anchored to compensation/
-    award language — this never guesses at just any large number in the document.
-    """
-    if not ocr_text:
-        return None
-    import re as _re
-    patterns = [
-        r'total\s+compensation\s*(?:of|is|was|amount(?:ing)?\s+to|payable)?\s*(?:awarded)?\s*(?:rs\.?|inr|rupees)\s*([\d,]{4,10})',
-        r'(?:awarded|award(?:ed)?|granted)\s+(?:a\s+)?(?:total\s+)?compensation\s+of\s*(?:rs\.?|inr|rupees)\s*([\d,]{4,10})',
-        r'compensation\s+(?:amount\s+)?of\s*(?:rs\.?|inr|rupees)\s*([\d,]{4,10})\s*(?:is|was|stands)?\s*(?:hereby\s+)?awarded',
-        r'tribunal\s+(?:has\s+)?awarded\s*(?:rs\.?|inr|rupees)\s*([\d,]{4,10})',
-        r'(?:^|\n)\s*total\s*[:\-]?\s*(?:rs\.?|inr|rupees)\s*([\d,]{4,10})\s*/?-?\s*(?:\n|$)',
-    ]
-    candidates = []
-    for pat in patterns:
-        for m in _re.finditer(pat, ocr_text, _re.IGNORECASE | _re.MULTILINE):
-            raw = m.group(1).replace(",", "").strip()
-            try:
-                val = float(raw)
-            except ValueError:
-                continue
-            if val >= 1000:  # compensation figures are never sub-Rs.1000; filters out stray digits
-                candidates.append((m.start(), val))
-    if not candidates:
-        return None
-    # The final award figure is almost always stated at/near the END of a judgment
-    # (after the reasoning), so prefer the LAST anchored match in reading order.
-    candidates.sort(key=lambda c: c[0])
-    return candidates[-1][1]
-
-
-def _build_headwise_comparison(pf, cr, is_death, tribunal_total=None):
-    if is_death:
-        head_defs = [
-            ("Loss of Dependency", pf.get("tribunal_loss_of_dependency"), cr.get("loss_of_dependency")),
-            ("Loss of Consortium", pf.get("tribunal_consortium"), cr.get("consortium")),
-            ("Funeral Expenses", pf.get("tribunal_funeral"), cr.get("funeral_expenses")),
-            ("Loss of Estate", pf.get("tribunal_estate"), cr.get("loss_estate")),
-        ]
-    else:
-        head_defs = [
-            ("Medical Expenses", pf.get("tribunal_medical"), cr.get("medical_expenses")),
-            ("Future Medical Expenses", pf.get("tribunal_future_medical"), cr.get("future_medical_expenses")),
-            ("Pain & Suffering", pf.get("tribunal_pain_suffering"), cr.get("pain_and_suffering")),
-            ("Transportation", pf.get("tribunal_transport"), cr.get("transportation")),
-            ("Special Diet", pf.get("tribunal_special_diet"), cr.get("special_diet")),
-            ("Attender Charges", pf.get("tribunal_attender"), cr.get("attender_charges")),
-            ("Loss of (Future) Income", pf.get("tribunal_loss_of_income"),
-             cr.get("future_income_loss") or cr.get("loss_of_income")),
-        ]
-
-    rows = []
-    for label, tribunal_raw, calc_raw in head_defs:
-        rows.append({
-            "label": label,
-            "tribunal_amount": _parse_amount_or_none(tribunal_raw),
-            "calculator_amount": _parse_amount_or_none(calc_raw),
-            "inferred": False,
-            "reconciliation_note": None,
-        })
-
-    # ── STEP A: SUBTRACTION-BASED RECONCILIATION ──────────────────────────
-    if tribunal_total is not None:
-        known_rows = [r for r in rows if r["tribunal_amount"] is not None]
-        missing_rows = [r for r in rows if r["tribunal_amount"] is None]
-        if len(missing_rows) == 1 and len(known_rows) == len(rows) - 1:
-            known_sum = sum(r["tribunal_amount"] for r in known_rows)
-            inferred_amt = tribunal_total - known_sum
-            if inferred_amt > 0:
-                target = missing_rows[0]
-                target["tribunal_amount"] = round(inferred_amt, 2)
-                target["inferred"] = True
-                other_labels = ", ".join(f"{r['label']} Rs. {r['tribunal_amount']:,.0f}" for r in known_rows)
-                target["reconciliation_note"] = (
-                    f"This figure was NOT separately stated in the OCR text for '{target['label']}'. "
-                    f"It is arithmetically inferred: Tribunal Total (Rs. {tribunal_total:,.0f}) minus every "
-                    f"other awarded head that IS stated in the judgment ({other_labels}) = "
-                    f"Rs. {inferred_amt:,.0f}. Present this as 'Inferred by subtraction from the tribunal "
-                    f"total', not as a figure literally printed in the judgment."
-                )
-        elif len(missing_rows) > 1:
-            known_sum = sum(r["tribunal_amount"] for r in known_rows)
-            shortfall = tribunal_total - known_sum
-            if abs(shortfall) > 1:
-                for r in missing_rows:
-                    r["reconciliation_note"] = (
-                        f"Not individually inferable — {len(missing_rows)} heads are simultaneously missing "
-                        f"from the OCR text, so the combined shortfall of Rs. {shortfall:,.0f} "
-                        f"(Tribunal Total minus every head that IS stated) cannot be split between them "
-                        f"without more information. State this combined shortfall rather than guessing a "
-                        f"per-head split."
-                    )
-
-    lines = []
-    for r in rows:
-        label = r["label"]
-        tribunal_amt = r["tribunal_amount"]
-        calc_amt = r["calculator_amount"]
-
-        if tribunal_amt is None and (calc_amt is None or calc_amt == 0):
-            status = "NOT_COMPARABLE"
-            diff_text = "N/A — this head was neither found in the tribunal record nor computed by the calculator."
-        elif tribunal_amt is None:
-            status = "TRIBUNAL_AMOUNT_MISSING"
-            diff_text = (
-                f"N/A — the tribunal's figure for this head could not be located in the OCR text. "
-                f"Calculator estimate only: Rs. {calc_amt:,.0f}. Do not invent a tribunal figure."
-            )
-            if r["reconciliation_note"]:
-                diff_text += " " + r["reconciliation_note"]
-        elif calc_amt is None:
-            status = "CALCULATOR_AMOUNT_MISSING"
-            diff_text = (
-                f"N/A — the calculator has no value for this head (input left blank). "
-                f"Tribunal figure only: Rs. {tribunal_amt:,.0f}."
-            )
-        else:
-            diff = abs(round(calc_amt) - round(tribunal_amt))
-            status = "INFERRED_MATCH" if (diff == 0 and r["inferred"]) else (
-                "MATCH" if diff == 0 else ("CALC_HIGHER" if calc_amt > tribunal_amt else "TRIBUNAL_HIGHER")
-            )
-            diff_text = f"Rs. {diff:,.0f}" if diff != 0 else "Rs. 0 (no variance)"
-
-        r["status"] = status
-
-        attribution = None
-        if tribunal_amt is not None and calc_amt is not None and abs(round(calc_amt) - round(tribunal_amt)) > 0:
-            if label in ("Loss of Dependency", "Loss of (Future) Income"):
-                attribution = _attribute_income_head_difference(pf, cr, is_death, tribunal_amt, calc_amt, r["inferred"])
-        r["attribution"] = attribution
-
-        tribunal_disp = (
-            (f"Rs. {tribunal_amt:,.0f} (INFERRED by subtraction — not literally printed in the judgment)"
-             if r["inferred"] else f"Rs. {tribunal_amt:,.0f}")
-            if tribunal_amt is not None else "Not stated in judgment / not extracted"
-        )
-        calc_disp = f"Rs. {calc_amt:,.0f}" if calc_amt is not None else "Not computed (input blank)"
-        line = (
-            f"- {label}:\n"
-            f"    Tribunal (provided) amount: {tribunal_disp}\n"
-            f"    Calculator (formula) amount: {calc_disp}\n"
-            f"    Absolute difference (modulus): {diff_text}"
-        )
-        if r["inferred"] and r["reconciliation_note"]:
-            line += f"\n    Reconciliation basis: {r['reconciliation_note']}"
-        if attribution:
-            line += f"\n    {attribution}"
-        lines.append(line)
-
-    text_block = "\n".join(lines)
-    return text_block, rows
-
-
-def _build_legal_reference_standards(pf, cr, is_death):
-    try:
-        age = int(float(pf.get("age") or 30))
-    except (TypeError, ValueError):
-        age = 30
-
-    expected_multiplier = get_multiplier(age)
-
-    lines = [
-        f"Claimant/Deceased age used in workstation: {age} years.",
-        f"Expected multiplier per Sarla Verma / Pranay Sethi age-slab table for age {age}: {expected_multiplier}.",
-        f"Calculator's applied multiplier: {cr.get('multiplier', 'Unknown')}.",
-    ]
-
-    if is_death:
-        try:
-            dependents = int(float(pf.get("dependents") or 0))
-        except (TypeError, ValueError):
-            dependents = 0
-        marital_status = str(pf.get("marital_status") or "married")
-        try:
-            future_type = int(float(pf.get("future_type") or 2))
-        except (TypeError, ValueError):
-            future_type = 2
-
-        expected_future_pct = round(get_future_prospect(age, future_type) * 100)
-        expected_deduction_ratio = get_deduction(dependents, marital_status)
-        expected_deduction_pct = round(expected_deduction_ratio * 100)
-
-        lines.extend([
-            f"Dependents in workstation: {dependents}; Marital status: {marital_status}.",
-            f"Expected future-prospects % per Pranay Sethi (age {age}, "
-            f"{'permanent job' if future_type == 1 else 'self-employed/fixed wage'} assumption): "
-            f"{expected_future_pct}%.",
-            f"Calculator's applied future-prospects %: {cr.get('future_prospect_percentage', 'Unknown')}.",
-            f"Expected deduction for personal/living expenses (Sarla Verma table, "
-            f"{dependents} dependents, {marital_status}): {expected_deduction_pct}% "
-            f"({'1/2' if abs(expected_deduction_ratio - 0.5) < 1e-6 else ('1/3' if abs(expected_deduction_ratio - 1/3) < 1e-6 else ('1/4' if abs(expected_deduction_ratio - 0.25) < 1e-6 else '1/5'))}).",
-            f"Calculator's applied deduction %: {cr.get('deduction_percentage', 'Unknown')}.",
-        ])
-
-    lines.append(
-        "IMPORTANT: These are the STANDARD/EXPECTED values derived from this case's own age, "
-        "dependents, marital status and employment-type inputs — they are NOT necessarily what the "
-        "tribunal actually applied. Cross-check the OCR text for the multiplier/percentage the tribunal "
-        "actually used before citing a mismatch. If the tribunal's own figures are not stated in the "
-        "judgment text, say so rather than assuming they match either value above."
-    )
-
-    return "\n".join(lines)
-
-
 def is_case_summary_query(query: str) -> bool:
 
     if not query:
@@ -883,18 +452,6 @@ async def prepare_pdf_chat_prompt(request: PDFChatRequest):
             tribunal_total = float(pf.get("award_amount") or 0)
         except (TypeError, ValueError):
             tribunal_total = 0
-        tribunal_total_source = "workstation field" if tribunal_total > 0 else None
-
-        # If the workstation's cached award_amount is blank (autofill wasn't run /
-        # field cleared), fall back to pulling the figure directly out of the OCR
-        # text so the rest of the precompute (verdict + subtraction-reconciliation
-        # of missing heads) can still run instead of silently degrading.
-        if tribunal_total <= 0 and request.ocr_text:
-            fallback_total = _fallback_extract_award_total(request.ocr_text)
-            if fallback_total:
-                tribunal_total = fallback_total
-                tribunal_total_source = "OCR text (fallback regex — workstation field was blank)"
-
         try:
             calc_total = float(
                 cr.get("final_amount") or cr.get("total_compensation") or 0
@@ -904,16 +461,9 @@ async def prepare_pdf_chat_prompt(request: PDFChatRequest):
 
         if tribunal_total == 0 or calc_total == 0:
             math_relation = "unknown"
-            missing_side = "the tribunal award total" if tribunal_total == 0 else "the calculator total"
             precomputed_comparison = (
-                f"{missing_side.capitalize()} could not be determined from either the workstation fields "
-                f"or the OCR text, so no quantum comparison (Adequate / Under-compensated / "
-                f"Over-compensated) is possible for this case. "
-                f"HARD RULE: Overall Verdict MUST be written as "
-                f"'QUANTUM NOT DETERMINABLE (insufficient data)' — do NOT write Adequate, "
-                f"Under-Compensated, or Over-Compensated when this message is shown, even if some "
-                f"individual heads above appear to match. If this is a liability appeal, resolve the "
-                f"verdict on liability grounds only and say so explicitly."
+                "Tribunal total or calculator total not available in workstation. "
+                "Determine verdict from OCR text only."
             )
         elif abs(tribunal_total - calc_total) < 1:
             math_relation = "equal"
@@ -966,14 +516,6 @@ async def prepare_pdf_chat_prompt(request: PDFChatRequest):
                 f"Multiplier: {cr.get('multiplier', 'Unknown')}\n"
             )
 
-        # ── PRECOMPUTE PER-HEAD TRIBUNAL vs CALCULATOR COMPARISON (Python, never the LLM) ──
-        headwise_comparison_block, headwise_rows = _build_headwise_comparison(
-            pf, cr, is_death, tribunal_total=(tribunal_total if tribunal_total else None)
-        )
-
-        # ── PRECOMPUTE THE STATUTORY REFERENCE STANDARDS FOR THIS CASE'S OWN INPUTS ──
-        legal_reference_block = _build_legal_reference_standards(pf, cr, is_death)
-
         case_facts_summary = (
             f"\n=== CASE PARAMETERS FROM WORKSTATION ===\n"
             f"Case Type: {case_type_str}\n"
@@ -984,10 +526,7 @@ async def prepare_pdf_chat_prompt(request: PDFChatRequest):
             f"Disability % (CALCULATOR INPUT ONLY — NOT a tribunal finding. "
             f"Do NOT report this as what the tribunal held): "
             f"{pf.get('disability', 'Unknown')}%\n"
-            f"Tribunal Award Total: "
-            + (f"Rs. {tribunal_total:,.0f} (source: {tribunal_total_source})" if tribunal_total_source
-               else "Unknown — not found in workstation fields or OCR text")
-            + "\n"
+            f"Tribunal Award Total: Rs. {pf.get('award_amount', 'Unknown')}\n"
             f"Calculator Estimated Total: Rs. {cr.get('final_amount', 'Unknown')}\n"
             f"{calc_fields_summary}"
             f"\n=== PRECOMPUTED VERDICT (USE EXACTLY AS WRITTEN) ===\n"
@@ -995,14 +534,6 @@ async def prepare_pdf_chat_prompt(request: PDFChatRequest):
             f"COMPARISON: {precomputed_comparison}\n"
             f"INSTRUCTION: Copy the COMPARISON sentence into Overall Verdict → Reason verbatim.\n"
             f"DO NOT rewrite or rephrase the comparison. DO NOT say 'less than' if amounts are equal.\n"
-            f"===\n"
-            f"\n=== PRECOMPUTED HEAD-WISE COMPARISON (Python-computed — copy these figures EXACTLY, "
-            f"never recompute or alter them) ===\n"
-            f"{headwise_comparison_block}\n"
-            f"===\n"
-            f"\n=== STATUTORY REFERENCE STANDARDS FOR THIS CASE (Sarla Verma / Pranay Sethi tables, "
-            f"computed from this case's own age/dependents/marital-status/employment-type inputs) ===\n"
-            f"{legal_reference_block}\n"
             f"===\n"
         )
 
@@ -1092,55 +623,16 @@ async def prepare_pdf_chat_prompt(request: PDFChatRequest):
             "Report only what the tribunal found. Never cite the workstation % as a tribunal finding.\n\n"
 
             "STEP 4 — CLASSIFICATION RULE.\n"
-            "The tribunal amount, calculator amount, and absolute (modulus) difference for every "
-            "head have ALREADY been computed in Python — see '=== PRECOMPUTED HEAD-WISE COMPARISON ===' "
-            "above. You MUST reuse those exact figures verbatim. NEVER perform the subtraction yourself "
-            "and NEVER print a negative difference — the block already gives you the absolute value.\n"
-            "For each head, classify using the PRECOMPUTED status field:\n"
-            "  TRIBUNAL_HIGHER → tribunal amount is more than the calculator estimate → label 'High'\n"
-            "  CALC_HIGHER → tribunal amount is less than the calculator estimate → label 'Low'\n"
-            "  MATCH → identical → label 'Adequate'\n"
-            "  TRIBUNAL_AMOUNT_MISSING / CALCULATOR_AMOUNT_MISSING / NOT_COMPARABLE → label 'N/A'\n"
+            "For each awarded head:\n"
+            "  tribunal amount < calculator estimate → Low\n"
+            "  tribunal amount == calculator estimate → Adequate\n"
+            "  tribunal amount > calculator estimate → High\n"
+            "  calculator estimate Unknown/0 or N/A → N/A\n"
             "If claimant has no income (minor, student, homemaker, unemployed):\n"
             "  Income/dependency head → N/A (state reason, not 'no documentation')\n"
             "  Do NOT generate income-related root cause bullets for this claimant.\n\n"
 
-            "STEP 5 — EXPLAIN EVERY NON-ZERO DIFFERENCE (this is the core deliverable).\n"
-            "For every head where the precomputed absolute difference is greater than Rs. 0, you MUST\n"
-            "give a specific, evidence-grounded reason the two figures diverge. Build the explanation\n"
-            "using ONLY the following permitted sources, in this STRICT order of preference — always\n"
-            "prefer the earliest source that is available for that head, and reuse its numbers verbatim:\n"
-            "  (a) RECONCILIATION BASIS — if the head's row in '=== PRECOMPUTED HEAD-WISE COMPARISON ==='\n"
-            "      carries a 'Reconciliation basis:' line, that head's tribunal figure was not literally\n"
-            "      printed in the judgment but was arithmetically derived by subtracting every other known\n"
-            "      awarded head from the tribunal's grand total. Report it exactly as 'Inferred by\n"
-            "      subtraction: Rs. X' (never as if OCR found it directly) and copy the arithmetic shown.\n"
-            "  (b) QUANTIFIED PARAMETER ATTRIBUTION — if the head's row carries a 'Quantified parameter\n"
-            "      attribution' line, this is a Python-computed, formula-based decomposition of the gap\n"
-            "      into the exact parameters (multiplier / future-prospects % / deduction %) that differ\n"
-            "      between the calculator and either (i) the tribunal's own OCR-extracted figure for that\n"
-            "      parameter, or (ii) the statutory Sarla Verma / Pranay Sethi standard for this case's own\n"
-            "      age/dependents/marital-status/employment-type. Copy this block's bullets and its Rs.\n"
-            "      figures verbatim — do not recompute, round differently, or drop the 'remaining portion\n"
-            "      not traceable' sentence if present.\n"
-            "  (c) An explicit statement in the OCR text of what evidence the tribunal accepted or\n"
-            "      rejected for that head (e.g. no medical bills produced, disability certificate not\n"
-            "      proved, income affidavit disbelieved, no attendant/caretaker evidence on record).\n"
-            "  (d) An explicit ground of appeal (from STEP 2) disputing that head's quantum or basis.\n"
-            "  (e) The calculator head simply was not claimed/proved before the tribunal at all (state\n"
-            "      this only if the OCR text supports it, e.g. the head is entirely absent from the\n"
-            "      award table).\n"
-            "Sources (a) and (b) are pre-computed in Python specifically so you are not left guessing —\n"
-            "use them whenever present, even if they only explain part of the gap; in that case also\n"
-            "state the unexplained remainder using the language already provided in that block.\n"
-            "If NONE of (a)-(e) is available for a head, you MUST write exactly: 'No specific reason is\n"
-            "stated in the tribunal record for this variance; it likely reflects the Tribunal's\n"
-            "discretionary assessment of the evidence on facts the calculator's standard formula does not\n"
-            "capture.' Do NOT invent a case-specific reason that is not supported by the text — a generic\n"
-            "but honest explanation is required over a fabricated specific one, and it should now be rare\n"
-            "given (a) and (b) are computed for every head that qualifies.\n\n"
-
-            "STEP 6 — LEGAL CAUTION.\n"
+            "STEP 5 — LEGAL CAUTION.\n"
             "For Missed Heads and liability arguments:\n"
             "  Write: 'The appellant contends [exact argument from grounds].'\n"
             "  Do NOT write: 'This omission is unjustified.' or 'The tribunal erred.'\n\n"
@@ -1158,32 +650,15 @@ async def prepare_pdf_chat_prompt(request: PDFChatRequest):
             "Liability appeal (disputes who should pay) / Both]\n\n"
 
             "**Overall Verdict:** [UNDER-COMPENSATED / ADEQUATE / OVER-COMPENSATED / "
-            "LIABILITY DISPUTE (quantum not in dispute) / QUANTUM NOT DETERMINABLE (insufficient data)]\n"
-            "HARD RULE: if the '=== PRECOMPUTED VERDICT ===' block above shows MATH RELATION: unknown, "
-            "you MUST use 'QUANTUM NOT DETERMINABLE (insufficient data)' here — never Adequate, "
-            "Under-Compensated, or Over-Compensated, even if some individual heads above happen to match. "
-            "A verdict of 'Adequate' is a factual claim that the total awarded is not less than what is "
-            "due; you cannot make that claim without knowing both totals.\n"
+            "LIABILITY DISPUTE (quantum not in dispute)]\n"
             "Reason: [Copy the COMPARISON sentence from PRECOMPUTED VERDICT verbatim. "
             "Then append any missed heads or liability grounds.]\n\n"
 
             "**Head-wise Analysis (Awarded Heads):**\n"
             + head_analysis_hint +
-            "For EVERY head listed in '=== PRECOMPUTED HEAD-WISE COMPARISON ===' above, output exactly\n"
-            "this shape (copy the Rs. figures and the difference verbatim from that block):\n"
-            "- [Head Name]\n"
-            "  Tribunal (provided) amount: Rs.[tribunal amount — if the precomputed row is marked "
-            "INFERRED, write 'Rs.[amount] (inferred by subtraction — not printed in judgment)'; "
-            "otherwise 'Not stated in judgment / not extracted']\n"
-            "  Calculator (formula) amount: Rs.[calculator amount, or 'Not computed (input blank)']\n"
-            "  Absolute difference: Rs.[precomputed modulus difference, or 'N/A' with the reason given "
-            "in the precomputed block]\n"
-            "  Classification: [Low/Adequate/High/N/A]\n"
-            "  Why tribunal fixed this amount: [evidence accepted/rejected, from OCR — if unknown, say "
-            "'Not explicitly stated in the judgment.']\n"
-            "  Explanation of difference: [Follow STEP 5 exactly, using sources (a)/(b) verbatim when the "
-            "precomputed block supplies a 'Reconciliation basis' or 'Quantified parameter attribution' "
-            "for this head. Omit this line entirely if the absolute difference is Rs. 0.]\n\n"
+            "- [Head Name]: Rs.[amount from OCR] → [Low/Adequate/High/N/A]\n"
+            "  Why tribunal fixed this amount: [evidence accepted/rejected]\n"
+            "  Calculator estimate: Rs.[amount] or N/A\n\n"
 
             "**Missed Heads (Raised in Grounds but Not Awarded):**\n"
             "- [Head Name]\n"
@@ -1201,22 +676,13 @@ async def prepare_pdf_chat_prompt(request: PDFChatRequest):
             "[What the tribunal ACTUALLY found — not the workstation input value.]\n\n"
 
             "**Interest Awarded:**\n"
-            "[Rate]% from [date]. Both the rate and the date MUST literally appear next to an "
-            "'interest' keyword in the OCR text (e.g. 'interest @ 6% p.a. from date of filing/accident/"
-            "petition'). Do NOT reuse the accident date, filing date, or any other unrelated date as the "
-            "interest date unless the OCR text explicitly ties that date to interest. If either the rate "
-            "or the date is not found tied to 'interest' in the text, write 'Not found in OCR text' for "
-            "that part instead of guessing.\n"
+            "[Rate]% from [date from judgment].\n"
             "Dispute: [Appellant's argument on interest, or 'No dispute.']\n\n"
 
             "**Root Causes of Under/Over Compensation:**\n"
-            "Do NOT restate generic boilerplate ('lack of evidence', 'no documentation provided') unless "
-            "the OCR text or the precomputed blocks actually say so for THIS case. Prefer reusing the "
-            "'Reconciliation basis' / 'Quantified parameter attribution' sentences already computed above "
-            "— they ARE the root causes for those heads. Each bullet must name a specific fact about THIS\n"
-            "case:\n"
+            "Each bullet must name a specific fact about THIS case:\n"
             "— specific injury or death circumstances\n"
-            "— specific evidence missing or rejected (only if actually stated in the OCR text)\n"
+            "— specific evidence missing or rejected\n"
             "— specific head not awarded and reason\n"
             "— claimant's age, occupation, and income status\n"
             "DO NOT write generic income bullets if claimant has no income.\n\n"
@@ -1225,11 +691,8 @@ async def prepare_pdf_chat_prompt(request: PDFChatRequest):
             "[Verbatim from PDF only. If none: "
             "'No specific precedents cited in document.']\n\n"
 
-            "FINAL RULE: Every tribunal Rs. figure must come from the OCR text, or from a value explicitly "
-            "marked '(inferred by subtraction ...)' in the precomputed block. If not found: write 'Not "
-            "found in OCR text' — never guess. Do NOT add any section beyond 'Key Legal Provisions & "
-            "Precedents Used' — no closing 'Conclusion' or 'Summary' section. Do not restate or re-argue "
-            "the Overall Verdict at the end; state it once, at the top, and stop.\n"
+            "FINAL RULE: Every tribunal Rs. figure must come from the OCR text. "
+            "If not found: write 'Not found in OCR text' — never guess.\n"
         )
 
     case_summary_instruction = (
