@@ -3798,6 +3798,37 @@ This cannot be undone.`)) return;
     const slideover = document.getElementById("right-slideover");
     const closeSlideover = document.getElementById("close-slideover");
     const aiAssistantTrigger = document.getElementById("ai-assistant-trigger");
+    const chatPromptBubble = document.getElementById("chat-prompt-bubble");
+    const chatPromptClose = document.getElementById("chat-prompt-close");
+    const chatPromptText = document.getElementById("chat-prompt-text");
+
+    // Typewriter effect function for query bubble
+    function initTypewriter() {
+        if (!chatPromptText) return;
+        const message = "Ask your query...";
+        let i = 0;
+        chatPromptText.textContent = "";
+        chatPromptText.classList.add("typing");
+        
+        function type() {
+            if (i < message.length) {
+                chatPromptText.textContent += message.charAt(i);
+                i++;
+                setTimeout(type, 100); // 100ms per character
+            } else {
+                // Remove cursor blinking after completion
+                setTimeout(() => {
+                    chatPromptText.classList.remove("typing");
+                    chatPromptText.style.borderRight = "none";
+                }, 1500);
+            }
+        }
+        
+        // Start typing after a short delay (1.2s)
+        setTimeout(type, 1200);
+    }
+
+    initTypewriter();
 
     const assistantChatMessages = document.getElementById("assistant-chat-messages");
     const assistantChatInput = document.getElementById("assistant-chat-input");
@@ -3932,6 +3963,13 @@ This cannot be undone.`)) return;
 
     if (aiAssistantTrigger) {
         aiAssistantTrigger.addEventListener("click", () => {
+            if (chatPromptBubble) {
+                chatPromptBubble.style.opacity = "0";
+                chatPromptBubble.style.visibility = "hidden";
+                chatPromptBubble.style.pointerEvents = "none";
+                chatPromptBubble.style.transform = "translateY(-10px) scale(0.95)";
+            }
+
             if (aiAssistantTrigger.classList.contains("active") && slideover.classList.contains("open")) {
                 closeDrawer();
                 return;
@@ -3942,6 +3980,16 @@ This cannot be undone.`)) return;
 
             // Auto generate CASE BRIEF on open
             generateCaseBrief();
+        });
+    }
+
+    if (chatPromptClose && chatPromptBubble) {
+        chatPromptClose.addEventListener("click", (e) => {
+            e.stopPropagation();
+            chatPromptBubble.style.opacity = "0";
+            chatPromptBubble.style.visibility = "hidden";
+            chatPromptBubble.style.pointerEvents = "none";
+            chatPromptBubble.style.transform = "translateY(-10px) scale(0.95)";
         });
     }
 

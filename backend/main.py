@@ -453,6 +453,46 @@ def _attribute_income_head_difference(pf, cr, is_death, tribunal_amt, calc_amt, 
     return header + "\n" + "\n".join(bullet_lines) + "\n" + tail + note
 
 
+def _fallback_extract_award_total(ocr_text):
+    """
+    Last-resort extraction of the tribunal's total awarded compensation directly from
+    the raw OCR text, used only when the workstation's cached 'award_amount' field is
+    blank (e.g. autofill wasn't run, or the field was cleared). This does not replace
+    the primary heuristic parser (backend/parser_heuristics.py) — it exists purely so
+    that "Justify Compensation" can still perform its Python-side arithmetic (verdict,
+    subtraction-reconciliation of missing heads) instead of silently giving up and
+    reporting 'not available in workstation' when the number is, in fact, sitting in
+    the document text. Every candidate must be explicitly anchored to compensation/
+    award language — this never guesses at just any large number in the document.
+    """
+    if not ocr_text:
+        return None
+    import re as _re
+    patterns = [
+        r'total\s+compensation\s*(?:of|is|was|amount(?:ing)?\s+to|payable)?\s*(?:awarded)?\s*(?:rs\.?|inr|rupees)\s*([\d,]{4,10})',
+        r'(?:awarded|award(?:ed)?|granted)\s+(?:a\s+)?(?:total\s+)?compensation\s+of\s*(?:rs\.?|inr|rupees)\s*([\d,]{4,10})',
+        r'compensation\s+(?:amount\s+)?of\s*(?:rs\.?|inr|rupees)\s*([\d,]{4,10})\s*(?:is|was|stands)?\s*(?:hereby\s+)?awarded',
+        r'tribunal\s+(?:has\s+)?awarded\s*(?:rs\.?|inr|rupees)\s*([\d,]{4,10})',
+        r'(?:^|\n)\s*total\s*[:\-]?\s*(?:rs\.?|inr|rupees)\s*([\d,]{4,10})\s*/?-?\s*(?:\n|$)',
+    ]
+    candidates = []
+    for pat in patterns:
+        for m in _re.finditer(pat, ocr_text, _re.IGNORECASE | _re.MULTILINE):
+            raw = m.group(1).replace(",", "").strip()
+            try:
+                val = float(raw)
+            except ValueError:
+                continue
+            if val >= 1000:  # compensation figures are never sub-Rs.1000; filters out stray digits
+                candidates.append((m.start(), val))
+    if not candidates:
+        return None
+    # The final award figure is almost always stated at/near the END of a judgment
+    # (after the reasoning), so prefer the LAST anchored match in reading order.
+    candidates.sort(key=lambda c: c[0])
+    return candidates[-1][1]
+
+
 def _build_headwise_comparison(pf, cr, is_death, tribunal_total=None):
     if is_death:
         head_defs = [
@@ -843,6 +883,18 @@ async def prepare_pdf_chat_prompt(request: PDFChatRequest):
             tribunal_total = float(pf.get("award_amount") or 0)
         except (TypeError, ValueError):
             tribunal_total = 0
+        tribunal_total_source = "workstation field" if tribunal_total > 0 else None
+
+        # If the workstation's cached award_amount is blank (autofill wasn't run /
+        # field cleared), fall back to pulling the figure directly out of the OCR
+        # text so the rest of the precompute (verdict + subtraction-reconciliation
+        # of missing heads) can still run instead of silently degrading.
+        if tribunal_total <= 0 and request.ocr_text:
+            fallback_total = _fallback_extract_award_total(request.ocr_text)
+            if fallback_total:
+                tribunal_total = fallback_total
+                tribunal_total_source = "OCR text (fallback regex — workstation field was blank)"
+
         try:
             calc_total = float(
                 cr.get("final_amount") or cr.get("total_compensation") or 0
@@ -852,9 +904,16 @@ async def prepare_pdf_chat_prompt(request: PDFChatRequest):
 
         if tribunal_total == 0 or calc_total == 0:
             math_relation = "unknown"
+            missing_side = "the tribunal award total" if tribunal_total == 0 else "the calculator total"
             precomputed_comparison = (
-                "Tribunal total or calculator total not available in workstation. "
-                "Determine verdict from OCR text only."
+                f"{missing_side.capitalize()} could not be determined from either the workstation fields "
+                f"or the OCR text, so no quantum comparison (Adequate / Under-compensated / "
+                f"Over-compensated) is possible for this case. "
+                f"HARD RULE: Overall Verdict MUST be written as "
+                f"'QUANTUM NOT DETERMINABLE (insufficient data)' — do NOT write Adequate, "
+                f"Under-Compensated, or Over-Compensated when this message is shown, even if some "
+                f"individual heads above appear to match. If this is a liability appeal, resolve the "
+                f"verdict on liability grounds only and say so explicitly."
             )
         elif abs(tribunal_total - calc_total) < 1:
             math_relation = "equal"
@@ -925,7 +984,10 @@ async def prepare_pdf_chat_prompt(request: PDFChatRequest):
             f"Disability % (CALCULATOR INPUT ONLY — NOT a tribunal finding. "
             f"Do NOT report this as what the tribunal held): "
             f"{pf.get('disability', 'Unknown')}%\n"
-            f"Tribunal Award Total: Rs. {pf.get('award_amount', 'Unknown')}\n"
+            f"Tribunal Award Total: "
+            + (f"Rs. {tribunal_total:,.0f} (source: {tribunal_total_source})" if tribunal_total_source
+               else "Unknown — not found in workstation fields or OCR text")
+            + "\n"
             f"Calculator Estimated Total: Rs. {cr.get('final_amount', 'Unknown')}\n"
             f"{calc_fields_summary}"
             f"\n=== PRECOMPUTED VERDICT (USE EXACTLY AS WRITTEN) ===\n"
@@ -1096,7 +1158,12 @@ async def prepare_pdf_chat_prompt(request: PDFChatRequest):
             "Liability appeal (disputes who should pay) / Both]\n\n"
 
             "**Overall Verdict:** [UNDER-COMPENSATED / ADEQUATE / OVER-COMPENSATED / "
-            "LIABILITY DISPUTE (quantum not in dispute)]\n"
+            "LIABILITY DISPUTE (quantum not in dispute) / QUANTUM NOT DETERMINABLE (insufficient data)]\n"
+            "HARD RULE: if the '=== PRECOMPUTED VERDICT ===' block above shows MATH RELATION: unknown, "
+            "you MUST use 'QUANTUM NOT DETERMINABLE (insufficient data)' here — never Adequate, "
+            "Under-Compensated, or Over-Compensated, even if some individual heads above happen to match. "
+            "A verdict of 'Adequate' is a factual claim that the total awarded is not less than what is "
+            "due; you cannot make that claim without knowing both totals.\n"
             "Reason: [Copy the COMPARISON sentence from PRECOMPUTED VERDICT verbatim. "
             "Then append any missed heads or liability grounds.]\n\n"
 
@@ -1134,13 +1201,22 @@ async def prepare_pdf_chat_prompt(request: PDFChatRequest):
             "[What the tribunal ACTUALLY found — not the workstation input value.]\n\n"
 
             "**Interest Awarded:**\n"
-            "[Rate]% from [date from judgment].\n"
+            "[Rate]% from [date]. Both the rate and the date MUST literally appear next to an "
+            "'interest' keyword in the OCR text (e.g. 'interest @ 6% p.a. from date of filing/accident/"
+            "petition'). Do NOT reuse the accident date, filing date, or any other unrelated date as the "
+            "interest date unless the OCR text explicitly ties that date to interest. If either the rate "
+            "or the date is not found tied to 'interest' in the text, write 'Not found in OCR text' for "
+            "that part instead of guessing.\n"
             "Dispute: [Appellant's argument on interest, or 'No dispute.']\n\n"
 
             "**Root Causes of Under/Over Compensation:**\n"
-            "Each bullet must name a specific fact about THIS case:\n"
+            "Do NOT restate generic boilerplate ('lack of evidence', 'no documentation provided') unless "
+            "the OCR text or the precomputed blocks actually say so for THIS case. Prefer reusing the "
+            "'Reconciliation basis' / 'Quantified parameter attribution' sentences already computed above "
+            "— they ARE the root causes for those heads. Each bullet must name a specific fact about THIS\n"
+            "case:\n"
             "— specific injury or death circumstances\n"
-            "— specific evidence missing or rejected\n"
+            "— specific evidence missing or rejected (only if actually stated in the OCR text)\n"
             "— specific head not awarded and reason\n"
             "— claimant's age, occupation, and income status\n"
             "DO NOT write generic income bullets if claimant has no income.\n\n"
@@ -1149,8 +1225,11 @@ async def prepare_pdf_chat_prompt(request: PDFChatRequest):
             "[Verbatim from PDF only. If none: "
             "'No specific precedents cited in document.']\n\n"
 
-            "FINAL RULE: Every tribunal Rs. figure must come from the OCR text. "
-            "If not found: write 'Not found in OCR text' — never guess.\n"
+            "FINAL RULE: Every tribunal Rs. figure must come from the OCR text, or from a value explicitly "
+            "marked '(inferred by subtraction ...)' in the precomputed block. If not found: write 'Not "
+            "found in OCR text' — never guess. Do NOT add any section beyond 'Key Legal Provisions & "
+            "Precedents Used' — no closing 'Conclusion' or 'Summary' section. Do not restate or re-argue "
+            "the Overall Verdict at the end; state it once, at the top, and stop.\n"
         )
 
     case_summary_instruction = (
