@@ -1,4 +1,6 @@
 import os
+os.environ["FLAGS_use_mkldnn"] = "0"
+os.environ["PADDLE_PDX_ENABLE_MKLDNN_BYDEFAULT"] = "0"
 import re
 import sys
 import gc
@@ -575,9 +577,10 @@ def get_ocr_instance(lang: str = None):
             _PADDLE_INSTANCES[lang] = _init_paddle_engine(
                 PaddleOCR,
                 lang=lang,
+                enable_mkldnn=False,
                 use_doc_orientation_classify=False,
                 use_doc_unwarping=False,
-                use_textline_orientation=False,
+                use_textline_orientation=True,
             )
             _tlog(f"PaddleOCR singleton ({lang}) ready in {time.time() - t0:.1f}s.")
             import paddle
