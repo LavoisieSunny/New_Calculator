@@ -4258,16 +4258,43 @@ This cannot be undone.`)) return;
         const tribunalTotal = toNumOrNull(parsedFields.award_amount);
         const calcTotal = toNumOrNull(calculatorResult.final_amount ?? calculatorResult.total_compensation);
 
+        // Build working rows [label, tribunalAmt, calcAmt, inferred]
+        const workingRows = heads.map(function (h) {
+            return { label: h[0], tribunalAmt: toNumOrNull(h[1]), calcAmt: toNumOrNull(h[2]), inferred: false };
+        });
+
+        // Deterministic subtraction-based reconciliation (mirrors backend logic):
+        // if the tribunal total is known and every head's tribunal figure is known
+        // except exactly one, that one is fully determined by arithmetic.
+        if (tribunalTotal !== null) {
+            const known = workingRows.filter(r => r.tribunalAmt !== null);
+            const missing = workingRows.filter(r => r.tribunalAmt === null);
+            if (missing.length === 1 && known.length === workingRows.length - 1) {
+                const knownSum = known.reduce((s, r) => s + r.tribunalAmt, 0);
+                const inferredAmt = tribunalTotal - knownSum;
+                if (inferredAmt > 0) {
+                    missing[0].tribunalAmt = Math.round(inferredAmt);
+                    missing[0].inferred = true;
+                }
+            }
+        }
+
         let rowsHtml = "";
         let anyComparable = false;
-        heads.forEach(function (h) {
-            const label = h[0];
-            const tribunalAmt = toNumOrNull(h[1]);
-            const calcAmt = toNumOrNull(h[2]);
+        workingRows.forEach(function (r) {
+            const label = r.label;
+            const tribunalAmt = r.tribunalAmt;
+            const calcAmt = r.calcAmt;
 
-            const tribunalDisp = tribunalAmt !== null
-                ? "\u20b9 " + tribunalAmt.toLocaleString("en-IN")
-                : '<span style="color:var(--text-muted);font-style:italic;">Not stated in judgment</span>';
+            let tribunalDisp;
+            if (tribunalAmt !== null && r.inferred) {
+                tribunalDisp = "\u20b9 " + tribunalAmt.toLocaleString("en-IN") +
+                    ' <span style="color:#a78bfa;font-size:0.68rem;font-style:italic;" title="Derived by subtracting every other awarded head from the tribunal total — not literally printed in the judgment">(inferred)</span>';
+            } else if (tribunalAmt !== null) {
+                tribunalDisp = "\u20b9 " + tribunalAmt.toLocaleString("en-IN");
+            } else {
+                tribunalDisp = '<span style="color:var(--text-muted);font-style:italic;">Not stated in judgment</span>';
+            }
             const calcDisp = calcAmt !== null
                 ? "\u20b9 " + calcAmt.toLocaleString("en-IN")
                 : '<span style="color:var(--text-muted);font-style:italic;">Not computed</span>';
