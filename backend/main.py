@@ -17,7 +17,13 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from dotenv import load_dotenv
 load_dotenv()
 
-from backend.calculator import router as calculator_router, CompensationRequest
+from backend.calculator import (
+    router as calculator_router,
+    CompensationRequest,
+    get_multiplier,
+    get_future_prospect,
+    get_deduction,
+)
 from backend.ocr import router as ocr_router
 from backend.vector_db import semantic_search, get_qdrant_client, VECTOR_DB_INITIALIZED
 from backend.evaluator import evaluate_compensation_precedents
@@ -234,6 +240,140 @@ def _smart_truncate_ocr_for_chat(ocr_full: str, question_str: str = "", head: in
     parts.append(tail_block)
 
     return "\n\n".join(parts)
+
+
+def _parse_amount_or_none(val):
+    if val is None:
+        return None
+    if isinstance(val, (int, float)):
+        return float(val)
+    s = str(val).strip()
+    if s == "" or s.lower() in ("nil", "n/a", "na", "none", "null", "not found", "-"):
+        return None
+    s = s.replace(",", "").replace("₹", "").replace("Rs.", "").replace("Rs", "").strip()
+    s = s.rstrip("/-").strip()
+    try:
+        return float(s)
+    except (TypeError, ValueError):
+        return None
+
+
+def _build_headwise_comparison(pf, cr, is_death):
+    if is_death:
+        head_defs = [
+            ("Loss of Dependency", pf.get("tribunal_loss_of_dependency"), cr.get("loss_of_dependency")),
+            ("Loss of Consortium", pf.get("tribunal_consortium"), cr.get("consortium")),
+            ("Funeral Expenses", pf.get("tribunal_funeral"), cr.get("funeral_expenses")),
+            ("Loss of Estate", pf.get("tribunal_estate"), cr.get("loss_estate")),
+        ]
+    else:
+        head_defs = [
+            ("Medical Expenses", pf.get("tribunal_medical"), cr.get("medical_expenses")),
+            ("Future Medical Expenses", pf.get("tribunal_future_medical"), cr.get("future_medical_expenses")),
+            ("Pain & Suffering", pf.get("tribunal_pain_suffering"), cr.get("pain_and_suffering")),
+            ("Transportation", pf.get("tribunal_transport"), cr.get("transportation")),
+            ("Special Diet", pf.get("tribunal_special_diet"), cr.get("special_diet")),
+            ("Attender Charges", pf.get("tribunal_attender"), cr.get("attender_charges")),
+            ("Loss of (Future) Income", pf.get("tribunal_loss_of_income"),
+             cr.get("future_income_loss") or cr.get("loss_of_income")),
+        ]
+
+    rows = []
+    lines = []
+    for label, tribunal_raw, calc_raw in head_defs:
+        tribunal_amt = _parse_amount_or_none(tribunal_raw)
+        calc_amt = _parse_amount_or_none(calc_raw)
+
+        if tribunal_amt is None and (calc_amt is None or calc_amt == 0):
+            status = "NOT_COMPARABLE"
+            diff_text = "N/A — this head was neither found in the tribunal record nor computed by the calculator."
+        elif tribunal_amt is None:
+            status = "TRIBUNAL_AMOUNT_MISSING"
+            diff_text = (
+                f"N/A — the tribunal's figure for this head could not be located in the OCR text. "
+                f"Calculator estimate only: Rs. {calc_amt:,.0f}. Do not invent a tribunal figure."
+            )
+        elif calc_amt is None:
+            status = "CALCULATOR_AMOUNT_MISSING"
+            diff_text = (
+                f"N/A — the calculator has no value for this head (input left blank). "
+                f"Tribunal figure only: Rs. {tribunal_amt:,.0f}."
+            )
+        else:
+            diff = abs(round(calc_amt) - round(tribunal_amt))
+            status = "MATCH" if diff == 0 else ("CALC_HIGHER" if calc_amt > tribunal_amt else "TRIBUNAL_HIGHER")
+            diff_text = f"Rs. {diff:,.0f}" if diff != 0 else "Rs. 0 (no variance)"
+
+        rows.append({
+            "label": label,
+            "tribunal_amount": tribunal_amt,
+            "calculator_amount": calc_amt,
+            "status": status,
+        })
+
+        tribunal_disp = f"Rs. {tribunal_amt:,.0f}" if tribunal_amt is not None else "Not stated in judgment / not extracted"
+        calc_disp = f"Rs. {calc_amt:,.0f}" if calc_amt is not None else "Not computed (input blank)"
+        lines.append(
+            f"- {label}:\n"
+            f"    Tribunal (provided) amount: {tribunal_disp}\n"
+            f"    Calculator (formula) amount: {calc_disp}\n"
+            f"    Absolute difference (modulus): {diff_text}"
+        )
+
+    text_block = "\n".join(lines)
+    return text_block, rows
+
+
+def _build_legal_reference_standards(pf, cr, is_death):
+    try:
+        age = int(float(pf.get("age") or 30))
+    except (TypeError, ValueError):
+        age = 30
+
+    expected_multiplier = get_multiplier(age)
+
+    lines = [
+        f"Claimant/Deceased age used in workstation: {age} years.",
+        f"Expected multiplier per Sarla Verma / Pranay Sethi age-slab table for age {age}: {expected_multiplier}.",
+        f"Calculator's applied multiplier: {cr.get('multiplier', 'Unknown')}.",
+    ]
+
+    if is_death:
+        try:
+            dependents = int(float(pf.get("dependents") or 0))
+        except (TypeError, ValueError):
+            dependents = 0
+        marital_status = str(pf.get("marital_status") or "married")
+        try:
+            future_type = int(float(pf.get("future_type") or 2))
+        except (TypeError, ValueError):
+            future_type = 2
+
+        expected_future_pct = round(get_future_prospect(age, future_type) * 100)
+        expected_deduction_ratio = get_deduction(dependents, marital_status)
+        expected_deduction_pct = round(expected_deduction_ratio * 100)
+
+        lines.extend([
+            f"Dependents in workstation: {dependents}; Marital status: {marital_status}.",
+            f"Expected future-prospects % per Pranay Sethi (age {age}, "
+            f"{'permanent job' if future_type == 1 else 'self-employed/fixed wage'} assumption): "
+            f"{expected_future_pct}%.",
+            f"Calculator's applied future-prospects %: {cr.get('future_prospect_percentage', 'Unknown')}.",
+            f"Expected deduction for personal/living expenses (Sarla Verma table, "
+            f"{dependents} dependents, {marital_status}): {expected_deduction_pct}% "
+            f"({'1/2' if abs(expected_deduction_ratio - 0.5) < 1e-6 else ('1/3' if abs(expected_deduction_ratio - 1/3) < 1e-6 else ('1/4' if abs(expected_deduction_ratio - 0.25) < 1e-6 else '1/5'))}).",
+            f"Calculator's applied deduction %: {cr.get('deduction_percentage', 'Unknown')}.",
+        ])
+
+    lines.append(
+        "IMPORTANT: These are the STANDARD/EXPECTED values derived from this case's own age, "
+        "dependents, marital status and employment-type inputs — they are NOT necessarily what the "
+        "tribunal actually applied. Cross-check the OCR text for the multiplier/percentage the tribunal "
+        "actually used before citing a mismatch. If the tribunal's own figures are not stated in the "
+        "judgment text, say so rather than assuming they match either value above."
+    )
+
+    return "\n".join(lines)
 
 
 def is_case_summary_query(query: str) -> bool:
