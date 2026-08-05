@@ -516,6 +516,12 @@ async def prepare_pdf_chat_prompt(request: PDFChatRequest):
                 f"Multiplier: {cr.get('multiplier', 'Unknown')}\n"
             )
 
+        # ── PRECOMPUTE PER-HEAD TRIBUNAL vs CALCULATOR COMPARISON (Python, never the LLM) ──
+        headwise_comparison_block, headwise_rows = _build_headwise_comparison(pf, cr, is_death)
+
+        # ── PRECOMPUTE THE STATUTORY REFERENCE STANDARDS FOR THIS CASE'S OWN INPUTS ──
+        legal_reference_block = _build_legal_reference_standards(pf, cr, is_death)
+
         case_facts_summary = (
             f"\n=== CASE PARAMETERS FROM WORKSTATION ===\n"
             f"Case Type: {case_type_str}\n"
@@ -534,6 +540,14 @@ async def prepare_pdf_chat_prompt(request: PDFChatRequest):
             f"COMPARISON: {precomputed_comparison}\n"
             f"INSTRUCTION: Copy the COMPARISON sentence into Overall Verdict → Reason verbatim.\n"
             f"DO NOT rewrite or rephrase the comparison. DO NOT say 'less than' if amounts are equal.\n"
+            f"===\n"
+            f"\n=== PRECOMPUTED HEAD-WISE COMPARISON (Python-computed — copy these figures EXACTLY, "
+            f"never recompute or alter them) ===\n"
+            f"{headwise_comparison_block}\n"
+            f"===\n"
+            f"\n=== STATUTORY REFERENCE STANDARDS FOR THIS CASE (Sarla Verma / Pranay Sethi tables, "
+            f"computed from this case's own age/dependents/marital-status/employment-type inputs) ===\n"
+            f"{legal_reference_block}\n"
             f"===\n"
         )
 
@@ -623,16 +637,45 @@ async def prepare_pdf_chat_prompt(request: PDFChatRequest):
             "Report only what the tribunal found. Never cite the workstation % as a tribunal finding.\n\n"
 
             "STEP 4 — CLASSIFICATION RULE.\n"
-            "For each awarded head:\n"
-            "  tribunal amount < calculator estimate → Low\n"
-            "  tribunal amount == calculator estimate → Adequate\n"
-            "  tribunal amount > calculator estimate → High\n"
-            "  calculator estimate Unknown/0 or N/A → N/A\n"
+            "The tribunal amount, calculator amount, and absolute (modulus) difference for every "
+            "head have ALREADY been computed in Python — see '=== PRECOMPUTED HEAD-WISE COMPARISON ===' "
+            "above. You MUST reuse those exact figures verbatim. NEVER perform the subtraction yourself "
+            "and NEVER print a negative difference — the block already gives you the absolute value.\n"
+            "For each head, classify using the PRECOMPUTED status field:\n"
+            "  TRIBUNAL_HIGHER → tribunal amount is more than the calculator estimate → label 'High'\n"
+            "  CALC_HIGHER → tribunal amount is less than the calculator estimate → label 'Low'\n"
+            "  MATCH → identical → label 'Adequate'\n"
+            "  TRIBUNAL_AMOUNT_MISSING / CALCULATOR_AMOUNT_MISSING / NOT_COMPARABLE → label 'N/A'\n"
             "If claimant has no income (minor, student, homemaker, unemployed):\n"
             "  Income/dependency head → N/A (state reason, not 'no documentation')\n"
             "  Do NOT generate income-related root cause bullets for this claimant.\n\n"
 
-            "STEP 5 — LEGAL CAUTION.\n"
+            "STEP 5 — EXPLAIN EVERY NON-ZERO DIFFERENCE (this is the core deliverable).\n"
+            "For every head where the precomputed absolute difference is greater than Rs. 0, you MUST\n"
+            "give a specific, evidence-grounded reason the two figures diverge. Build the explanation\n"
+            "using ONLY the following permitted sources, in this order of preference:\n"
+            "  (a) An explicit statement in the OCR text of what evidence the tribunal accepted or\n"
+            "      rejected for that head (e.g. no medical bills produced, disability certificate not\n"
+            "      proved, income affidavit disbelieved, no attendant/caretaker evidence on record).\n"
+            "  (b) A mismatch between what the tribunal actually applied and the case-specific\n"
+            "      '=== STATUTORY REFERENCE STANDARDS ===' figures above — e.g. if the OCR text states\n"
+            "      the tribunal used a different multiplier, future-prospects %, or deduction ratio than\n"
+            "      the one that age/dependents/marital-status/employment-type would prescribe, name the\n"
+            "      exact tribunal figure vs. the exact standard figure and identify which head that\n"
+            "      distorts (future prospects affects Loss of Dependency / Loss of Future Income Loss;\n"
+            "      deduction ratio affects Loss of Dependency; multiplier affects both).\n"
+            "  (c) An explicit ground of appeal (from STEP 2) disputing that head's quantum or basis.\n"
+            "  (d) The calculator head simply was not claimed/proved before the tribunal at all (state\n"
+            "      this only if the OCR text supports it, e.g. the head is entirely absent from the\n"
+            "      award table).\n"
+            "If NONE of (a)-(d) is supported by the OCR text or the reference standards, you MUST write\n"
+            "exactly: 'No specific reason is stated in the tribunal record for this variance; it likely\n"
+            "reflects the Tribunal's discretionary assessment of the evidence on facts the calculator's\n"
+            "standard formula does not capture.' Do NOT invent a case-specific reason that is not\n"
+            "supported by the text — a generic but honest explanation is required over a fabricated\n"
+            "specific one.\n\n"
+
+            "STEP 6 — LEGAL CAUTION.\n"
             "For Missed Heads and liability arguments:\n"
             "  Write: 'The appellant contends [exact argument from grounds].'\n"
             "  Do NOT write: 'This omission is unjustified.' or 'The tribunal erred.'\n\n"
@@ -656,9 +699,18 @@ async def prepare_pdf_chat_prompt(request: PDFChatRequest):
 
             "**Head-wise Analysis (Awarded Heads):**\n"
             + head_analysis_hint +
-            "- [Head Name]: Rs.[amount from OCR] → [Low/Adequate/High/N/A]\n"
-            "  Why tribunal fixed this amount: [evidence accepted/rejected]\n"
-            "  Calculator estimate: Rs.[amount] or N/A\n\n"
+            "For EVERY head listed in '=== PRECOMPUTED HEAD-WISE COMPARISON ===' above, output exactly\n"
+            "this shape (copy the Rs. figures and the difference verbatim from that block):\n"
+            "- [Head Name]\n"
+            "  Tribunal (provided) amount: Rs.[tribunal amount, or 'Not stated in judgment / not extracted']\n"
+            "  Calculator (formula) amount: Rs.[calculator amount, or 'Not computed (input blank)']\n"
+            "  Absolute difference: Rs.[precomputed modulus difference, or 'N/A' with the reason given "
+            "in the precomputed block]\n"
+            "  Classification: [Low/Adequate/High/N/A]\n"
+            "  Why tribunal fixed this amount: [evidence accepted/rejected, from OCR — if unknown, say "
+            "'Not explicitly stated in the judgment.']\n"
+            "  Explanation of difference: [Follow STEP 5 exactly. Omit this line entirely if the "
+            "absolute difference is Rs. 0.]\n\n"
 
             "**Missed Heads (Raised in Grounds but Not Awarded):**\n"
             "- [Head Name]\n"
