@@ -1313,7 +1313,75 @@ def is_extracted_text_sparse(text_lines: list) -> bool:
     )
     if is_poor:
         logger.info(f"Digital text layer: poor quality (hits={kw_hits}, gibberish={gibberish_ratio:.2f}). Triggering OCR.")
-    return is_poor
+        return True
+
+    # Page-by-page check for custom-encoded Devanagari (Hindi) fonts that extract as English gibberish
+    pages = {}
+    current_page = 1
+    pages[current_page] = []
+    for line in text_lines:
+        line_str = line.strip()
+        if line_str.startswith("--- PAGE") and line_str.endswith("---"):
+            m = re.match(r"--- PAGE\s+(\d+)\s+---", line_str)
+            if m:
+                current_page = int(m.group(1))
+            else:
+                current_page += 1
+            pages[current_page] = []
+        else:
+            if line_str:
+                pages[current_page].append(line_str)
+
+    bad_pages_count = 0
+    total_pages_with_text = 0
+
+    common_english = {
+        "the", "of", "and", "to", "a", "in", "is", "that", "it", "was",
+        "for", "on", "with", "as", "by", "at", "an", "be", "this", "or",
+        "from", "are", "have", "not", "but", "court", "appeal", "case",
+        "judgment", "order", "claimant", "tribunal", "compensation", "award",
+        "accident", "deceased", "injured", "insurance", "vs", "versus", "respondent",
+        "appellant", "member", "claims", "district", "mp", "state", "under", "section",
+        "act", "no", "date", "year", "years", "month", "income", "amount", "rs", "rupees",
+        "liability", "vehicle", "driver", "owner", "policy", "insure", "insured", "injury",
+        "death", "disability", "permanent", "medical", "expenses", "funeral", "consortium"
+    }
+
+    for page_num, page_lines in pages.items():
+        if not page_lines:
+            continue
+        page_text = " ".join(page_lines)
+        alphas = [c for c in page_text if c.isalpha()]
+        if not alphas:
+            continue
+
+        total_pages_with_text += 1
+        deva_chars = sum(1 for c in page_text if '\u0900' <= c <= '\u097F')
+        deva_ratio = deva_chars / len(alphas)
+
+        # Valid Devanagari pages skip this check
+        if deva_ratio > 0.05:
+            continue
+
+        # Extract Latin alphabetic words
+        words = [w.lower().strip(",.():-") for w in page_text.split() if w.isalpha()]
+        if len(words) < 10:
+            continue
+
+        english_words = sum(1 for w in words if w in common_english)
+        english_ratio = english_words / len(words)
+
+        # Mostly Latin text, but very low English vocabulary ratio -> custom-encoded Hindi font
+        if english_ratio < 0.15:
+            logger.info(f"Page {page_num} detected as custom-encoded garbage (Latin words={len(words)}, English ratio={english_ratio:.2f})")
+            bad_pages_count += 1
+
+    # Trigger OCR if any page is custom font garbage (common for annexures in High Court bundles)
+    if bad_pages_count > 0:
+        logger.info(f"Digital text layer has {bad_pages_count} custom-encoded font pages out of {total_pages_with_text}. Triggering OCR.")
+        return True
+
+    return False
 
 
 # ======================================================
