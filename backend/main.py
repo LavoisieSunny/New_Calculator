@@ -908,7 +908,9 @@ async def prepare_pdf_chat_prompt(request: PDFChatRequest):
             )
 
         # ── PRECOMPUTE PER-HEAD TRIBUNAL vs CALCULATOR COMPARISON (Python, never the LLM) ──
-        headwise_comparison_block, headwise_rows = _build_headwise_comparison(pf, cr, is_death, tribunal_total=tribunal_total)
+        headwise_comparison_block, headwise_rows = _build_headwise_comparison(
+            pf, cr, is_death, tribunal_total=(tribunal_total if tribunal_total else None)
+        )
 
         # ── PRECOMPUTE THE STATUTORY REFERENCE STANDARDS FOR THIS CASE'S OWN INPUTS ──
         legal_reference_block = _build_legal_reference_standards(pf, cr, is_death)
@@ -1044,27 +1046,37 @@ async def prepare_pdf_chat_prompt(request: PDFChatRequest):
             "STEP 5 — EXPLAIN EVERY NON-ZERO DIFFERENCE (this is the core deliverable).\n"
             "For every head where the precomputed absolute difference is greater than Rs. 0, you MUST\n"
             "give a specific, evidence-grounded reason the two figures diverge. Build the explanation\n"
-            "using ONLY the following permitted sources, in this order of preference:\n"
-            "  (a) An explicit statement in the OCR text of what evidence the tribunal accepted or\n"
+            "using ONLY the following permitted sources, in this STRICT order of preference — always\n"
+            "prefer the earliest source that is available for that head, and reuse its numbers verbatim:\n"
+            "  (a) RECONCILIATION BASIS — if the head's row in '=== PRECOMPUTED HEAD-WISE COMPARISON ==='\n"
+            "      carries a 'Reconciliation basis:' line, that head's tribunal figure was not literally\n"
+            "      printed in the judgment but was arithmetically derived by subtracting every other known\n"
+            "      awarded head from the tribunal's grand total. Report it exactly as 'Inferred by\n"
+            "      subtraction: Rs. X' (never as if OCR found it directly) and copy the arithmetic shown.\n"
+            "  (b) QUANTIFIED PARAMETER ATTRIBUTION — if the head's row carries a 'Quantified parameter\n"
+            "      attribution' line, this is a Python-computed, formula-based decomposition of the gap\n"
+            "      into the exact parameters (multiplier / future-prospects % / deduction %) that differ\n"
+            "      between the calculator and either (i) the tribunal's own OCR-extracted figure for that\n"
+            "      parameter, or (ii) the statutory Sarla Verma / Pranay Sethi standard for this case's own\n"
+            "      age/dependents/marital-status/employment-type. Copy this block's bullets and its Rs.\n"
+            "      figures verbatim — do not recompute, round differently, or drop the 'remaining portion\n"
+            "      not traceable' sentence if present.\n"
+            "  (c) An explicit statement in the OCR text of what evidence the tribunal accepted or\n"
             "      rejected for that head (e.g. no medical bills produced, disability certificate not\n"
             "      proved, income affidavit disbelieved, no attendant/caretaker evidence on record).\n"
-            "  (b) A mismatch between what the tribunal actually applied and the case-specific\n"
-            "      '=== STATUTORY REFERENCE STANDARDS ===' figures above — e.g. if the OCR text states\n"
-            "      the tribunal used a different multiplier, future-prospects %, or deduction ratio than\n"
-            "      the one that age/dependents/marital-status/employment-type would prescribe, name the\n"
-            "      exact tribunal figure vs. the exact standard figure and identify which head that\n"
-            "      distorts (future prospects affects Loss of Dependency / Loss of Future Income Loss;\n"
-            "      deduction ratio affects Loss of Dependency; multiplier affects both).\n"
-            "  (c) An explicit ground of appeal (from STEP 2) disputing that head's quantum or basis.\n"
-            "  (d) The calculator head simply was not claimed/proved before the tribunal at all (state\n"
+            "  (d) An explicit ground of appeal (from STEP 2) disputing that head's quantum or basis.\n"
+            "  (e) The calculator head simply was not claimed/proved before the tribunal at all (state\n"
             "      this only if the OCR text supports it, e.g. the head is entirely absent from the\n"
             "      award table).\n"
-            "If NONE of (a)-(d) is supported by the OCR text or the reference standards, you MUST write\n"
-            "exactly: 'No specific reason is stated in the tribunal record for this variance; it likely\n"
-            "reflects the Tribunal's discretionary assessment of the evidence on facts the calculator's\n"
-            "standard formula does not capture.' Do NOT invent a case-specific reason that is not\n"
-            "supported by the text — a generic but honest explanation is required over a fabricated\n"
-            "specific one.\n\n"
+            "Sources (a) and (b) are pre-computed in Python specifically so you are not left guessing —\n"
+            "use them whenever present, even if they only explain part of the gap; in that case also\n"
+            "state the unexplained remainder using the language already provided in that block.\n"
+            "If NONE of (a)-(e) is available for a head, you MUST write exactly: 'No specific reason is\n"
+            "stated in the tribunal record for this variance; it likely reflects the Tribunal's\n"
+            "discretionary assessment of the evidence on facts the calculator's standard formula does not\n"
+            "capture.' Do NOT invent a case-specific reason that is not supported by the text — a generic\n"
+            "but honest explanation is required over a fabricated specific one, and it should now be rare\n"
+            "given (a) and (b) are computed for every head that qualifies.\n\n"
 
             "STEP 6 — LEGAL CAUTION.\n"
             "For Missed Heads and liability arguments:\n"
