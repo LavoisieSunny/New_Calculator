@@ -21,6 +21,7 @@ from backend.calculator import router as calculator_router, CompensationRequest
 from backend.ocr import router as ocr_router
 from backend.vector_db import semantic_search, get_qdrant_client, VECTOR_DB_INITIALIZED
 from backend.evaluator import evaluate_compensation_precedents
+from backend.justification_engine import build_justification
 
 app = FastAPI(
     title="Compensation Calculator & Centralized Qdrant Vector DB",
@@ -291,6 +292,7 @@ def _fallback_extract_award_total(ocr_text):
     return candidates[-1][1]
 
 async def prepare_pdf_chat_prompt(request: PDFChatRequest):
+    justification = None
 
     from backend.vector_db import semantic_search_rag
     import json
@@ -474,35 +476,15 @@ async def prepare_pdf_chat_prompt(request: PDFChatRequest):
         case_type_str = str(pf.get("case_type") or cr.get("case_type") or "injury").lower()
         is_death = (case_type_str == "death")
 
-        # ── PRECOMPUTE VERDICT IN PYTHON (never let LLM compare numbers) ──
-        try:
-            tribunal_total = float(pf.get("award_amount") or 0)
-        except (TypeError, ValueError):
-            tribunal_total = 0
-        tribunal_total_source = "workstation field" if tribunal_total > 0 else None
-
-        # If the workstation's cached award_amount is blank (autofill wasn't run /
-        # field cleared), fall back to pulling the figure directly out of the OCR
-        # text so the rest of the precompute (verdict + subtraction-reconciliation
-        # of missing heads) can still run instead of silently degrading.
-        if tribunal_total <= 0 and request.ocr_text:
-            fallback_total = _fallback_extract_award_total(request.ocr_text)
-            if fallback_total:
-                tribunal_total = fallback_total
-                tribunal_total_source = "OCR text (fallback regex — workstation field was blank)"
-
-        try:
-            calc_total = float(
-                cr.get("final_amount") or cr.get("total_compensation") or 0
-            )
-        except (TypeError, ValueError):
-            calc_total = 0
-
-        if tribunal_total == 0 or calc_total == 0:
+        justification = build_justification(request.parsed_fields, request.calculator_result, request.ocr_text)
+        
+        if justification.get("status") == "insufficient_data":
+            tribunal_total = justification.get("tribunal_total") or 0.0
+            calc_total = justification.get("calculator_total") or 0.0
             math_relation = "unknown"
-            missing_side = "the tribunal award total" if tribunal_total == 0 else "the calculator total"
+            tribunal_total_source = None
             precomputed_comparison = (
-                f"{missing_side.capitalize()} could not be determined from either the workstation fields "
+                f"The tribunal award total could not be determined from either the workstation fields "
                 f"or the OCR text, so no quantum comparison (Adequate / Under-compensated / "
                 f"Over-compensated) is possible for this case. "
                 f"HARD RULE: Overall Verdict MUST be written as "
@@ -511,32 +493,34 @@ async def prepare_pdf_chat_prompt(request: PDFChatRequest):
                 f"individual heads above appear to match. If this is a liability appeal, resolve the "
                 f"verdict on liability grounds only and say so explicitly."
             )
-        elif abs(tribunal_total - calc_total) < 1:
-            math_relation = "equal"
-            precomputed_comparison = (
-                f"Tribunal awarded Rs. {tribunal_total:,.0f} which EQUALS "
-                f"the calculator estimate of Rs. {calc_total:,.0f}. "
-                f"If CLAIMANT filed the appeal: verdict is UNDER-COMPENSATED "
-                f"(specific heads omitted in grounds of appeal). "
-                f"If INSURANCE COMPANY filed: verdict is ADEQUATE on quantum "
-                f"(this may be a liability/exoneration appeal — see grounds)."
-            )
-        elif tribunal_total < calc_total:
-            math_relation = "tribunal_lower"
-            diff = calc_total - tribunal_total
-            precomputed_comparison = (
-                f"Tribunal awarded Rs. {tribunal_total:,.0f}, which is "
-                f"Rs. {diff:,.0f} LESS than the calculator estimate of "
-                f"Rs. {calc_total:,.0f}."
-            )
         else:
-            math_relation = "tribunal_higher"
-            diff = tribunal_total - calc_total
-            precomputed_comparison = (
-                f"Tribunal awarded Rs. {tribunal_total:,.0f}, which is "
-                f"Rs. {diff:,.0f} MORE than the calculator estimate of "
-                f"Rs. {calc_total:,.0f}."
-            )
+            tribunal_total = justification.get("tribunal_total") or 0.0
+            calc_total = justification.get("calculator_total") or 0.0
+            math_relation = justification.get("math_relation") or "unknown"
+            tribunal_total_source = justification.get("tribunal_total_source")
+            diff = justification.get("diff") or 0.0
+            
+            if math_relation == "equal":
+                precomputed_comparison = (
+                    f"Tribunal awarded Rs. {tribunal_total:,.0f} which EQUALS "
+                    f"the calculator estimate of Rs. {calc_total:,.0f}. "
+                    f"If CLAIMANT filed the appeal: verdict is UNDER-COMPENSATED "
+                    f"(specific heads omitted in grounds of appeal). "
+                    f"If INSURANCE COMPANY filed: verdict is ADEQUATE on quantum "
+                    f"(this may be a liability/exoneration appeal — see grounds)."
+                )
+            elif math_relation == "tribunal_lower":
+                precomputed_comparison = (
+                    f"Tribunal awarded Rs. {tribunal_total:,.0f}, which is "
+                    f"Rs. {diff:,.0f} LESS than the calculator estimate of "
+                    f"Rs. {calc_total:,.0f}."
+                )
+            else: # tribunal_higher
+                precomputed_comparison = (
+                    f"Tribunal awarded Rs. {tribunal_total:,.0f}, which is "
+                    f"Rs. {diff:,.0f} MORE than the calculator estimate of "
+                    f"Rs. {calc_total:,.0f}."
+                )
         # ─────────────────────────────────────────────────────────────────
 
         # ── BUILD CASE_FACTS_SUMMARY (death vs injury fields) ─────────────
@@ -851,7 +835,7 @@ async def prepare_pdf_chat_prompt(request: PDFChatRequest):
         f"Question:\n{question_str}"
     )
     
-    return user_prompt, system_instruction, precedents, None
+    return user_prompt, system_instruction, precedents, None, (justification if request.is_justify else None)
 
 @app.post("/api/chat/pdf")
 async def chat_with_pdf(request: PDFChatRequest):
@@ -860,7 +844,7 @@ async def chat_with_pdf(request: PDFChatRequest):
     and sends the constructed prompt to the configured LLM.
     """
     try:
-        user_prompt, system_instruction, precedents, recalc_response = await prepare_pdf_chat_prompt(request)
+        user_prompt, system_instruction, precedents, recalc_response, justification_data = await prepare_pdf_chat_prompt(request)
         if recalc_response is not None:
             return recalc_response
 
@@ -870,7 +854,8 @@ async def chat_with_pdf(request: PDFChatRequest):
         
         return {
             "response": ai_response,
-            "precedents": precedents
+            "precedents": precedents,
+            "justification_data": justification_data
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"LLM Chat failed: {str(e)}")
@@ -883,7 +868,7 @@ async def chat_with_pdf_stream(request: PDFChatRequest):
     """
     import json
     try:
-        user_prompt, system_instruction, precedents, recalc_response = await prepare_pdf_chat_prompt(request)
+        user_prompt, system_instruction, precedents, recalc_response, justification_data = await prepare_pdf_chat_prompt(request)
         
         if recalc_response is not None:
             async def stream_recalc():
