@@ -3004,6 +3004,22 @@ async def process_single_file(
             formatted_suggestions["grounds_relief_summary"] = summary_res
             formatted_suggestions["final_judicial_summary"] = final_judicial_res
 
+            # Prime the judicial-summary cache now so a later "Trigger Autofill"
+            # click (ai_recover_fields) can reuse this result instead of
+            # re-running both LLM calls from scratch — this was the main
+            # cause of autofill feeling as slow as the original extraction.
+            _judicial_cache_key = _make_judicial_summary_cache_key(
+                case_session_id, active_track, detected_case_type, full_text, supporting_docs
+            )
+            with _JUDICIAL_SUMMARY_CACHE_LOCK:
+                if len(_JUDICIAL_SUMMARY_CACHE) >= _JUDICIAL_SUMMARY_CACHE_MAX_ENTRIES:
+                    _JUDICIAL_SUMMARY_CACHE.pop(next(iter(_JUDICIAL_SUMMARY_CACHE)))
+                _JUDICIAL_SUMMARY_CACHE[_judicial_cache_key] = {
+                    "final_judicial_summary": final_judicial_res,
+                    "grounds_relief_summary": summary_res,
+                    "case_classification": heuristic_signal
+                }
+
 
             # Index document into Qdrant in background so Chat Assistant works for this file
             try:
@@ -3408,16 +3424,40 @@ async def ai_recover_fields(request: AIRecoverRequest):
         if request.case_session_id:
             supporting_docs = build_supporting_docs_bundle(request.case_session_id)
 
-        from backend.llm_client import summarize_grounds_and_relief, generate_final_judicial_summary
         case_tp = recovered_data.get("case_type") or "death"
-        summary_res, final_judicial_res = await asyncio.gather(
-            asyncio.to_thread(summarize_grounds_and_relief, sections_dict, heuristic_signal, case_tp),
-            asyncio.to_thread(
-                generate_final_judicial_summary,
-                sections_dict, heuristic_signal, case_tp,
-                supporting_docs=supporting_docs, force_refresh=True
-            )
+
+        # Reuse the summary/analysis already computed at upload time whenever
+        # possible — only case_type actually changes what these two LLM calls
+        # produce, and the cache key already encodes it, so a hit here means
+        # nothing relevant changed and it's safe to skip both LLM calls.
+        judicial_cache_key = _make_judicial_summary_cache_key(
+            request.case_session_id, track, case_tp, full_text, supporting_docs
         )
+        with _JUDICIAL_SUMMARY_CACHE_LOCK:
+            cached_summary = _JUDICIAL_SUMMARY_CACHE.get(judicial_cache_key)
+
+        if cached_summary is not None:
+            logger.info(f"[AI-RECOVER] Judicial summary cache hit for session {request.case_session_id} — skipping duplicate LLM calls")
+            summary_res = cached_summary["grounds_relief_summary"]
+            final_judicial_res = cached_summary["final_judicial_summary"]
+        else:
+            from backend.llm_client import summarize_grounds_and_relief, generate_final_judicial_summary
+            summary_res, final_judicial_res = await asyncio.gather(
+                asyncio.to_thread(summarize_grounds_and_relief, sections_dict, heuristic_signal, case_tp),
+                asyncio.to_thread(
+                    generate_final_judicial_summary,
+                    sections_dict, heuristic_signal, case_tp,
+                    supporting_docs=supporting_docs, force_refresh=True
+                )
+            )
+            with _JUDICIAL_SUMMARY_CACHE_LOCK:
+                if len(_JUDICIAL_SUMMARY_CACHE) >= _JUDICIAL_SUMMARY_CACHE_MAX_ENTRIES:
+                    _JUDICIAL_SUMMARY_CACHE.pop(next(iter(_JUDICIAL_SUMMARY_CACHE)))
+                _JUDICIAL_SUMMARY_CACHE[judicial_cache_key] = {
+                    "final_judicial_summary": final_judicial_res,
+                    "grounds_relief_summary": summary_res,
+                    "case_classification": heuristic_signal
+                }
 
         formatted["grounds_relief_summary"] = summary_res
         formatted["final_judicial_summary"] = final_judicial_res
