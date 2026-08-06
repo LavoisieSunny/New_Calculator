@@ -2524,6 +2524,21 @@ select.low-confidence-input {
     animation: none;
 }
 
+/* Pencil/Annotation Options Menu */
+.pencil-options-menu {
+    transition: all 0.2s ease-in-out;
+}
+.pencil-menu-item {
+    transition: background 0.15s ease-in-out, transform 0.1s ease-in-out;
+}
+.pencil-menu-item:hover {
+    background: rgba(15, 23, 42, 0.05) !important;
+    transform: translateX(3px);
+}
+.pencil-menu-item:active {
+    transform: scale(0.96);
+}
+
 @keyframes botBounce {
     0%, 100% {
         transform: translateY(0);
@@ -3749,4 +3764,33 @@ select.low-confidence-input {
 .supporting-doc-chip .remove-doc-btn:hover {
     color: var(--color-danger, #ef4444);
     background: rgba(239, 68, 68, 0.1);
+}
+
+/* --- Annotation Pencil Custom Tool Options & Short Notes Widget --- */
+.color-dot {
+    transition: transform 0.15s ease, border-color 0.15s ease;
+}
+.color-dot:hover {
+    transform: scale(1.15);
+}
+.color-dot.active {
+    transform: scale(1.3);
+    border-color: var(--text-primary) !important;
+    box-shadow: 0 0 6px rgba(0, 0, 0, 0.35);
+}
+
+.size-btn {
+    transition: all 0.15s ease;
+}
+.size-btn:hover {
+    background: rgba(15, 23, 42, 0.08) !important;
+}
+.size-btn.active {
+    background: var(--color-primary) !important;
+    color: white !important;
+    border-color: var(--color-primary) !important;
+}
+
+.pdf-notes-container {
+    transition: transform 0.25s cubic-bezier(0.175, 0.885, 0.32, 1.275), opacity 0.2s ease;
 }

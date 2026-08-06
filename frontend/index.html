@@ -573,13 +573,40 @@
                         <div id="pane-tab-pdf-content" class="pane-tab-content active" style="flex: 1; display: flex; flex-direction: column; height: 100%; overflow: hidden; margin: 0; padding: 0;">
                             <!-- High-Fidelity PDF Preview Panel -->
                             <div class="card preview-card" id="single-preview-card" style="height: 100%; width: 100%; display: flex; flex-direction: column; margin: 0; padding: 0; border: none; box-shadow: none; background: transparent; flex: 1; overflow: hidden;">
-                                <div class="card-header" style="height: 40px; padding: 0 16px; border-bottom: 1px solid var(--border-color); display: flex; align-items: center; margin: 0; flex-shrink: 0; background: var(--bg-panel);">
-                                    <h3>PDF Preview</h3>
+                                <div class="card-header" style="height: 40px; padding: 0 16px; border-bottom: 1px solid var(--border-color); display: flex; align-items: center; justify-content: space-between; margin: 0; flex-shrink: 0; background: var(--bg-panel);">
+                                    <div style="display: flex; align-items: center; gap: 10px;">
+                                        <button type="button" id="download-word-btn" class="btn btn-secondary" title="Download Word Doc" style="display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; font-size: 0.78rem; border-radius: 4px; border: 1px solid var(--border-color); height: 28px; cursor: not-allowed; opacity: 0.5; transition: all 0.2s;" disabled>
+                                            <i class="fa-solid fa-file-word" style="color: #2b579a;"></i> Export Word
+                                        </button>
+                                        <h3 id="single-preview-title" style="margin: 0; font-family: 'Outfit', sans-serif; font-size: 0.95rem; font-weight: 700;">PDF Preview</h3>
+                                        <span id="single-preview-filename" style="font-size: 0.8rem; color: var(--text-muted); font-weight: normal; margin-left: 8px;"></span>
+                                    </div>
                                 </div>
-                                <div class="single-preview-container" id="single-preview-container" style="flex: 1; height: calc(100% - 40px); width: 100%; overflow: hidden; background: #ffffff; padding: 0; margin: 0; border: none; border-radius: 0;">
+                                <div class="single-preview-container" id="single-preview-container" style="position: relative; flex: 1; height: calc(100% - 40px); width: 100%; overflow: hidden; background: #ffffff; padding: 0; margin: 0; border: none; border-radius: 0;">
                                     <div class="preview-empty-state" style="display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100%; gap: 10px; opacity: 0.5;">
                                         <i class="fa-solid fa-file-pdf" style="font-size: 3rem; color: var(--color-primary)"></i>
                                         <p style="font-size: 0.8rem; color: var(--text-secondary)">Upload a PDF on the left to see the live document preview here.</p>
+                                    </div>
+                                    <!-- Annotation Canvas Overlay -->
+                                    <canvas id="pdf-annotation-canvas" style="display: none; position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 5; cursor: crosshair;"></canvas>
+
+                                    <!-- Short Notes Draggable/Floating Widget -->
+                                    <div id="pdf-notes-container" class="pdf-notes-container" style="display: none; position: absolute; top: 12px; left: 12px; z-index: 1000; width: 280px; background: var(--bg-panel); border: 1px solid var(--border-color); border-radius: var(--radius-sm); box-shadow: var(--shadow-premium); padding: 12px; flex-direction: column; gap: 8px; backdrop-filter: blur(15px);">
+                                        <div style="display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid var(--border-color); padding-bottom: 6px;">
+                                            <span style="font-family: 'Outfit', sans-serif; font-weight: 700; font-size: 0.85rem; color: var(--text-primary); display: flex; align-items: center; gap: 6px;">
+                                                <i class="fa-solid fa-note-sticky" style="color: #3b82f6;"></i> Short Notes
+                                            </span>
+                                            <button type="button" id="notes-close-btn" style="background: transparent; border: none; font-size: 1.1rem; cursor: pointer; color: var(--text-muted); line-height: 1; transition: color 0.2s;" onmouseover="this.style.color='var(--color-danger)'" onmouseout="this.style.color='var(--text-muted)'">&times;</button>
+                                        </div>
+                                        <textarea id="notes-textarea" placeholder="Type your notes here..." style="width: 100%; height: 130px; resize: vertical; border: 1px solid var(--border-color); border-radius: 4px; padding: 8px; font-family: 'Inter', sans-serif; font-size: 0.8rem; background: var(--bg-main); color: var(--text-primary); outline: none; line-height: 1.4; transition: border-color 0.2s;" onfocus="this.style.borderColor='var(--color-primary)'" onblur="this.style.borderColor='var(--border-color)'"></textarea>
+                                        <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 2px;">
+                                            <span id="notes-save-status" style="font-size: 0.7rem; color: var(--text-muted); display: flex; align-items: center; gap: 4px;">
+                                                <i class="fa-solid fa-circle-check" style="color: #10b981;"></i> Saved to cache
+                                            </span>
+                                            <button type="button" id="notes-erase-btn" style="padding: 4px 8px; font-size: 0.72rem; height: 26px; border: 1px solid var(--color-danger); color: var(--color-danger); background: transparent; transition: all 0.2s; cursor: pointer; border-radius: 4px;" onmouseover="this.style.background='var(--color-danger)'; this.style.color='white'" onmouseout="this.style.background='transparent'; this.style.color='var(--color-danger)'">
+                                                <i class="fa-solid fa-trash-can"></i> Erase Note
+                                            </button>
+                                        </div>
                                     </div>
                                 </div>
                             </div>
@@ -598,9 +625,55 @@
                                     <i class="fa-solid fa-robot"></i>
                                 </button>
                             </div>
-                            <button type="button" class="floating-tool-btn" id="download-word-btn" title="Download Word Doc" style="display: none; background: #2b579a; border-color: #2b579a; box-shadow: 0 4px 16px rgba(43, 87, 154, 0.35);">
-                                <i class="fa-solid fa-file-word"></i>
-                            </button>
+                            <div class="pencil-tool-wrapper" style="position: relative; display: inline-block;">
+                                <button type="button" class="floating-tool-btn" id="pencil-tool-trigger" title="✏️ Annotation Tools" style="background: #eab308; border-color: #eab308; box-shadow: 0 4px 16px rgba(234, 179, 8, 0.35);">
+                                    <i class="fa-solid fa-pencil"></i>
+                                </button>
+                                <!-- Pencil Options Dropdown/Toolbar -->
+                                <div class="pencil-options-menu" id="pencil-options-menu" style="display: none; position: absolute; bottom: 60px; right: 0; background: var(--bg-panel); border: 1px solid var(--border-color); border-radius: var(--radius-sm); box-shadow: var(--shadow-premium); padding: 10px; flex-direction: column; gap: 8px; z-index: 1000; min-width: 180px;">
+                                    <div style="font-family: 'Outfit', sans-serif; font-size: 0.8rem; font-weight: 700; color: var(--text-muted); border-bottom: 1px solid var(--border-color); padding-bottom: 4px; margin-bottom: 4px; display: flex; align-items: center; gap: 6px;">
+                                        <i class="fa-solid fa-paintbrush"></i> Annotation Tools
+                                    </div>
+                                    <button type="button" class="pencil-menu-item" id="pencil-btn-pencil" style="display: flex; align-items: center; gap: 8px; width: 100%; padding: 6px 12px; background: transparent; border: none; color: var(--text-primary); text-align: left; cursor: pointer; border-radius: 4px; font-size: 0.85rem; font-weight: 500;">
+                                        <i class="fa-solid fa-pen" style="color: #ef4444; width: 16px;"></i> Draw (Pencil)
+                                    </button>
+                                    <button type="button" class="pencil-menu-item" id="pencil-btn-marker" style="display: flex; align-items: center; gap: 8px; width: 100%; padding: 6px 12px; background: transparent; border: none; color: var(--text-primary); text-align: left; cursor: pointer; border-radius: 4px; font-size: 0.85rem; font-weight: 500;">
+                                        <i class="fa-solid fa-highlighter" style="color: #eab308; width: 16px;"></i> Highlight (Marker)
+                                    </button>
+                                    <button type="button" class="pencil-menu-item" id="pencil-btn-eraser" style="display: flex; align-items: center; gap: 8px; width: 100%; padding: 6px 12px; background: transparent; border: none; color: var(--text-primary); text-align: left; cursor: pointer; border-radius: 4px; font-size: 0.85rem; font-weight: 500;">
+                                        <i class="fa-solid fa-eraser" style="color: #64748b; width: 16px;"></i> Precision Eraser
+                                    </button>
+                                    <button type="button" class="pencil-menu-item" id="pencil-btn-notes" style="display: flex; align-items: center; gap: 8px; width: 100%; padding: 6px 12px; background: transparent; border: none; color: var(--text-primary); text-align: left; cursor: pointer; border-radius: 4px; font-size: 0.85rem; font-weight: 500;">
+                                        <i class="fa-solid fa-note-sticky" style="color: #3b82f6; width: 16px;"></i> Short Notes
+                                    </button>
+                                    <hr style="border: none; border-top: 1px solid var(--border-color); margin: 4px 0;">
+                                    <button type="button" class="pencil-menu-item" id="pencil-btn-undo" style="display: flex; align-items: center; gap: 8px; width: 100%; padding: 6px 12px; background: transparent; border: none; color: var(--text-primary); text-align: left; cursor: pointer; border-radius: 4px; font-size: 0.85rem; font-weight: 500;">
+                                        <i class="fa-solid fa-arrow-rotate-left" style="color: #10b981; width: 16px;"></i> Undo Last
+                                    </button>
+                                    <button type="button" class="pencil-menu-item" id="pencil-btn-clear" style="display: flex; align-items: center; gap: 8px; width: 100%; padding: 6px 12px; background: transparent; border: none; color: var(--text-primary); text-align: left; cursor: pointer; border-radius: 4px; font-size: 0.85rem; font-weight: 500;">
+                                        <i class="fa-solid fa-trash-can" style="color: #ef4444; width: 16px;"></i> Clear All
+                                    </button>
+                                    <div style="border-top: 1px solid var(--border-color); margin-top: 4px; padding-top: 8px; display: flex; flex-direction: column; gap: 6px;">
+                                        <div style="font-family: 'Outfit', sans-serif; font-size: 0.72rem; font-weight: 700; color: var(--text-muted); display: flex; justify-content: space-between; align-items: center;">
+                                            <span>Color</span>
+                                            <div style="display: flex; gap: 4px;" id="pencil-colors">
+                                                <span class="color-dot active" data-color="#ef4444" style="background: #ef4444; width: 12px; height: 12px; border-radius: 50%; display: inline-block; cursor: pointer; border: 1px solid rgba(0,0,0,0.1);"></span>
+                                                <span class="color-dot" data-color="#3b82f6" style="background: #3b82f6; width: 12px; height: 12px; border-radius: 50%; display: inline-block; cursor: pointer; border: 1px solid rgba(0,0,0,0.1);"></span>
+                                                <span class="color-dot" data-color="#10b981" style="background: #10b981; width: 12px; height: 12px; border-radius: 50%; display: inline-block; cursor: pointer; border: 1px solid rgba(0,0,0,0.1);"></span>
+                                                <span class="color-dot" data-color="#eab308" style="background: #eab308; width: 12px; height: 12px; border-radius: 50%; display: inline-block; cursor: pointer; border: 1px solid rgba(0,0,0,0.1);"></span>
+                                            </div>
+                                        </div>
+                                        <div style="font-family: 'Outfit', sans-serif; font-size: 0.72rem; font-weight: 700; color: var(--text-muted); display: flex; justify-content: space-between; align-items: center; margin-top: 4px;">
+                                            <span>Brush Size</span>
+                                            <div style="display: flex; gap: 4px;" id="pencil-sizes">
+                                                <button type="button" class="size-btn active" data-size="2.5" style="background: var(--bg-main); border: 1px solid var(--border-color); border-radius: 3px; font-size: 0.65rem; padding: 2px 4px; cursor: pointer; color: var(--text-primary);">Thin</button>
+                                                <button type="button" class="size-btn" data-size="5" style="background: var(--bg-main); border: 1px solid var(--border-color); border-radius: 3px; font-size: 0.65rem; padding: 2px 4px; cursor: pointer; color: var(--text-primary);">Med</button>
+                                                <button type="button" class="size-btn" data-size="10" style="background: var(--bg-main); border: 1px solid var(--border-color); border-radius: 3px; font-size: 0.65rem; padding: 2px 4px; cursor: pointer; color: var(--text-primary);">Thick</button>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
                         </div>
 
                     </div>

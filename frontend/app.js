@@ -1164,6 +1164,42 @@ document.addEventListener("DOMContentLoaded", () => {
         }
     });
 
+    function updatePdfPreview(blobUrl, filename, badgeHtml) {
+        window.currentPdfName = filename;
+        if (typeof loadPdfNotes === "function") {
+            loadPdfNotes(filename);
+        }
+
+        if (singlePreviewFilename) {
+            singlePreviewFilename.innerHTML = `${filename} ${badgeHtml || ""}`;
+        }
+
+        if (singlePreviewContainer) {
+            let iframe = singlePreviewContainer.querySelector(".pdf-iframe");
+            if (!iframe) {
+                iframe = document.createElement("iframe");
+                iframe.className = "pdf-iframe";
+                iframe.style.width = "100%";
+                iframe.style.height = "100%";
+                iframe.style.border = "none";
+                const canvas = singlePreviewContainer.querySelector("#pdf-annotation-canvas");
+                if (canvas) {
+                    singlePreviewContainer.insertBefore(iframe, canvas);
+                } else {
+                    singlePreviewContainer.appendChild(iframe);
+                }
+            }
+            iframe.src = `${blobUrl}#toolbar=0`;
+            const emptyState = singlePreviewContainer.querySelector(".preview-empty-state");
+            if (emptyState) emptyState.style.display = "none";
+        }
+
+        if (singlePreviewCard) {
+            singlePreviewCard.classList.remove("hidden-section");
+            singlePreviewCard.classList.add("show");
+        }
+    }
+
     async function handleSinglePdfUpload(file) {
         window.lastEnhancementVerdict = null;
         window.currentRenderedVerdict = null;
@@ -1182,18 +1218,8 @@ document.addEventListener("DOMContentLoaded", () => {
         } catch (e) {
             console.error("Failed to ensure case session id:", e);
         }
-        if (singlePreviewFilename) {
-            singlePreviewFilename.innerHTML = `${file.name} <span class="badge source-badge" id="single-preview-source-badge" style="margin-left: 8px; background: rgba(251, 191, 36, 0.2); color: #f59e0b; border: 1px solid rgba(251, 191, 36, 0.3); font-size: 0.7rem; padding: 2px 6px; border-radius: 4px; display: inline-block;"><i class="fa-solid fa-spinner fa-spin"></i> Extracting...</span>`;
-        }
-        if (singlePreviewContainer) {
-            singlePreviewContainer.innerHTML = `
-                <iframe class="pdf-iframe" src="${immediateBlobUrl}#toolbar=0" width="100%" height="100%"></iframe>
-            `;
-        }
-        if (singlePreviewCard) {
-            singlePreviewCard.classList.remove("hidden-section");
-            singlePreviewCard.classList.add("show");
-        }
+        const badgeHtml = `<span class="badge source-badge" id="single-preview-source-badge" style="margin-left: 8px; background: rgba(251, 191, 36, 0.2); color: #f59e0b; border: 1px solid rgba(251, 191, 36, 0.3); font-size: 0.7rem; padding: 2px 6px; border-radius: 4px; display: inline-block;"><i class="fa-solid fa-spinner fa-spin"></i> Extracting...</span>`;
+        updatePdfPreview(immediateBlobUrl, file.name, badgeHtml);
         const earlyPdfTabBtn = document.querySelector('.pane-tab-btn[data-pane-tab="pdf"]');
         if (earlyPdfTabBtn) {
             earlyPdfTabBtn.click();
@@ -1655,9 +1681,13 @@ This cannot be undone.`)) return;
         currentOcrRawText = matchedFile.raw_text || [];
         if (downloadWordBtn) {
             if (currentOcrRawText.length > 0) {
-                downloadWordBtn.style.display = "inline-flex";
+                downloadWordBtn.disabled = false;
+                downloadWordBtn.style.opacity = "1";
+                downloadWordBtn.style.cursor = "pointer";
             } else {
-                downloadWordBtn.style.display = "none";
+                downloadWordBtn.disabled = true;
+                downloadWordBtn.style.opacity = "0.5";
+                downloadWordBtn.style.cursor = "not-allowed";
             }
         }
 
@@ -1665,14 +1695,8 @@ This cannot be undone.`)) return;
         const fileObj = uploadedFileObjects[matchedFile.filename];
         if (fileObj && singlePreviewContainer && singlePreviewFilename) {
             const blobUrl = URL.createObjectURL(fileObj);
-            singlePreviewFilename.innerHTML = `${matchedFile.filename} <span class="badge source-badge" style="margin-left: 8px; background: rgba(59, 130, 246, 0.2); color: #60a5fa; border: 1px solid rgba(59, 130, 246, 0.3); font-size: 0.7rem; padding: 2px 6px; border-radius: 4px; display: inline-block;">Source: Batch Library</span>`;
-            singlePreviewContainer.innerHTML = `
-                <iframe class="pdf-iframe" src="${blobUrl}#toolbar=0" width="100%" height="100%"></iframe>
-            `;
-            if (singlePreviewCard) {
-                singlePreviewCard.classList.remove("hidden-section");
-                singlePreviewCard.classList.add("show");
-            }
+            const badgeHtml = `<span class="badge source-badge" style="margin-left: 8px; background: rgba(59, 130, 246, 0.2); color: #60a5fa; border: 1px solid rgba(59, 130, 246, 0.3); font-size: 0.7rem; padding: 2px 6px; border-radius: 4px; display: inline-block;">Source: Batch Library</span>`;
+            updatePdfPreview(blobUrl, matchedFile.filename, badgeHtml);
         }
 
         const caseType = matchedFile.suggestions ? matchedFile.suggestions.case_type : null;
@@ -1823,9 +1847,13 @@ This cannot be undone.`)) return;
                 currentOcrRawText = matchedFile.raw_text || [];
                 if (downloadWordBtn) {
                     if (currentOcrRawText.length > 0) {
-                        downloadWordBtn.style.display = "inline-flex";
+                        downloadWordBtn.disabled = false;
+                        downloadWordBtn.style.opacity = "1";
+                        downloadWordBtn.style.cursor = "pointer";
                     } else {
-                        downloadWordBtn.style.display = "none";
+                        downloadWordBtn.disabled = true;
+                        downloadWordBtn.style.opacity = "0.5";
+                        downloadWordBtn.style.cursor = "not-allowed";
                     }
                 }
 
@@ -1833,14 +1861,8 @@ This cannot be undone.`)) return;
                 const fileObj = uploadedFileObjects[matchedFile.filename];
                 if (fileObj && singlePreviewContainer && singlePreviewFilename) {
                     const blobUrl = URL.createObjectURL(fileObj);
-                    singlePreviewFilename.innerHTML = `${matchedFile.filename} <span class="badge source-badge" style="margin-left: 8px; background: rgba(59, 130, 246, 0.2); color: #60a5fa; border: 1px solid rgba(59, 130, 246, 0.3); font-size: 0.7rem; padding: 2px 6px; border-radius: 4px; display: inline-block;">Source: Batch Library</span>`;
-                    singlePreviewContainer.innerHTML = `
-                        <iframe class="pdf-iframe" src="${blobUrl}#toolbar=0" width="100%" height="100%"></iframe>
-                    `;
-                    if (singlePreviewCard) {
-                        singlePreviewCard.classList.remove("hidden-section");
-                        singlePreviewCard.classList.add("show");
-                    }
+                    const badgeHtml = `<span class="badge source-badge" style="margin-left: 8px; background: rgba(59, 130, 246, 0.2); color: #60a5fa; border: 1px solid rgba(59, 130, 246, 0.3); font-size: 0.7rem; padding: 2px 6px; border-radius: 4px; display: inline-block;">Source: Batch Library</span>`;
+                    updatePdfPreview(blobUrl, matchedFile.filename, badgeHtml);
                 }
 
                 applyAllOcrSuggestions(matchedFile.suggestions);
@@ -1874,21 +1896,23 @@ This cannot be undone.`)) return;
 
 
             if (downloadWordBtn) {
-                downloadWordBtn.style.display = "inline-flex";
+                if (currentOcrRawText.length > 0) {
+                    downloadWordBtn.disabled = false;
+                    downloadWordBtn.style.opacity = "1";
+                    downloadWordBtn.style.cursor = "pointer";
+                } else {
+                    downloadWordBtn.disabled = true;
+                    downloadWordBtn.style.opacity = "0.5";
+                    downloadWordBtn.style.cursor = "not-allowed";
+                }
             }
 
             // Update workstation preview card with the batch-loaded PDF if possible
             const fileObj = uploadedFileObjects[matchedFile.filename];
             if (fileObj && singlePreviewContainer && singlePreviewFilename) {
                 const blobUrl = URL.createObjectURL(fileObj);
-                singlePreviewFilename.innerHTML = `${matchedFile.filename} <span class="badge source-badge" style="margin-left: 8px; background: rgba(59, 130, 246, 0.2); color: #60a5fa; border: 1px solid rgba(59, 130, 246, 0.3); font-size: 0.7rem; padding: 2px 6px; border-radius: 4px; display: inline-block;">Source: Batch Library</span>`;
-                singlePreviewContainer.innerHTML = `
-                    <iframe class="pdf-iframe" src="${blobUrl}#toolbar=0" width="100%" height="100%"></iframe>
-                `;
-                if (singlePreviewCard) {
-                    singlePreviewCard.classList.remove("hidden-section");
-                    singlePreviewCard.classList.add("show");
-                }
+                const badgeHtml = `<span class="badge source-badge" style="margin-left: 8px; background: rgba(59, 130, 246, 0.2); color: #60a5fa; border: 1px solid rgba(59, 130, 246, 0.3); font-size: 0.7rem; padding: 2px 6px; border-radius: 4px; display: inline-block;">Source: Batch Library</span>`;
+                updatePdfPreview(blobUrl, matchedFile.filename, badgeHtml);
             }
 
             // Switch to workstation tab
@@ -4956,6 +4980,373 @@ This cannot be undone.`)) return;
         }
     }
 
+    // PDF Annotation Canvas & Drawing tools
+    const annotationCanvas = document.getElementById("pdf-annotation-canvas");
+    const pencilTrigger = document.getElementById("pencil-tool-trigger");
+    const pencilMenu = document.getElementById("pencil-options-menu");
+    const btnPencil = document.getElementById("pencil-btn-pencil");
+    const btnMarker = document.getElementById("pencil-btn-marker");
+    const btnEraser = document.getElementById("pencil-btn-eraser");
+    const btnClear = document.getElementById("pencil-btn-clear");
+    const btnNotes = document.getElementById("pencil-btn-notes");
+    const btnUndo = document.getElementById("pencil-btn-undo");
+
+    // Short Notes Widget Elements
+    const notesContainer = document.getElementById("pdf-notes-container");
+    const notesTextarea = document.getElementById("notes-textarea");
+    const notesCloseBtn = document.getElementById("notes-close-btn");
+    const notesEraseBtn = document.getElementById("notes-erase-btn");
+
+    let isDrawing = false;
+    let lastX = 0;
+    let lastY = 0;
+    let activeTool = "none"; // none, pencil, marker, eraser
+    let ctx = null;
+
+    let drawingColor = "#ef4444"; // default drawing color
+    let drawingSize = 2.5; // default thin brush size
+    let drawingHistory = []; // undo history stack
+
+    if (annotationCanvas) {
+        ctx = annotationCanvas.getContext("2d");
+    }
+
+    function initCanvasSize() {
+        if (!annotationCanvas || !ctx) return;
+        const currentWidth = annotationCanvas.clientWidth;
+        const currentHeight = annotationCanvas.clientHeight;
+        
+        // Only set canvas dimensions if they changed, since setting them clears the context
+        if (annotationCanvas.width !== currentWidth || annotationCanvas.height !== currentHeight) {
+            // Backup current drawings
+            const tempCanvas = document.createElement("canvas");
+            tempCanvas.width = annotationCanvas.width;
+            tempCanvas.height = annotationCanvas.height;
+            const tempCtx = tempCanvas.getContext("2d");
+            tempCtx.drawImage(annotationCanvas, 0, 0);
+
+            annotationCanvas.width = currentWidth;
+            annotationCanvas.height = currentHeight;
+            
+            // Restore drawings
+            ctx.drawImage(tempCanvas, 0, 0);
+        }
+    }
+
+    // Initialize size on window resize if canvas is active
+    window.addEventListener("resize", () => {
+        if (activeTool !== "none") {
+            initCanvasSize();
+        }
+    });
+
+    if (pencilTrigger && pencilMenu) {
+        pencilTrigger.addEventListener("click", (e) => {
+            e.stopPropagation();
+            const isMenuOpen = pencilMenu.style.display === "flex";
+            pencilMenu.style.display = isMenuOpen ? "none" : "flex";
+        });
+
+        // Close menu when clicking outside
+        document.addEventListener("click", () => {
+            pencilMenu.style.display = "none";
+        });
+
+        pencilMenu.addEventListener("click", (e) => {
+            e.stopPropagation();
+        });
+    }
+
+    function selectTool(tool) {
+        activeTool = tool;
+        if (!annotationCanvas || !ctx) return;
+
+        // Reset highlight states
+        [btnPencil, btnMarker, btnEraser].forEach(btn => {
+            if (btn) btn.style.background = "transparent";
+        });
+
+        if (tool === "none") {
+            annotationCanvas.style.display = "none";
+            pencilTrigger.style.background = "#eab308";
+            pencilTrigger.classList.remove("active");
+        } else {
+            annotationCanvas.style.display = "block";
+            initCanvasSize();
+            pencilTrigger.style.background = "#ca8a04";
+            pencilTrigger.classList.add("active");
+            
+            if (tool === "pencil") {
+                if (btnPencil) btnPencil.style.background = "rgba(15, 23, 42, 0.08)";
+            } else if (tool === "marker") {
+                if (btnMarker) btnMarker.style.background = "rgba(15, 23, 42, 0.08)";
+            } else if (tool === "eraser") {
+                if (btnEraser) btnEraser.style.background = "rgba(15, 23, 42, 0.08)";
+            }
+        }
+    }
+
+    if (btnPencil) {
+        btnPencil.addEventListener("click", () => {
+            selectTool(activeTool === "pencil" ? "none" : "pencil");
+            pencilMenu.style.display = "none";
+        });
+    }
+
+    if (btnMarker) {
+        btnMarker.addEventListener("click", () => {
+            selectTool(activeTool === "marker" ? "none" : "marker");
+            pencilMenu.style.display = "none";
+        });
+    }
+
+    if (btnEraser) {
+        btnEraser.addEventListener("click", () => {
+            selectTool(activeTool === "eraser" ? "none" : "eraser");
+            pencilMenu.style.display = "none";
+        });
+    }
+
+    if (btnClear) {
+        btnClear.addEventListener("click", () => {
+            if (ctx && annotationCanvas) {
+                saveDrawingState();
+                ctx.clearRect(0, 0, annotationCanvas.width, annotationCanvas.height);
+                showToast("Annotations cleared", "info");
+            }
+            pencilMenu.style.display = "none";
+        });
+    }
+
+    // Brush Settings: Color dots selection listener
+    const colorDots = document.querySelectorAll("#pencil-colors .color-dot");
+    colorDots.forEach(dot => {
+        dot.addEventListener("click", (e) => {
+            colorDots.forEach(d => d.classList.remove("active"));
+            dot.classList.add("active");
+            drawingColor = dot.getAttribute("data-color");
+            e.stopPropagation();
+        });
+    });
+
+    // Brush Settings: Size options selection listener
+    const sizeBtns = document.querySelectorAll("#pencil-sizes .size-btn");
+    sizeBtns.forEach(btn => {
+        btn.addEventListener("click", (e) => {
+            sizeBtns.forEach(b => b.classList.remove("active"));
+            btn.classList.add("active");
+            drawingSize = parseFloat(btn.getAttribute("data-size"));
+            e.stopPropagation();
+        });
+    });
+
+    // Undo drawing feature helper
+    function saveDrawingState() {
+        if (!annotationCanvas || !ctx) return;
+        drawingHistory.push(annotationCanvas.toDataURL());
+        if (drawingHistory.length > 30) {
+            drawingHistory.shift(); // limit history buffer
+        }
+    }
+
+    if (btnUndo) {
+        btnUndo.addEventListener("click", () => {
+            if (drawingHistory.length > 0) {
+                const lastState = drawingHistory.pop();
+                const img = new Image();
+                img.onload = () => {
+                    ctx.clearRect(0, 0, annotationCanvas.width, annotationCanvas.height);
+                    ctx.drawImage(img, 0, 0);
+                };
+                img.src = lastState;
+                showToast("Undo applied", "info");
+            } else {
+                showToast("No drawing actions to undo", "warning");
+            }
+            pencilMenu.style.display = "none";
+        });
+    }
+
+    // Short Notes: Toggle container visibility
+    if (btnNotes && notesContainer) {
+        btnNotes.addEventListener("click", () => {
+            const isVisible = notesContainer.style.display === "flex";
+            notesContainer.style.display = isVisible ? "none" : "flex";
+            pencilMenu.style.display = "none";
+            if (!isVisible && window.currentPdfName) {
+                loadPdfNotes(window.currentPdfName);
+            }
+        });
+    }
+
+    // Short Notes caching helper functions
+    window.loadPdfNotes = function(filename) {
+        if (!notesTextarea) return;
+        const key = "mact_pdf_notes_" + filename;
+        const savedNotes = localStorage.getItem(key);
+        if (savedNotes) {
+            notesTextarea.value = savedNotes;
+            updateNotesSaveStatus(true);
+        } else {
+            notesTextarea.value = "";
+            updateNotesSaveStatus(false, "No notes saved");
+        }
+    };
+
+    function savePdfNotes() {
+        if (!notesTextarea) return;
+        const filename = window.currentPdfName || "default";
+        const key = "mact_pdf_notes_" + filename;
+        const val = notesTextarea.value;
+        if (val.trim()) {
+            localStorage.setItem(key, val);
+            updateNotesSaveStatus(true);
+        } else {
+            localStorage.removeItem(key);
+            updateNotesSaveStatus(false, "Empty");
+        }
+    }
+
+    function updateNotesSaveStatus(saved, customMsg) {
+        const statusSpan = document.getElementById("notes-save-status");
+        if (!statusSpan) return;
+        if (saved) {
+            statusSpan.innerHTML = `<i class="fa-solid fa-circle-check" style="color: #10b981;"></i> Saved to cache`;
+        } else {
+            statusSpan.innerHTML = customMsg ? `<i class="fa-solid fa-info-circle"></i> ${customMsg}` : `<i class="fa-solid fa-circle-xmark"></i> Not saved`;
+        }
+    }
+
+    // Bind event listeners for notes widget
+    if (notesTextarea) {
+        notesTextarea.addEventListener("input", savePdfNotes);
+    }
+
+    if (notesCloseBtn && notesContainer) {
+        notesCloseBtn.addEventListener("click", () => {
+            notesContainer.style.display = "none";
+        });
+    }
+
+    if (notesEraseBtn) {
+        notesEraseBtn.addEventListener("click", () => {
+            if (confirm("Are you sure you want to completely erase these notes?")) {
+                if (notesTextarea) {
+                    notesTextarea.value = "";
+                    const filename = window.currentPdfName || "default";
+                    const key = "mact_pdf_notes_" + filename;
+                    localStorage.removeItem(key);
+                    updateNotesSaveStatus(false, "Erased");
+                    showToast("Notes erased completely", "info");
+                }
+            }
+        });
+    }
+
+    // Canvas drawing mouse & touch listeners
+    if (annotationCanvas && ctx) {
+        annotationCanvas.addEventListener("mousedown", (e) => {
+            if (activeTool === "none") return;
+            saveDrawingState();
+            isDrawing = true;
+            const rect = annotationCanvas.getBoundingClientRect();
+            lastX = e.clientX - rect.left;
+            lastY = e.clientY - rect.top;
+        });
+
+        annotationCanvas.addEventListener("mousemove", (e) => {
+            if (!isDrawing || activeTool === "none") return;
+            const rect = annotationCanvas.getBoundingClientRect();
+            const x = e.clientX - rect.left;
+            const y = e.clientY - rect.top;
+
+            ctx.beginPath();
+            ctx.moveTo(lastX, lastY);
+            ctx.lineTo(x, y);
+
+            if (activeTool === "pencil") {
+                ctx.strokeStyle = drawingColor;
+                ctx.lineWidth = drawingSize;
+                ctx.globalAlpha = 1.0;
+                ctx.globalCompositeOperation = "source-over";
+                ctx.lineCap = "round";
+                ctx.lineJoin = "round";
+            } else if (activeTool === "marker") {
+                ctx.strokeStyle = drawingColor;
+                ctx.lineWidth = 16;
+                ctx.globalAlpha = 0.40;
+                ctx.globalCompositeOperation = "source-over";
+                ctx.lineCap = "square";
+                ctx.lineJoin = "miter";
+            } else if (activeTool === "eraser") {
+                ctx.strokeStyle = "rgba(0,0,0,1)";
+                ctx.lineWidth = 24;
+                ctx.globalAlpha = 1.0;
+                ctx.globalCompositeOperation = "destination-out"; // precision erase
+                ctx.lineCap = "round";
+                ctx.lineJoin = "round";
+            }
+
+            ctx.stroke();
+            lastX = x;
+            lastY = y;
+        });
+
+        annotationCanvas.addEventListener("mouseup", () => { isDrawing = false; });
+        annotationCanvas.addEventListener("mouseout", () => { isDrawing = false; });
+
+        // Touch event support for tablets
+        annotationCanvas.addEventListener("touchstart", (e) => {
+            if (activeTool === "none" || e.touches.length === 0) return;
+            saveDrawingState();
+            isDrawing = true;
+            const rect = annotationCanvas.getBoundingClientRect();
+            lastX = e.touches[0].clientX - rect.left;
+            lastY = e.touches[0].clientY - rect.top;
+            e.preventDefault();
+        });
+
+        annotationCanvas.addEventListener("touchmove", (e) => {
+            if (!isDrawing || activeTool === "none" || e.touches.length === 0) return;
+            const rect = annotationCanvas.getBoundingClientRect();
+            const x = e.touches[0].clientX - rect.left;
+            const y = e.touches[0].clientY - rect.top;
+
+            ctx.beginPath();
+            ctx.moveTo(lastX, lastY);
+            ctx.lineTo(x, y);
+
+            if (activeTool === "pencil") {
+                ctx.strokeStyle = drawingColor;
+                ctx.lineWidth = drawingSize;
+                ctx.globalAlpha = 1.0;
+                ctx.globalCompositeOperation = "source-over";
+                ctx.lineCap = "round";
+                ctx.lineJoin = "round";
+            } else if (activeTool === "marker") {
+                ctx.strokeStyle = drawingColor;
+                ctx.lineWidth = 16;
+                ctx.globalAlpha = 0.40;
+                ctx.globalCompositeOperation = "source-over";
+                ctx.lineCap = "square";
+                ctx.lineJoin = "miter";
+            } else if (activeTool === "eraser") {
+                ctx.strokeStyle = "rgba(0,0,0,1)";
+                ctx.lineWidth = 24;
+                ctx.globalAlpha = 1.0;
+                ctx.globalCompositeOperation = "destination-out";
+                ctx.lineCap = "round";
+                ctx.lineJoin = "round";
+            }
+
+            ctx.stroke();
+            lastX = x;
+            lastY = y;
+            e.preventDefault();
+        });
+
+        annotationCanvas.addEventListener("touchend", () => { isDrawing = false; });
+    }
 
 });
 
