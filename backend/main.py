@@ -1,4 +1,5 @@
 import os
+import re
 import sys
 import asyncio
 import logging
@@ -330,13 +331,16 @@ async def prepare_pdf_chat_prompt(request: PDFChatRequest):
             "Calculator has not been run with populated fields for this session.\n\n"
         )
         
-    from backend.recalc_intent import run_recalculation
+    from backend.recalc_intent import run_recalculation, run_field_lookup
     if not request.is_justify:
         recalc_response = run_recalculation(
             question_str, request.parsed_fields, request.calculator_result
         )
         if recalc_response is not None:
-            return None, None, [], recalc_response
+            return None, None, [], recalc_response, None
+        lookup_response = run_field_lookup(question_str, request.parsed_fields)
+        if lookup_response is not None:
+            return None, None, [], lookup_response, None
             
     is_summary_q = is_case_summary_query(question_str)
     case_filter = None if request.case_type == "all" else request.case_type
@@ -769,21 +773,15 @@ async def prepare_pdf_chat_prompt(request: PDFChatRequest):
         "2. Do NOT invent or hallucinate legal facts, precedents, or claims metrics.\n"
         "3. If the context does not contain the answer, clearly state that the information is missing.\n\n"
         "=== FACTUAL QUESTIONS ABOUT THE DOCUMENT (STRICT RULE) ===\n"
-        "When the user asks what the PDF/document/judgment states, mentions, shows, or contains\n"
-        "(e.g. 'what disability percentage is mentioned', 'what does the judgment say about X',\n"
-        "'what age is given'), you MUST base your answer ONLY on the text under\n"
-        "'[Current PDF Workstation OCR Text]' and the '=== RETRIEVED PRECEDENTS ===' chunks below --\n"
-        "i.e. the actual text extracted from the PDF.\n"
-        "You are FORBIDDEN from answering such questions using the\n"
-        "'[Current PDF Workstation Parsed Fields]' block, even if it contains a number that looks\n"
-        "relevant. That block only reflects whatever is currently typed into the calculator form on\n"
-        "screen -- it may be blank, auto-filled by an imperfect heuristic, or hand-edited by the user.\n"
-        "It is NOT proof that a number appears anywhere in the document, and you must never say\n"
-        "phrases like 'this can be found in the parsed fields section' or 'under the disability field'\n"
-        "-- those phrases describe the calculator form, not the document.\n"
-        "Before stating any number, date, or name as a fact from the document, confirm it literally\n"
-        "appears in the OCR text or retrieved context above. If it does not appear there, respond\n"
-        "exactly: 'This is not explicitly mentioned in the uploaded document.'\n\n"
+        "When the user asks what the PDF/document/judgment states (age, disability %, income, etc.),\n"
+        "you MAY use the 'extracted_age', 'extracted_disability', 'extracted_monthly_income',\n"
+        "'extracted_dependents' values in the Parsed Fields block below — these come directly from\n"
+        "the heuristic parser reading the PDF and are NOT user-edited.\n"
+        "You are FORBIDDEN from using 'age', 'disability', 'monthly_income', 'dependents' (without the\n"
+        "extracted_ prefix) as document facts — those are live calculator form inputs that may have\n"
+        "been hand-edited by the user and are not proof of what the document says.\n"
+        "Still confirm against the OCR text/retrieved context where possible; if extracted_* is empty,\n"
+        "fall back to the OCR text as before.\n\n"
         "=== NEW COMPENSATION DATA MODEL & PRIORITY RULES ===\n"
         "Maintain separate concepts for the following compensation values and NEVER merge, mix, or overwrite them:\n"
         "- awarded_compensation: Amount awarded by the Tribunal/Court (extracted from PDF). E.g. 'Amount Awarded Rs.' indicates this.\n"
@@ -852,6 +850,19 @@ async def chat_with_pdf(request: PDFChatRequest):
         from backend.llm_client import generate_response
         ai_response = await asyncio.to_thread(generate_response, user_prompt, system_instruction, None, request.history)
         
+        # Cheap post-hoc consistency check against the parser's own extraction — no extra LLM call
+        pf = request.parsed_fields or {}
+        for field, label in [("extracted_age", "age"), ("extracted_disability", "disability"),
+                              ("extracted_monthly_income", "income"), ("extracted_dependents", "dependents")]:
+            expected = pf.get(field)
+            if expected in (None, "", 0):
+                continue
+            m = re.search(rf"{label}\D{{0,15}}(\d[\d,]*)", ai_response, re.IGNORECASE)
+            if m and str(int(float(str(expected)))) not in m.group(1).replace(",", ""):
+                logger.warning(f"[CONSISTENCY-CHECK] LLM said {label}={m.group(1)} but extraction says {expected} — flagging")
+                ai_response += (f"\n\n*(Note: the document parser extracted {label} = {expected}; "
+                                 f"please verify against the original PDF if this differs above.)*")
+        
         return {
             "response": ai_response,
             "precedents": precedents,
@@ -902,11 +913,29 @@ async def chat_with_pdf_stream(request: PDFChatRequest):
         thread.start()
 
         async def event_generator():
+            full_response = ""
             while True:
                 token = await asyncio.to_thread(q.get)
                 if token is None:
                     break
+                full_response += token
                 yield json.dumps({"message": {"content": token}}) + "\n"
+
+            # Cheap post-hoc consistency check against the parser's own extraction — no extra LLM call
+            pf = request.parsed_fields or {}
+            extra_msg = ""
+            for field, label in [("extracted_age", "age"), ("extracted_disability", "disability"),
+                                  ("extracted_monthly_income", "income"), ("extracted_dependents", "dependents")]:
+                expected = pf.get(field)
+                if expected in (None, "", 0):
+                    continue
+                m = re.search(rf"{label}\D{{0,15}}(\d[\d,]*)", full_response, re.IGNORECASE)
+                if m and str(int(float(str(expected)))) not in m.group(1).replace(",", ""):
+                    logger.warning(f"[CONSISTENCY-CHECK] LLM stream said {label}={m.group(1)} but extraction says {expected} — flagging")
+                    extra_msg += (f"\n\n*(Note: the document parser extracted {label} = {expected}; "
+                                  f"please verify against the original PDF if this differs above.)*")
+            if extra_msg:
+                yield json.dumps({"message": {"content": extra_msg}}) + "\n"
 
         return StreamingResponse(event_generator(), media_type="text/event-stream")
     except Exception as e:

@@ -4120,7 +4120,11 @@ This cannot be undone.`)) return;
                 tribunal_future_medical: lastExtractedFields["future_medical_expenses"] || "",
                 tribunal_consortium: lastExtractedFields["consortium"] || "",
                 tribunal_funeral: lastExtractedFields["funeral_expenses"] || "",
-                tribunal_estate: lastExtractedFields["loss_estate"] || ""
+                tribunal_estate: lastExtractedFields["loss_estate"] || "",
+                extracted_age: lastExtractedFields["age"] || "",
+                extracted_disability: lastExtractedFields["disability"] || "",
+                extracted_monthly_income: lastExtractedFields["monthly_income"] || "",
+                extracted_dependents: lastExtractedFields["dependents"] || ""
             };
 
             const calculatorResult = {

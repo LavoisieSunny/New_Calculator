@@ -417,17 +417,60 @@ def index_document(filename: str, text_lines: list, suggestions: dict = None, ca
             p_num = chunk_item["page"]
             try:
                 vector = get_ollama_embedding(chunk)
-                return idx, p_num, chunk, vector
+                
+                # Role-aware chunk metadata
+                from backend.parser_heuristics import determine_name_role, extract_relationship_entities
+                roles = set()
+                rel = extract_relationship_entities(chunk)
+                if rel:
+                    c_clean, rel_type, f_clean = rel
+                    roles.add("claimant")
+                    if "son" in rel_type.lower() or "daughter" in rel_type.lower():
+                        roles.add("father")
+                    elif "wife" in rel_type.lower():
+                        roles.add("husband")
+                
+                claimant_name = suggestions.get("name") or suggestions.get("claimant")
+                if claimant_name:
+                    role = determine_name_role(claimant_name, chunk)
+                    if role != "unknown":
+                        roles.add(role)
+                
+                father_name = suggestions.get("father_name")
+                if father_name:
+                    role = determine_name_role(father_name, chunk)
+                    if role == "non-claimant":
+                        roles.add("father")
+                        
+                deceased_name = suggestions.get("deceased_name") or suggestions.get("deceased")
+                if deceased_name:
+                    role = determine_name_role(deceased_name, chunk)
+                    if role != "unknown":
+                        roles.add("deceased")
+                        
+                chunk_lower = chunk.lower()
+                if "claimant" in chunk_lower or "petitioner" in chunk_lower or "injured" in chunk_lower:
+                    roles.add("claimant")
+                if "respondent" in chunk_lower or "owner" in chunk_lower or "driver" in chunk_lower or "insurance" in chunk_lower:
+                    roles.add("respondent")
+                if "deceased" in chunk_lower or "death" in chunk_lower:
+                    roles.add("deceased")
+                if "father" in chunk_lower or "s/o" in chunk_lower or "son of" in chunk_lower or "daughter of" in chunk_lower:
+                    roles.add("father")
+                if "husband" in chunk_lower or "w/o" in chunk_lower or "wife of" in chunk_lower:
+                    roles.add("husband")
+                
+                return idx, p_num, chunk, vector, list(roles)
             except Exception as e:
                 logger.error(f"Error calling get_ollama_embedding for chunk {idx} of '{filename}': {str(e)}")
-                return idx, p_num, chunk, None
+                return idx, p_num, chunk, None, []
 
         indexed_chunks = list(enumerate(chunks_with_page))
         with ThreadPoolExecutor(max_workers=6) as executor:
             embeddings_results = list(executor.map(embed_chunk, indexed_chunks))
 
         points = []
-        for idx, p_num, chunk, vector in embeddings_results:
+        for idx, p_num, chunk, vector, associated_roles in embeddings_results:
             if vector is None:
                 logger.warning(f"Embedding generation failed for chunk {idx} of '{filename}'. Skipping this chunk.")
                 continue
@@ -444,6 +487,7 @@ def index_document(filename: str, text_lines: list, suggestions: dict = None, ca
                 "page_number": p_num,
                 "file_hash": file_hash,
                 "text": chunk,
+                "associated_roles": associated_roles,
                 "case_type": suggestions.get("case_type", "injury"),
                 "claimant": suggestions.get("name") or suggestions.get("claimant") or "",
                 "respondent": suggestions.get("respondent", "Insurance Company / Respondent"),
@@ -554,6 +598,13 @@ def semantic_search(query: str, limit: int = 5, case_type_filter: str = None, fi
                     )
                 )
             
+        # Check query text for role keywords (e.g. "claimant", "respondent", "father", "deceased")
+        lower_query = query.lower()
+        detected_roles = []
+        for role in ["claimant", "respondent", "father", "deceased"]:
+            if role in lower_query:
+                detected_roles.append(role)
+            
         search_filter = None
         if must_conditions:
             from qdrant_client.models import Filter
@@ -566,6 +617,14 @@ def semantic_search(query: str, limit: int = 5, case_type_filter: str = None, fi
             query_filter=search_filter,
             limit=limit
         ).points
+        
+        # Post-retrieval re-ranking boost based on matching roles
+        if detected_roles:
+            def get_role_matches(point):
+                payload = point.payload or {}
+                associated = payload.get("associated_roles") or []
+                return sum(1 for r in detected_roles if r in associated)
+            search_results = sorted(search_results, key=get_role_matches, reverse=True)
         
         # Format results
         formatted_results = []

@@ -1173,7 +1173,9 @@ def classify_page_fallback(page_text, section_name):
         return any(w in text_lower for w in ["grounds of appeal", "grounds", "erred in", "failed to appreciate"])
         
     elif section_name == "facts_section":
-        return any(w in text_lower for w in ["other relevant facts", "relevant facts", "सुसंगत तथ्य", "तथ्य", "case of", "facts of the case"])
+        if any(kw in text_lower for kw in ["अधिनिर्णय", "अवार्ड", "वादप्रश्न", "वादप्रश्न क", "निष्कर्ष", "award passed by", "date of award"]):
+            return False
+        return any(w in text_lower for w in ["other relevant facts", "relevant facts", "सुसंगत तथ्य", "otherrelevantfacts", "relevantfacts"])
         
     elif section_name == "award_operative_section":
         strong_aw_kws = [
@@ -3936,6 +3938,12 @@ def parse_extracted_text(text_lines, case_type=None):
             age_patterns, sections, [("claimant_section", 95), ("facts_section", 85), ("chronological_events_section", 80)], default_val="", type_cast=int,
             field_name="age", debug_info=parser_debug, pages=pages, sections_metadata=sections_metadata, page_importances=page_importances
         )
+        # Guard: facts_section content pulled from a judgment/award narrative (not the appeal memo)
+        # should never supply age — only the applicant's own claim-particulars can.
+        if age and sections.get("facts_section", "") and any(
+            kw in sections.get("facts_section", "").lower() for kw in ["अधिनिर्णय", "अवार्ड", "निष्कर्ष"]
+        ) and sec_age == "facts_section":
+            age, conf_age, sec_age, page_age = "", 0.0, "raw_ocr", 1
         method_age = "Section-Aware Contextual Regex"
 
     # Guard: reject implausible ages (e.g. paragraph numbers matched as age)
@@ -8786,12 +8794,22 @@ def extract_age_from_text(raw_text: str, claimant_name: str = None, deceased_nam
             min_distance = 999999
             term_idx_in_window = idx - w_start
             
-            for pat in patterns:
+            line_start = raw_text.rfind('\n', 0, idx) + 1
+            line_end = raw_text.find('\n', idx)
+            if line_end == -1:
+                line_end = len(raw_text)
+                
+            proximity_patterns = patterns[:3]
+            for pat in proximity_patterns:
                 for m in re.finditer(pat, window, re.IGNORECASE):
                     val = int(m.group(1))
                     if 1 <= val <= 100:
                         match_center = (m.start() + m.end()) / 2
                         dist = abs(match_center - term_idx_in_window)
+                        # Same-line match bonus
+                        match_global_pos = w_start + m.start()
+                        if line_start <= match_global_pos <= line_end:
+                            dist -= 500
                         if dist < min_distance:
                             min_distance = dist
                             best_val = val
