@@ -2644,11 +2644,15 @@ This cannot be undone.`)) return;
 
             try {
                 let filename = "extracted_text";
-                if (singlePreviewFilename) {
-                    const filenameText = singlePreviewFilename.textContent || singlePreviewFilename.innerText;
-                    const cleanFilename = filenameText.split("Source:")[0].trim();
+                if (singlePreviewFilename && singlePreviewFilename.innerHTML) {
+                    const parts = singlePreviewFilename.innerHTML.split("<span");
+                    let cleanFilename = parts[0].trim();
                     if (cleanFilename && cleanFilename !== "No File Loaded") {
-                        filename = cleanFilename;
+                        if (cleanFilename.toLowerCase().endsWith(".pdf")) {
+                            filename = cleanFilename.slice(0, -4);
+                        } else {
+                            filename = cleanFilename;
+                        }
                     }
                 }
 
