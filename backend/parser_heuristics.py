@@ -5680,18 +5680,25 @@ def parse_extracted_text(text_lines, case_type=None):
         p_text = pages[p_num - 1].get("text", "").lower()
         return "scrutiny report" in p_text or "computer sheet" in p_text or "scrutiny sheet" in p_text
 
+    def _has_real_value(val):
+        # Guards against promoting confidence on fields that were never actually
+        # found — many fallback branches hardcode page_X = 1 as a placeholder,
+        # which false-triggers is_checklist_page() when page 1 happens to be a
+        # Scrutiny Report / Computer Sheet cover page (as in this document).
+        return val not in (None, "", 0, 0.0, "null")
+
     try:
-        if is_checklist_page(locals().get('page_deceased_name', 0)): conf_deceased_name = 0.60
-        if is_checklist_page(locals().get('page_claimant_name', 0)): conf_claimant_name = 0.60
-        if is_checklist_page(locals().get('page_age', 0)): conf_age = 0.60
-        if is_checklist_page(locals().get('page_monthly_income', 0)): conf_monthly_income = 0.60
-        if is_checklist_page(locals().get('page_total_compensation', 0)): conf_total_compensation = 0.60
-        if is_checklist_page(locals().get('page_multiplier', 0)): conf_multiplier = 0.60
-        if is_checklist_page(locals().get('page_future_prospect', 0)): conf_future_prospect = 0.60
-        if is_checklist_page(locals().get('page_dependents', 0)): conf_dependents = 0.60
-        if is_checklist_page(locals().get('page_marital_status', 0)): conf_marital_status = 0.60
-        if is_checklist_page(locals().get('page_consortium', 0)): conf_consortium = 0.60
-        if is_checklist_page(locals().get('page_funeral_expenses', 0)): conf_funeral_expenses = 0.60
+        if _has_real_value(deceased_name) and is_checklist_page(locals().get('page_deceased_name', 0)): conf_deceased_name = 0.60
+        if _has_real_value(claimant_name) and is_checklist_page(locals().get('page_claimant_name', 0)): conf_claimant_name = 0.60
+        if _has_real_value(age) and is_checklist_page(locals().get('page_age', 0)): conf_age = 0.60
+        if _has_real_value(monthly_income) and is_checklist_page(locals().get('page_monthly_income', 0)): conf_monthly_income = 0.60
+        if _has_real_value(total_compensation) and is_checklist_page(locals().get('page_total_compensation', 0)): conf_total_compensation = 0.60
+        if _has_real_value(multiplier) and is_checklist_page(locals().get('page_multiplier', 0)): conf_multiplier = 0.60
+        if _has_real_value(future_prospect) and is_checklist_page(locals().get('page_future_prospect', 0)): conf_future_prospect = 0.60
+        if _has_real_value(dependents) and is_checklist_page(locals().get('page_dependents', 0)): conf_dependents = 0.60
+        if _has_real_value(marital_status) and is_checklist_page(locals().get('page_marital_status', 0)): conf_marital_status = 0.60
+        if _has_real_value(consortium) and is_checklist_page(locals().get('page_consortium', 0)): conf_consortium = 0.60
+        if _has_real_value(funeral_expenses) and is_checklist_page(locals().get('page_funeral_expenses', 0)): conf_funeral_expenses = 0.60
     except Exception as e:
         logger.error(f"Error checking checklist pages: {e}")
 
