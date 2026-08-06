@@ -1320,9 +1320,13 @@ document.addEventListener("DOMContentLoaded", () => {
                             window.lastRawText = currentOcrRawText.join("\n");
                             if (downloadWordBtn) {
                                 if (currentOcrRawText.length > 0) {
-                                    downloadWordBtn.style.display = "inline-flex";
+                                    downloadWordBtn.disabled = false;
+                                    downloadWordBtn.style.opacity = "1";
+                                    downloadWordBtn.style.cursor = "pointer";
                                 } else {
-                                    downloadWordBtn.style.display = "none";
+                                    downloadWordBtn.disabled = true;
+                                    downloadWordBtn.style.opacity = "0.5";
+                                    downloadWordBtn.style.cursor = "not-allowed";
                                 }
                             }
 
@@ -1610,6 +1614,17 @@ document.addEventListener("DOMContentLoaded", () => {
                     window.detectedTrack = matchedFile.track || "high_court";
                     currentOcrRawText = matchedFile.raw_text || [];
                     window.lastRawText = currentOcrRawText.join("\n");
+                    if (downloadWordBtn) {
+                        if (currentOcrRawText.length > 0) {
+                            downloadWordBtn.disabled = false;
+                            downloadWordBtn.style.opacity = "1";
+                            downloadWordBtn.style.cursor = "pointer";
+                        } else {
+                            downloadWordBtn.disabled = true;
+                            downloadWordBtn.style.opacity = "0.5";
+                            downloadWordBtn.style.cursor = "not-allowed";
+                        }
+                    }
 
                     loadPdfPreview(matchedFile.filename);
                     updateEnhancementCheck(matchedFile);
