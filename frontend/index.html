@@ -570,19 +570,18 @@
                     <div class="panel" id="calculator-right-pane" style="position: relative; display: flex; flex-direction: column; padding: 0; gap: 0; overflow: hidden; height: 100%;">
                         
                         <!-- Tab 1 Content: PDF Preview -->
-                        <div id="pane-tab-pdf-content" class="pane-tab-content active" style="flex: 1; display: flex; flex-direction: column; height: 100%; overflow: hidden; margin: 0; padding: 0;">
+                        <div id="pane-tab-pdf-content" class="pane-tab-content active" style="flex: 1; display: flex; flex-direction: column; height: 100%; overflow: hidden; margin: 0; padding: 0; position: relative;">
+                            <!-- Floating Word Download Button on the Bottom-Left -->
+                            <button type="button" class="floating-tool-btn" id="download-word-btn" title="Download Word Doc" style="position: absolute; left: 30px; bottom: 30px; z-index: 999; display: inline-flex; background: #2b579a; border-color: #2b579a; box-shadow: 0 4px 16px rgba(43, 87, 154, 0.35); opacity: 0.5; cursor: not-allowed;" disabled>
+                                <i class="fa-solid fa-file-word"></i>
+                            </button>
+
                             <!-- High-Fidelity PDF Preview Panel -->
                             <div class="card preview-card" id="single-preview-card" style="height: 100%; width: 100%; display: flex; flex-direction: column; margin: 0; padding: 0; border: none; box-shadow: none; background: transparent; flex: 1; overflow: hidden;">
-                                <div class="card-header" style="height: 40px; padding: 0 16px; border-bottom: 1px solid var(--border-color); display: flex; align-items: center; justify-content: space-between; margin: 0; flex-shrink: 0; background: var(--bg-panel);">
-                                    <div style="display: flex; align-items: center; gap: 10px;">
-                                        <button type="button" id="download-word-btn" class="btn btn-secondary" title="Download Word Doc" style="display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; font-size: 0.78rem; border-radius: 4px; border: 1px solid var(--border-color); height: 28px; cursor: not-allowed; opacity: 0.5; transition: all 0.2s;" disabled>
-                                            <i class="fa-solid fa-file-word" style="color: #2b579a;"></i> Export Word
-                                        </button>
-                                        <h3 id="single-preview-title" style="margin: 0; font-family: 'Outfit', sans-serif; font-size: 0.95rem; font-weight: 700;">PDF Preview</h3>
-                                        <span id="single-preview-filename" style="font-size: 0.8rem; color: var(--text-muted); font-weight: normal; margin-left: 8px;"></span>
-                                    </div>
+                                <div class="card-header" style="display: none !important;">
+                                    <span id="single-preview-filename"></span>
                                 </div>
-                                <div class="single-preview-container" id="single-preview-container" style="position: relative; flex: 1; height: calc(100% - 40px); width: 100%; overflow: hidden; background: #ffffff; padding: 0; margin: 0; border: none; border-radius: 0;">
+                                <div class="single-preview-container" id="single-preview-container" style="position: relative; flex: 1; height: 100%; width: 100%; overflow: hidden; background: #ffffff; padding: 0; margin: 0; border: none; border-radius: 0;">
                                     <div class="preview-empty-state" style="display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100%; gap: 10px; opacity: 0.5;">
                                         <i class="fa-solid fa-file-pdf" style="font-size: 3rem; color: var(--color-primary)"></i>
                                         <p style="font-size: 0.8rem; color: var(--text-secondary)">Upload a PDF on the left to see the live document preview here.</p>
