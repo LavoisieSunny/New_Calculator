@@ -38,14 +38,15 @@ HEADING_KEYWORDS = {
     "claimant_section": [
         "legal representatives", "parties to the", "cause title", "party details",
         "details of claimants", "details of petitioners", "claimant details",
-        "petitioner details", "memo of parties"
+        "petitioner details", "memo of parties", "name and description of the injured person"
     ],
     "accident_section": [
         "manner of accident", "details of accident", "occurrence of accident", "date of accident",
         "particulars of accident"
     ],
     "compensation_section": [
-        "compensation", "quantum", "assessment of compensation", "heads of claim", "calculation"
+        "compensation", "quantum", "assessment of compensation", "heads of claim", "calculation",
+        "non-fatal accident case"
     ],
     "relief_section": [
         "प्रार्थना", "याचना", "अनुतोष", "राहत की प्रार्थना", "अतः प्रार्थना है",
@@ -148,7 +149,7 @@ FIELD_LABEL_ALIASES = {
     "insurance_company": [
         "insurance company", "name of insurance company", "insurer",
         "insurer name", "insurance co", "name of insurer",
-        "respondent insurance"
+        "respondent insurance", "insured by"
     ],
     "marital_status": [
         "marital status", "matrimonial status"
@@ -333,7 +334,7 @@ def parse_mact_tabular_form(text_lines):
     tabular_line_re = re.compile(
         r'^(?:\(?[0-9a-zA-Z]+\)?[\.\)\-\s]+)?'
         r'([A-Za-zऀ-ॿ][A-Za-z0-9ऀ-ॿ\s\./\(\)\-\&]+?)'
-        r'\s*[:|]\s*'
+        r'\s*(?:[:|\-–—]\s*|\s{2,})'
         r'(.+)$'
     )
 
@@ -354,6 +355,9 @@ def parse_mact_tabular_form(text_lines):
         value_raw = m.group(2).strip()
 
         if len(label_raw) < 3 or not value_raw:
+            continue
+        # reject matches where the "value" is really just a continuation word
+        if re.match(r'^[a-z]', value_raw) and len(label_raw.split()) <= 1:
             continue
         if value_raw.lower() in {'nil', 'n/a', '-', '--', '---', 'na', '_', '__'}:
             continue
@@ -2342,8 +2346,14 @@ def extract_last_currency_value(line_lower):
     """
     Extracts the last numeric value on the line that looks like a currency amount.
     Handles multiple values on a single line (like formula multipliers).
+
+    Guard: date fragments like "13.10.2009" are stripped before scanning,
+    so a line such as "Date from which interest is awarded : 13.10.2009"
+    doesn't have its year (2009) misread as a rupee amount just because
+    the line also contains the word "award(ed)".
     """
-    matches = re.findall(r'(?:rs\.?|inr|rupees)?\s*([\d,]{4,12}(?:\.\d+)?)\s*(?:rs\.?|inr|rupees|\/\-)?', line_lower)
+    cleaned = re.sub(r'\b\d{1,2}[\.\-/]\d{1,2}[\.\-/]\d{2,4}\b', ' ', line_lower)
+    matches = re.findall(r'(?:rs\.?|inr|rupees)?\s*([\d,]{4,12}(?:\.\d+)?)\s*(?:rs\.?|inr|rupees|\/\-)?', cleaned)
     if matches:
         for m_val in reversed(matches):
             val = parse_indian_rupee_value(m_val)
@@ -2424,7 +2434,10 @@ def extract_compensation_table_fields(section_content, case_type=None):
                     fields["consortium"] = val
             elif any(kw in line_lower for kw in ["total", "award", "awarded sum", "total compensation"]):
                 # Ensure no false positives for claim/interest/petition valuation
-                if not any(kw in line_lower for kw in ["claim", "petition", "sought", "prayed", "valuation", "demand"]):
+                if not any(kw in line_lower for kw in [
+                    "claim", "petition", "sought", "prayed", "valuation", "demand",
+                    "interest", "date from which", "rate at which", "rate of interest",
+                ]):
                     fields["total_compensation"] = val
                 
     if case_type == "injury":
@@ -2591,7 +2604,7 @@ def contextual_extract(patterns, sections, priority_list, type_cast=str, default
             continue
             
         for pat in patterns:
-            for m in re.finditer(pat, text, re.IGNORECASE):
+            for m in re.finditer(pat, text, re.IGNORECASE | re.MULTILINE):
                 if field_name == "total_compensation":
                     # Suppress matching claimed/prayer amounts as total compensation
                     start_pos = max(0, m.start() - 50)
@@ -2603,6 +2616,20 @@ def contextual_extract(patterns, sections, priority_list, type_cast=str, default
                     start_pos = max(0, m.start() - 80)
                     pre_ctx = text[start_pos:m.start()].lower()
                     if any(kw in pre_ctx for kw in CLAIM_LANGUAGE_KEYWORDS):
+                        continue
+                elif field_name in ("claimant_name", "deceased_name", "father_name"):
+                    # Honorific-only patterns (\bsmt\b, \bshri\b, \bmr\b, \bmrs\b,
+                    # \bkumari\b) have no role anchor, so they'll happily match a
+                    # tribunal member's or judge's name -- e.g. "The name of the
+                    # Member : Smt Krishna Paraste" -- instead of the actual party.
+                    # Reject matches whose same-line context names a judicial
+                    # officer/advocate rather than a claimant/appellant/respondent.
+                    line_start = text.rfind('\n', 0, m.start()) + 1
+                    line_ctx = text[line_start:m.start()].lower()
+                    if any(kw in line_ctx for kw in [
+                        "member", "judge", "justice", "coram", "presided", "presiding",
+                        "decided by", "advocate", "counsel", "bench", "hon'ble", "honble",
+                    ]):
                         continue
                 matched_source = m.group(0)
                 raw_val = m.group(1).strip()
@@ -2991,6 +3018,171 @@ def deduce_notional_income(award_amount, age, marital_status, dependents, future
     return 5000.0
 
 
+def _extract_cause_title_block(top_pages_text):
+    """
+    Multi-line cause-title fallback for the common MP HC layout where the
+    party name sits on its own line under an 'APPELLANT :' / 'RESPONDENT :'
+    label with a standalone 'VERSUS' line in between -- as opposed to a
+    compact single-line 'X -Vs- Y' scrutiny-report heading, which not every
+    bundle attaches (older-format filings in particular often omit it).
+    Returns (appellant_raw, respondent_raw) or None.
+    """
+    lines = top_pages_text.split("\n")
+    appellant_label_re = re.compile(r'\b(?:APPELLANT|PETITIONER|APPLICANT)\b', re.IGNORECASE)
+    respondent_label_re = re.compile(r'\b(?:RESPONDENTS?|NON[\s\-]?APPLICANTS?)\b', re.IGNORECASE)
+    versus_line_re = re.compile(r'^\s*(?:VERSUS|VS\.?)\s*$', re.IGNORECASE)
+
+    pending_appellant = None
+    for i, line in enumerate(lines):
+        stripped = line.strip()
+        if not stripped:
+            continue
+        if versus_line_re.match(stripped) and pending_appellant:
+            for j in range(i + 1, min(i + 5, len(lines))):
+                r_line = lines[j].strip()
+                if not r_line:
+                    continue
+                if respondent_label_re.search(r_line):
+                    parts = re.split(r'[:\-]', r_line, maxsplit=1)
+                    r_candidate = parts[1].strip() if len(parts) > 1 else respondent_label_re.sub('', r_line).strip(" :-")
+                    if r_candidate:
+                        return pending_appellant, r_candidate
+                break
+            pending_appellant = None
+        elif appellant_label_re.search(stripped):
+            parts = re.split(r'[:\-]', stripped, maxsplit=1)
+            candidate = parts[1].strip() if len(parts) > 1 else appellant_label_re.sub('', stripped).strip(" :-")
+            if candidate:
+                pending_appellant = candidate
+    return None
+
+
+def extract_appeal_memo_fatal_particulars(full_text: str) -> dict:
+    """
+    ADDITIVE parser for "Memo of Appeal" / "Miscellaneous Appeal U/S 173 MVA"
+    documents, which present the Tribunal's award particulars as a lettered
+    list ((a)-(f)) under an "In fatal accident cases" heading, e.g.:
+
+        (a) Annual income of the deceased : Rs. 72,000/-
+        (b) Annual dependency of the claimant : Rs. 75,600/-
+        (c) Multiplier applied by the Tribunal : 18
+        (d) Number of dependants and their relationship ... 4 - wife, son, mother, father
+        (e) Amount of compensation awarded by the Tribunal : Rs. 14,15,800/-
+        (f) Payable by : Non-applicant no. 3 ...
+
+    This layout is not covered by the existing narrative-prose regexes:
+    - dependents_patterns only matches "dependents" (not "dependants")
+    - multiplier_patterns needs a digit immediately after "multiplier"
+    - the annual-income fallback needs "adjudged/assessed/tribunal" within
+      a ~200-char window, and doesn't handle "Nil"
+
+    Returns a dict of raw values. Callers should treat these purely as a
+    FALLBACK when the existing extraction found nothing, so no document
+    format that already works is affected.
+    """
+    result = {}
+
+    def _amt(raw):
+        if not raw:
+            return None
+        raw = raw.strip()
+        if re.match(r'(?i)^nil\.?$', raw):
+            return None
+        raw = raw.replace(",", "").replace("/-", "").replace("Rs.", "").replace("Rs", "").strip()
+        m = re.search(r'(\d+(?:\.\d+)?)', raw)
+        return float(m.group(1)) if m else None
+
+    # ---- Locate the "In fatal accident cases" lettered block ----
+    block_match = re.search(
+        r'in\s+fatal\s+accident\s+cases\s*:?(.*?)'
+        r'(?=in\s+non[\-\s]?fatal\s+accident\s+cases|in\s+cases\s+of\s+damage\s+to\s+property|'
+        r'details\s+of\s+interest|\(?\s*VI\s*\)?|\Z)',
+        full_text, re.IGNORECASE | re.DOTALL
+    )
+    if block_match:
+        block_text = block_match.group(1)
+        raw_items = re.findall(r'\(([a-fA-F])\)\s*(.*?)(?=\([a-fA-F]\)|\Z)', block_text, re.DOTALL)
+        items = {k.lower(): v.strip() for k, v in raw_items}
+
+        if "a" in items:
+            m = re.search(r'annual\s+income[^:\n]*[:\-]?\s*(Nil|Rs\.?\s*[\d,]+(?:\.\d+)?\s*/?-?)',
+                          items["a"], re.IGNORECASE)
+            if m:
+                result["annual_income_of_deceased"] = _amt(m.group(1))
+
+        if "b" in items:
+            m = re.search(r'annual\s+dependency[^:\n]*[:\-]?\s*(Nil|Rs\.?\s*[\d,]+(?:\.\d+)?\s*/?-?)',
+                          items["b"], re.IGNORECASE)
+            if m:
+                result["annual_dependency"] = _amt(m.group(1))
+
+        if "c" in items:
+            m = re.search(r'multiplier[^:\n\d]*[:\-]?\s*(Nil|\d{1,2})\b', items["c"], re.IGNORECASE)
+            if m and m.group(1).lower() != "nil":
+                result["multiplier"] = int(m.group(1))
+
+        if "d" in items:
+            dep_text = items["d"]
+            n_m = (re.search(r'(\d{1,2})\s*persons?\s+(?:were\s+made\s+applicants|as\s+dependents|as\s+dependants)',
+                              dep_text, re.IGNORECASE)
+                   or re.search(r'held\s+(\d{1,2})\s*persons?', dep_text, re.IGNORECASE)
+                   or re.search(r'^\s*(\d{1,2})\b', dep_text))
+            if n_m:
+                result["num_dependents"] = int(n_m.group(1))
+            rel_m = re.search(
+                r'[-\u2013]\s*([a-zA-Z,\s]+?)(?:\s+of\s+the\s+deceased|\s+as\s+dependents|\s+as\s+dependants|$)',
+                dep_text, re.IGNORECASE
+            )
+            if rel_m:
+                result["dependents_relationship"] = rel_m.group(1).strip(" .")
+
+        if "e" in items:
+            m = re.search(r'amount\s+of\s+compensation[^:\n]*[:\-]?\s*(Nil|Rs\.?\s*[\d,]+(?:\.\d+)?\s*/?-?)',
+                          items["e"], re.IGNORECASE)
+            if m:
+                result["compensation_awarded"] = _amt(m.group(1))
+
+        if "f" in items:
+            payable_raw = items["f"].split("\n")[0].strip(" :")
+            if payable_raw and payable_raw.lower().rstrip(".") != "nil":
+                result["payable_by"] = payable_raw
+
+    # ---- Top summary / case metadata fields ----
+    m = re.search(r'case\s*(?:no\.?|number)\s*[:\-]?\s*([^\n]+)', full_text, re.IGNORECASE)
+    if m:
+        result["case_number"] = m.group(1).strip()
+
+    m = re.search(r'date\s+of\s+(?:the\s+)?award\s*[:\-]?\s*(\d{1,2}[\/\.\-]\d{1,2}[\/\.\-]\d{2,4})',
+                  full_text, re.IGNORECASE)
+    if m:
+        result["date_of_award"] = m.group(1)
+
+    m = re.search(r'claim\s+in\s+appeal\s+valued\s+at\s*[:\-]?\s*(Rs\.?\s*[\d,]+(?:\.\d+)?\s*/?-?)',
+                  full_text, re.IGNORECASE)
+    if m:
+        result["claim_valued_in_appeal"] = _amt(m.group(1))
+
+    m = re.search(r'claim\s+before\s+the\s+tribunal\s*[:\-]?\s*(Rs\.?\s*[\d,]+(?:\.\d+)?\s*/?-?)',
+                  full_text, re.IGNORECASE)
+    if m:
+        result["claim_before_tribunal"] = _amt(m.group(1))
+
+    m = re.search(r'amount\s+awarded\s*[:\-]?\s*(Nil|Rs\.?\s*[\d,]+(?:\.\d+)?\s*/?-?)',
+                  full_text, re.IGNORECASE)
+    if m:
+        result["amount_awarded"] = _amt(m.group(1))
+
+    m = re.search(r'date\s+from\s+which\s+interest\s+is\s+awarded\s*[:\-]?\s*([^\n]+)', full_text, re.IGNORECASE)
+    if m:
+        result["interest_from_date"] = m.group(1).strip()
+
+    m = re.search(r'rate\s+at\s+which\s+interest\s+has\s+been\s+awarded\s*[:\-]?\s*([^\n]+)', full_text, re.IGNORECASE)
+    if m:
+        result["interest_rate"] = m.group(1).strip()
+
+    return result
+
+
 def parse_extracted_text(text_lines, case_type=None):
     """
     Highly advanced Section-Aware Legal Semantic Parser / Legal Document Intelligence Engine.
@@ -3062,6 +3254,11 @@ def parse_extracted_text(text_lines, case_type=None):
     sections_metadata = detect_document_sections_with_fallback(full_text, pages)
     sections = {name: info["content"] for name, info in sections_metadata.items()}
     sections["raw_ocr"] = full_text
+
+    # ADDITIVE: parse the "Memo of Appeal" lettered-list award format.
+    # Used only as a fallback below — never overrides values the existing
+    # parsers already found.
+    appeal_block = extract_appeal_memo_fatal_particulars(full_text)
 
     # 3b. MACT Tabular Form Extraction (Label: Value rows in petition forms)
     # Runs in O(n) with no external dependencies — safe on low-RAM servers
@@ -3309,6 +3506,55 @@ def parse_extracted_text(text_lines, case_type=None):
         if cause_title_claimant:
             break
 
+    if not cause_title_claimant:
+        # Fallback: standard MP HC cause-title layout where the party name
+        # is on its own line under an 'APPELLANT :' / 'RESPONDENT :' label
+        # with a standalone 'VERSUS' line in between. This is what carries
+        # older-format bundles (no compact "X -Vs- Y" scrutiny-report page)
+        # through correctly instead of falling through to the honorific-only
+        # claimant_patterns below, which can misfire on a tribunal member's
+        # or judge's name.
+        block_result = _extract_cause_title_block(top_pages_text)
+        if block_result:
+            appellant_raw, respondent_raw = block_result
+            appellant_clean = clean_legal_name(appellant_raw)
+            respondent_clean = clean_legal_name(respondent_raw)
+            is_ins = any(kw in appellant_raw.lower() for kw in [
+                "insurance", "insur", "ins.", "co.", "ltd", "limited", "corp", "corporation", "gic", "hdi", "magma", "general"
+            ])
+            chosen = None
+            if is_ins and respondent_clean and len(respondent_clean) > 2:
+                chosen = respondent_clean
+            elif appellant_clean and len(appellant_clean) > 2 and not is_ins:
+                role_a = determine_name_role(appellant_clean, full_text)
+                role_r = determine_name_role(respondent_clean, full_text) if respondent_clean else "unknown"
+                if role_a == "non-claimant" and role_r == "claimant":
+                    chosen = respondent_clean
+                elif role_r == "non-claimant" and role_a == "claimant":
+                    chosen = appellant_clean
+                elif role_a == "claimant" and role_r != "claimant":
+                    chosen = appellant_clean
+                elif role_r == "claimant" and role_a != "claimant":
+                    chosen = respondent_clean
+                elif role_a == "non-claimant" and respondent_clean:
+                    chosen = respondent_clean
+                elif role_r == "non-claimant" and appellant_clean:
+                    chosen = appellant_clean
+                else:
+                    chosen = appellant_clean
+            elif respondent_clean:
+                chosen = respondent_clean
+
+            if chosen and len(chosen) > 2:
+                cause_title_claimant = chosen
+                cause_title_conf = 0.90
+                cause_title_page = find_exact_page(chosen, 1, 5, pages) if pages else 1
+                cause_title_sec = "cause_title"
+                logger.info(
+                    f"Cause title extraction (multi-line block): chose claimant "
+                    f"'{cause_title_claimant}' (appellant='{appellant_clean}', respondent='{respondent_clean}')"
+                )
+
     # 1. Claimant Name extraction
     claimant_patterns = [
         r'^(?:\d+[\.\)\-][ \t]*)?\b(?:claimant|injured|victim)\b[ \t]*(?:name)?[ \t]*[:\-][ \t]*(.*)',
@@ -3319,6 +3565,8 @@ def parse_extracted_text(text_lines, case_type=None):
         r'\b(?:name\s+of\s+)appellant\b[ \t]*[:\-][ \t]*(.*)',
         r'^(?:\d+[\.\)\-][ \t]*)?\brespondent\b[ \t]*(?:name)?[ \t]*[:\-][ \t]*(.*)',
         r'\b(?:name\s+of\s+)respondent\b[ \t]*[:\-][ \t]*(.*)',
+        r'^[ \t]*\d+[\.\)\-][ \t]*(?:name)?[ \t]*[:\-][ \t]*(.*)',
+        r'^[ \t]*\d+[\.\)\-][ \t]*((?-i:[A-Z][a-zA-Z\s\.\-]+))',
         r'\bsmt\b[ \t]*(.*)',
         r'\bshri\b[ \t]*(.*)',
         r'\bmr\b[ \t]*(.*)',
@@ -3410,8 +3658,8 @@ def parse_extracted_text(text_lines, case_type=None):
         method_father_name = "High Court Particulars Block"
     else:
         father_patterns = [
-            r'(?:father|husband)\s*(?:s\s*)?name\s*[:\-]\s*(.*)',
-            r'(?:father|husband)\s*[/\\]\s*(?:husband|father)\s*(?:name|s\s*name)?\s*[:\-]\s*(.*)',
+            r'(?:father|husband)\s*(?:[\'’]?s\s*)?name\s*[:\-]\s*(.*)',
+            r'(?:father|husband)\s*[/\\]\s*(?:husband|father)\s*(?:name|[\'’]?s\s*name)?\s*[:\-]\s*(.*)',
             r'\bs[\./\s\\]*o\b\s*(?:shri|late\s+shri|late)?\s*(.*)',
             r'\bd[\./\s\\]*o\b\s*(?:shri|smt|kumari|late)?\s*(.*)',
             r'\bw[\./\s\\]*o\b\s*(?:shri|late\s+shri|late)?\s*(.*)',
@@ -3814,6 +4062,13 @@ def parse_extracted_text(text_lines, case_type=None):
     )
     method_dependents = "Section-Aware Contextual Regex"
 
+    if not dependents and appeal_block.get("num_dependents"):
+        dependents = appeal_block["num_dependents"]
+        conf_dependents = 0.85
+        sec_dependents = "appeal_memo_block"
+        page_dependents = 1
+        method_dependents = "Appeal Memo Fatal-Accident Block ((d) Dependents)"
+
     # 8. Marital Status from claimant, facts, and memo_of_appeal sections
     marital_status = ""
     conf_marital_status = 0.0
@@ -4154,6 +4409,13 @@ def parse_extracted_text(text_lines, case_type=None):
                         page_monthly_income = 1
                         method_monthly_income = "Default Fallback"
 
+    if (not monthly_income or monthly_income == 0.0) and appeal_block.get("annual_income_of_deceased"):
+        monthly_income = round(appeal_block["annual_income_of_deceased"] / 12.0, 2)
+        conf_monthly_income = 0.90
+        sec_monthly_income = "appeal_memo_block"
+        page_monthly_income = 1
+        method_monthly_income = "Appeal Memo Fatal-Accident Block ((a) Annual Income / 12)"
+
     if case_type == "death":
         pri_income = None
         pri_method = ""
@@ -4243,6 +4505,13 @@ def parse_extracted_text(text_lines, case_type=None):
             field_name="multiplier", debug_info=parser_debug, pages=pages, sections_metadata=sections_metadata, page_importances=page_importances
         )
         method_multiplier = "Section-Aware Contextual Regex"
+
+    if not multiplier and appeal_block.get("multiplier"):
+        multiplier = appeal_block["multiplier"]
+        conf_multiplier = 0.90
+        sec_multiplier = "appeal_memo_block"
+        page_multiplier = 1
+        method_multiplier = "Appeal Memo Fatal-Accident Block ((c) Multiplier)"
 
     # 9.3 Future Prospect
     future_prospect = comp_fields["future_prospect"]
@@ -4345,7 +4614,7 @@ def parse_extracted_text(text_lines, case_type=None):
         else:
             cons_patterns = [r'consortium\s*(?:of|is|was|to|@)?\s*(?:rs\.?|inr|rupees)?\s*([\d,]{4,7})\b']
             consortium, conf_consortium, sec_consortium, page_consortium = contextual_extract(
-                cons_patterns, sections, [("compensation_section", 95), ("award_copy_section", 90)], default_val=48400.0, type_cast=float,
+                cons_patterns, sections, [("compensation_section", 95), ("award_copy_section", 90)], default_val=48400.0 if case_type == "death" else 0.0, type_cast=float,
                 field_name="consortium", debug_info=parser_debug, pages=pages, sections_metadata=sections_metadata, page_importances=page_importances
             )
             method_consortium = "Section-Aware Contextual Regex"
@@ -4376,7 +4645,7 @@ def parse_extracted_text(text_lines, case_type=None):
         else:
             fun_patterns = [r'funeral\s*(?:expenses?|rites?|rituals?)?\s*(?:of|is|was|to|@)?\s*(?:rs\.?|inr|rupees)?\s*([\d,]{4,7})\b']
             funeral_expenses, conf_funeral_expenses, sec_funeral_expenses, page_funeral_expenses = contextual_extract(
-                fun_patterns, sections, [("compensation_section", 95), ("award_copy_section", 90)], default_val=18150.0, type_cast=float,
+                fun_patterns, sections, [("compensation_section", 95), ("award_copy_section", 90)], default_val=18150.0 if case_type == "death" else 0.0, type_cast=float,
                 field_name="funeral_expenses", debug_info=parser_debug, pages=pages, sections_metadata=sections_metadata, page_importances=page_importances
             )
             method_funeral_expenses = "Section-Aware Contextual Regex"
@@ -4399,6 +4668,13 @@ def parse_extracted_text(text_lines, case_type=None):
             field_name="total_compensation", debug_info=parser_debug, pages=pages, sections_metadata=sections_metadata, page_importances=page_importances
         )
         method_total_compensation = "Section-Aware Contextual Regex"
+
+    if (not total_compensation or total_compensation == 0.0) and appeal_block.get("compensation_awarded"):
+        total_compensation = appeal_block["compensation_awarded"]
+        conf_total_compensation = 0.90
+        sec_total_compensation = "appeal_memo_block"
+        page_total_compensation = 1
+        method_total_compensation = "Appeal Memo Fatal-Accident Block ((e) Compensation Awarded)"
 
     # 9.7 Disability
     disability_patterns = [
@@ -4429,7 +4705,7 @@ def parse_extracted_text(text_lines, case_type=None):
     else:
         est_patterns = [r'(?:loss\s+of\s+)?estate\s*(?:of|is|was|to|@)?\s*(?:rs\.?|inr|rupees)?\s*([\d,]{4,7})\b']
         estate_loss, conf_estate_loss, sec_estate_loss, page_estate_loss = contextual_extract(
-            est_patterns, sections, [("compensation_section", 95), ("award_copy_section", 90)], default_val=18150.0, type_cast=float,
+            est_patterns, sections, [("compensation_section", 95), ("award_copy_section", 90)], default_val=18150.0 if case_type == "death" else 0.0, type_cast=float,
             field_name="estate_loss", debug_info=parser_debug, pages=pages, sections_metadata=sections_metadata, page_importances=page_importances
         )
         method_estate_loss = "Section-Aware Contextual Regex"
@@ -5139,7 +5415,7 @@ def parse_extracted_text(text_lines, case_type=None):
                 page_monthly_income = 1
                 method_monthly_income = "Regex Local Income Fallback"
 
-        if (not monthly_income or monthly_income <= 0) and total_compensation and total_compensation > 0:
+        if case_type == "death" and (not monthly_income or monthly_income <= 0) and total_compensation and total_compensation > 0:
             monthly_income = deduce_notional_income(
                 total_compensation, 
                 age, 
@@ -5295,9 +5571,8 @@ def parse_extracted_text(text_lines, case_type=None):
         return None
 
     # Map table/heuristic values to flat fields
-    # Map table/heuristic values to flat fields
     _raw_estate = get_table_value(["estate"]) or estate_loss
-    loss_estate_val = _raw_estate if (_raw_estate and _raw_estate <= 50000) else 18150.0
+    loss_estate_val = _raw_estate if (_raw_estate and _raw_estate <= 50000) else (18150.0 if case_type == "death" else 0.0)
     
     # Granular consortium extraction
     extracted_conlum = get_table_value(["consortium-lumpsum", "lumpsum consortium", "consortium lumpsum"])
@@ -5405,18 +5680,25 @@ def parse_extracted_text(text_lines, case_type=None):
         p_text = pages[p_num - 1].get("text", "").lower()
         return "scrutiny report" in p_text or "computer sheet" in p_text or "scrutiny sheet" in p_text
 
+    def _has_real_value(val):
+        # Guards against promoting confidence on fields that were never actually
+        # found — many fallback branches hardcode page_X = 1 as a placeholder,
+        # which false-triggers is_checklist_page() when page 1 happens to be a
+        # Scrutiny Report / Computer Sheet cover page (as in this document).
+        return val not in (None, "", 0, 0.0, "null")
+
     try:
-        if is_checklist_page(locals().get('page_deceased_name', 0)): conf_deceased_name = 0.60
-        if is_checklist_page(locals().get('page_claimant_name', 0)): conf_claimant_name = 0.60
-        if is_checklist_page(locals().get('page_age', 0)): conf_age = 0.60
-        if is_checklist_page(locals().get('page_monthly_income', 0)): conf_monthly_income = 0.60
-        if is_checklist_page(locals().get('page_total_compensation', 0)): conf_total_compensation = 0.60
-        if is_checklist_page(locals().get('page_multiplier', 0)): conf_multiplier = 0.60
-        if is_checklist_page(locals().get('page_future_prospect', 0)): conf_future_prospect = 0.60
-        if is_checklist_page(locals().get('page_dependents', 0)): conf_dependents = 0.60
-        if is_checklist_page(locals().get('page_marital_status', 0)): conf_marital_status = 0.60
-        if is_checklist_page(locals().get('page_consortium', 0)): conf_consortium = 0.60
-        if is_checklist_page(locals().get('page_funeral_expenses', 0)): conf_funeral_expenses = 0.60
+        if _has_real_value(deceased_name) and is_checklist_page(locals().get('page_deceased_name', 0)): conf_deceased_name = 0.60
+        if _has_real_value(claimant_name) and is_checklist_page(locals().get('page_claimant_name', 0)): conf_claimant_name = 0.60
+        if _has_real_value(age) and is_checklist_page(locals().get('page_age', 0)): conf_age = 0.60
+        if _has_real_value(monthly_income) and is_checklist_page(locals().get('page_monthly_income', 0)): conf_monthly_income = 0.60
+        if _has_real_value(total_compensation) and is_checklist_page(locals().get('page_total_compensation', 0)): conf_total_compensation = 0.60
+        if _has_real_value(multiplier) and is_checklist_page(locals().get('page_multiplier', 0)): conf_multiplier = 0.60
+        if _has_real_value(future_prospect) and is_checklist_page(locals().get('page_future_prospect', 0)): conf_future_prospect = 0.60
+        if _has_real_value(dependents) and is_checklist_page(locals().get('page_dependents', 0)): conf_dependents = 0.60
+        if _has_real_value(marital_status) and is_checklist_page(locals().get('page_marital_status', 0)): conf_marital_status = 0.60
+        if _has_real_value(consortium) and is_checklist_page(locals().get('page_consortium', 0)): conf_consortium = 0.60
+        if _has_real_value(funeral_expenses) and is_checklist_page(locals().get('page_funeral_expenses', 0)): conf_funeral_expenses = 0.60
     except Exception as e:
         logger.error(f"Error checking checklist pages: {e}")
 
@@ -5617,6 +5899,7 @@ def parse_extracted_text(text_lines, case_type=None):
 
     # ── Post-Merge Validation Pass ──────────────────────────────────────────
     from backend.calculator import get_multiplier, get_future_prospect, get_deduction
+    multiplier_needs_manual_review = False
     
     try:
         age_val = int(age) if age else None
@@ -5627,10 +5910,23 @@ def parse_extracted_text(text_lines, case_type=None):
         try:
             expected_multiplier = get_multiplier(age_val)
             if int(multiplier) != expected_multiplier:
-                conf_multiplier = 0.40
                 msg = f"Multiplier mismatch: extracted {multiplier}, expected {expected_multiplier} for age {age_val}."
                 logger.warning(msg)
                 anomalies_detected.append(msg)
+                if ai_recovery_triggered:
+                    # Both heuristic AND LLM recovery have independently
+                    # disagreed with the table for this age -- usually means
+                    # this page doesn't contain the real value at all.
+                    conf_multiplier = 0.20
+                    conf_age = min(conf_age, 0.20)
+                    multiplier_needs_manual_review = True
+                    anomalies_detected.append(
+                        f"Multiplier ({multiplier}) still disagrees with the age-based table "
+                        f"({expected_multiplier}) even after AI recovery -- this page likely does not "
+                        f"contain the real multiplier/age; verify against the judgment manually."
+                    )
+                else:
+                    conf_multiplier = 0.40
         except Exception as e:
             logger.error(f"Error validating multiplier: {e}")
             
@@ -5772,6 +6068,7 @@ def parse_extracted_text(text_lines, case_type=None):
         "insurance_company": insurance_company,
 
         "ai_recovery_triggered": ai_recovery_triggered,
+        "multiplier_needs_manual_review": multiplier_needs_manual_review,
         "legal_ai_summary": legal_ai_summary,
         "anomalies_detected": anomalies_detected,
         "case_classification": case_classification,

@@ -995,6 +995,89 @@ document.addEventListener("DOMContentLoaded", () => {
         if (supportingDocsChips) {
             supportingDocsChips.innerHTML = "";
         }
+        setCaseDocumentsCollapsed(false);
+        setSupportingDocsCollapsed(false);
+        updateCaseDocumentsBadge();
+    }
+
+    // ==========================================================================
+    // CASE DOCUMENTS & SUPPORTING DOCUMENTS: collapsible sections + live badges
+    // ==========================================================================
+    const caseDocumentsToggle = document.getElementById("case-documents-toggle");
+    const caseDocumentsBody = document.getElementById("case-documents-body");
+    const caseDocumentsChevron = document.getElementById("case-documents-chevron");
+    const caseDocumentsCountBadge = document.getElementById("case-documents-count-badge");
+
+    function setCaseDocumentsCollapsed(collapsed) {
+        if (!caseDocumentsBody || !caseDocumentsToggle) return;
+        caseDocumentsBody.classList.toggle("collapsed", collapsed);
+        caseDocumentsToggle.setAttribute("aria-expanded", (!collapsed).toString());
+        if (caseDocumentsChevron) {
+            caseDocumentsChevron.classList.toggle("rotated", collapsed);
+        }
+    }
+
+    function updateCaseDocumentsBadge() {
+        if (caseDocumentsCountBadge) {
+            let count = 0;
+            if (singleDropZone && singleDropZone.classList.contains("compact")) count += 1;
+            if (supportingDocsChips) count += supportingDocsChips.querySelectorAll(".supporting-doc-chip").length;
+
+            if (count > 0) {
+                caseDocumentsCountBadge.textContent = String(count);
+                caseDocumentsCountBadge.style.display = "inline-flex";
+            } else {
+                caseDocumentsCountBadge.style.display = "none";
+            }
+        }
+        updateSupportingDocsBadge();
+    }
+
+    if (caseDocumentsToggle) {
+        caseDocumentsToggle.addEventListener("click", () => {
+            const isCollapsed = caseDocumentsBody ? caseDocumentsBody.classList.contains("collapsed") : false;
+            setCaseDocumentsCollapsed(!isCollapsed);
+        });
+    }
+
+    // ==========================================================================
+    // SUPPORTING DOCUMENTS: dedicated collapsible dropdown nested below the
+    // main court file. Independent from the outer Case Documents collapse so
+    // the "Upload Supporting Document" action is never hidden away just
+    // because the main file finished processing.
+    // ==========================================================================
+    const supportingDocsToggle = document.getElementById("supporting-docs-toggle");
+    const supportingDocsBody = document.getElementById("supporting-docs-body");
+    const supportingDocsChevron = document.getElementById("supporting-docs-chevron");
+    const supportingDocsCountBadge = document.getElementById("supporting-docs-count-badge");
+
+    function setSupportingDocsCollapsed(collapsed) {
+        if (!supportingDocsBody || !supportingDocsToggle) return;
+        supportingDocsBody.classList.toggle("collapsed", collapsed);
+        supportingDocsToggle.setAttribute("aria-expanded", (!collapsed).toString());
+        if (supportingDocsChevron) {
+            supportingDocsChevron.classList.toggle("rotated", collapsed);
+        }
+    }
+
+    function updateSupportingDocsBadge() {
+        if (!supportingDocsCountBadge) return;
+        const count = document.getElementById("supporting-docs-chips")
+            ? document.getElementById("supporting-docs-chips").querySelectorAll(".supporting-doc-chip").length
+            : 0;
+        if (count > 0) {
+            supportingDocsCountBadge.textContent = String(count);
+            supportingDocsCountBadge.style.display = "inline-flex";
+        } else {
+            supportingDocsCountBadge.style.display = "none";
+        }
+    }
+
+    if (supportingDocsToggle) {
+        supportingDocsToggle.addEventListener("click", () => {
+            const isCollapsed = supportingDocsBody ? supportingDocsBody.classList.contains("collapsed") : false;
+            setSupportingDocsCollapsed(!isCollapsed);
+        });
     }
 
     // Attach click handler for change-file-btn
@@ -1246,6 +1329,12 @@ document.addEventListener("DOMContentLoaded", () => {
                             if (supportingDocsSection) {
                                 supportingDocsSection.style.display = "block";
                             }
+                            updateCaseDocumentsBadge();
+                            // Keep the Case Documents section expanded -- the main file
+                            // switches to its compact one-line view automatically, and the
+                            // "Upload Supporting Document" dropdown right below it must stay
+                            // visible so the person can immediately attach lower-court /
+                            // hospital records without having to hunt for a collapsed panel.
 
 
 
@@ -3573,6 +3662,12 @@ This cannot be undone.`)) return;
         if (supportingDocsChips) {
             supportingDocsChips.innerHTML = "";
         }
+        if (singleDropZone) {
+            singleDropZone.classList.remove("compact");
+        }
+        setCaseDocumentsCollapsed(false);
+        setSupportingDocsCollapsed(false);
+        updateCaseDocumentsBadge();
 
         window.lastRawText = "";
         const suggestionDiv = document.getElementById("case-type-suggestion");
@@ -3703,6 +3798,37 @@ This cannot be undone.`)) return;
     const slideover = document.getElementById("right-slideover");
     const closeSlideover = document.getElementById("close-slideover");
     const aiAssistantTrigger = document.getElementById("ai-assistant-trigger");
+    const chatPromptBubble = document.getElementById("chat-prompt-bubble");
+    const chatPromptClose = document.getElementById("chat-prompt-close");
+    const chatPromptText = document.getElementById("chat-prompt-text");
+
+    // Typewriter effect function for query bubble
+    function initTypewriter() {
+        if (!chatPromptText) return;
+        const message = "Ask your query...";
+        let i = 0;
+        chatPromptText.textContent = "";
+        chatPromptText.classList.add("typing");
+        
+        function type() {
+            if (i < message.length) {
+                chatPromptText.textContent += message.charAt(i);
+                i++;
+                setTimeout(type, 100); // 100ms per character
+            } else {
+                // Remove cursor blinking after completion
+                setTimeout(() => {
+                    chatPromptText.classList.remove("typing");
+                    chatPromptText.style.borderRight = "none";
+                }, 1500);
+            }
+        }
+        
+        // Start typing after a short delay (1.2s)
+        setTimeout(type, 1200);
+    }
+
+    initTypewriter();
 
     const assistantChatMessages = document.getElementById("assistant-chat-messages");
     const assistantChatInput = document.getElementById("assistant-chat-input");
@@ -3837,6 +3963,13 @@ This cannot be undone.`)) return;
 
     if (aiAssistantTrigger) {
         aiAssistantTrigger.addEventListener("click", () => {
+            if (chatPromptBubble) {
+                chatPromptBubble.style.opacity = "0";
+                chatPromptBubble.style.visibility = "hidden";
+                chatPromptBubble.style.pointerEvents = "none";
+                chatPromptBubble.style.transform = "translateY(-10px) scale(0.95)";
+            }
+
             if (aiAssistantTrigger.classList.contains("active") && slideover.classList.contains("open")) {
                 closeDrawer();
                 return;
@@ -3847,6 +3980,16 @@ This cannot be undone.`)) return;
 
             // Auto generate CASE BRIEF on open
             generateCaseBrief();
+        });
+    }
+
+    if (chatPromptClose && chatPromptBubble) {
+        chatPromptClose.addEventListener("click", (e) => {
+            e.stopPropagation();
+            chatPromptBubble.style.opacity = "0";
+            chatPromptBubble.style.visibility = "hidden";
+            chatPromptBubble.style.pointerEvents = "none";
+            chatPromptBubble.style.transform = "translateY(-10px) scale(0.95)";
         });
     }
 
@@ -4093,353 +4236,13 @@ This cannot be undone.`)) return;
             assistantChatHistory.push({ role: "user", content: query });
             assistantChatHistory.push({ role: "assistant", content: accumulatedText });
 
-            // After justify, inject the "Recalculate Compensation" follow-up action
-            if (isJustify) {
-                appendRecalculateActionPill(parsedFields, calculatorResult);
-            }
+
 
         } catch (error) {
             console.error("AI Legal Assistant error:", error);
             document.getElementById(loadingId).remove();
             appendAssistantChatBubble("I apologize, but I encountered an error auditing the workstation state. Please ensure the local Ollama service is running.", "bot");
         }
-    }
-
-    // -----------------------------------------------------------------------
-    // RECALCULATE COMPENSATION — injected after Justify Compensation response
-    // -----------------------------------------------------------------------
-    function appendRecalculateActionPill(parsedFields, calculatorResult) {
-        const caseType = caseTypeSelect.value || parsedFields.case_type || "injury";
-        const isDeath = caseType === "death";
-        const tribunalAward = parseFloat(parsedFields.award_amount) || 0;
-
-        // Current workstation values — read from DOM inputs for accuracy
-        function getDomVal(id, fallback) {
-            const el = document.getElementById(id);
-            const v = el ? parseFloat(el.value) : NaN;
-            return isNaN(v) ? fallback : v;
-        }
-        function getDomStr(id, fallback) {
-            const el = document.getElementById(id);
-            return (el && el.value.trim()) ? el.value.trim() : fallback;
-        }
-        const baseValues = isDeath ? {
-            case_type: caseType,
-            age: getDomVal("age", parsedFields.age || 30),
-            monthly_income: getDomVal("monthly-income", parsedFields.monthly_income || 0),
-            dependents: getDomVal("dependents", parsedFields.dependents || 0),
-            marital_status: getDomStr("marital-status", parsedFields.marital_status || "married"),
-            future_type: getDomVal("future-type", 2),
-            consortium: calculatorResult.consortium || 48400,
-            funeral_expenses: calculatorResult.funeral_expenses || 18150,
-            loss_estate: calculatorResult.loss_estate || 18150
-        } : {
-            case_type: caseType,
-            age: getDomVal("age", parsedFields.age || 30),
-            monthly_income: getDomVal("monthly-income", parsedFields.monthly_income || 0),
-            disability: getDomVal("disability", parsedFields.disability || 0),
-            medical_expenses: getDomVal("medical-expenses", calculatorResult.medical_expenses || 0),
-            future_medical_expenses: getDomVal("future-medical-expenses", calculatorResult.future_medical_expenses || 0),
-            pain_and_suffering: getDomVal("pain-and-suffering", calculatorResult.pain_and_suffering || 0),
-            transportation: getDomVal("transportation", calculatorResult.transportation || 0),
-            special_diet: getDomVal("special-diet", calculatorResult.special_diet || 0),
-            attender_charges: getDomVal("attender-charges", calculatorResult.attender_charges || 0),
-            loss_of_income: getDomVal("loss-of-income", calculatorResult.loss_of_income || 0)
-        };
-
-        // ── Outer wrapper ──
-        const wrapper = document.createElement("div");
-        wrapper.style.cssText = "margin: 8px 0 0 48px;";
-
-        // ── Pill button ──
-        const pill = document.createElement("button");
-        pill.type = "button";
-        pill.innerHTML = `<i class="fa-solid fa-calculator"></i> Recalculate Compensation`;
-        pill.style.cssText = [
-            "display:inline-flex; align-items:center; gap:8px;",
-            "padding:9px 18px; border-radius:20px; font-size:0.82rem; font-weight:700;",
-            "background:rgba(16,185,129,0.10); border:1.5px solid rgba(16,185,129,0.40);",
-            "color:#34d399; cursor:pointer; font-family:'Outfit',sans-serif;",
-            "transition:all 0.2s ease;"
-        ].join("");
-        pill.onmouseover = () => { pill.style.background = "rgba(16,185,129,0.20)"; };
-        pill.onmouseout = () => { pill.style.background = "rgba(16,185,129,0.10)"; };
-
-        // ── Conversational panel ──
-        const panel = document.createElement("div");
-        panel.style.cssText = [
-            "display:none; margin-top:12px; padding:16px;",
-            "background:var(--bg-card); border:1px solid var(--border-glass);",
-            "border-radius:10px;"
-        ].join("");
-
-        // Header + hint text
-        const header = document.createElement("div");
-        header.innerHTML = [
-            '<div style="font-family:\'Outfit\',sans-serif; font-size:0.82rem; font-weight:700;',
-            'color:#34d399; text-transform:uppercase; letter-spacing:0.5px; margin-bottom:6px;">',
-            '<i class="fa-solid fa-calculator"></i>&nbsp; What-If Recalculation</div>',
-            '<p style="font-size:0.78rem; color:var(--text-muted); margin:0 0 12px 0; line-height:1.5;">',
-            'Change any field — age, disability %, income, medical expenses, or any compensation head — and see the revised total.<br>',
-            'For example: <em style="color:var(--text-secondary);">"disability is 40"</em>',
-            ' or <em style="color:var(--text-secondary);">"age is 35"</em>',
-            ' or <em style="color:var(--text-secondary);">"medical expenses is 80000"</em></p>'
-        ].join("");
-        panel.appendChild(header);
-
-        // Chat log area
-        const chatLog = document.createElement("div");
-        chatLog.style.cssText = [
-            "display:flex; flex-direction:column; gap:10px;",
-            "max-height:260px; overflow-y:auto; margin-bottom:10px;",
-            "padding:10px; background:var(--bg-panel);",
-            "border-radius:8px; border:1px solid var(--border-glass);"
-        ].join("");
-        panel.appendChild(chatLog);
-
-        // Input bar
-        const inputBar = document.createElement("div");
-        inputBar.style.cssText = "display:flex; gap:8px; margin-top:4px;";
-        const rcInput = document.createElement("input");
-        rcInput.type = "text";
-        rcInput.placeholder = 'e.g. "disability is 40" or "age is 35" or "medical expenses is 80000"';
-        rcInput.style.cssText = [
-            "flex:1; padding:9px 12px; background:var(--bg-panel);",
-            "border:1px solid var(--border-glass); border-radius:6px;",
-            "color:var(--text-primary); font-size:0.82rem; outline:none;",
-            "font-family:'Inter',sans-serif;"
-        ].join("");
-        const rcSendBtn = document.createElement("button");
-        rcSendBtn.type = "button";
-        rcSendBtn.innerHTML = '<i class="fa-solid fa-paper-plane"></i> Calculate';
-        rcSendBtn.style.cssText = [
-            "padding:9px 16px; border-radius:6px; font-size:0.8rem; font-weight:700;",
-            "background:rgba(16,185,129,0.15); border:1.5px solid rgba(16,185,129,0.45);",
-            "color:#34d399; cursor:pointer; font-family:'Outfit',sans-serif;",
-            "display:flex; align-items:center; gap:6px; white-space:nowrap;"
-        ].join("");
-        inputBar.appendChild(rcInput);
-        inputBar.appendChild(rcSendBtn);
-        panel.appendChild(inputBar);
-
-        // ── Helper: add bubble inside panel chat log ──
-        function addPanelBubble(html, type) {
-            const bub = document.createElement("div");
-            bub.style.cssText = "display:flex; gap:8px; align-items:flex-start;" +
-                (type === "user" ? "flex-direction:row-reverse;" : "");
-            const avatar = document.createElement("div");
-            avatar.style.cssText = [
-                "width:24px; height:24px; border-radius:50%; flex-shrink:0;",
-                "display:flex; align-items:center; justify-content:center; font-size:0.7rem;",
-                "background:" + (type === "user" ? "rgba(139,92,246,0.2)" : "rgba(16,185,129,0.15)") + ";",
-                "color:" + (type === "user" ? "#a78bfa" : "#34d399") + ";"
-            ].join("");
-            avatar.innerHTML = type === "user"
-                ? '<i class="fa-solid fa-user-tie"></i>'
-                : '<i class="fa-solid fa-calculator"></i>';
-            const textEl = document.createElement("div");
-            textEl.style.cssText = [
-                "font-size:0.8rem; line-height:1.5; padding:8px 10px;",
-                "border-radius:8px; max-width:85%; color:var(--text-primary);",
-                "background:var(--bg-card);",
-                "border:1px solid var(--border-glass);"
-            ].join("");
-            textEl.innerHTML = html;
-            bub.appendChild(avatar);
-            bub.appendChild(textEl);
-            chatLog.appendChild(bub);
-            chatLog.scrollTop = chatLog.scrollHeight;
-            return textEl; // return the text div so we can update it
-        }
-
-        // ── Helper: render result breakdown table ──
-        function renderResultTable(result) {
-            const bd = result.breakdown || result;
-            const newTotal = result.final_amount || result.total_compensation || 0;
-            const diff = newTotal - tribunalAward;
-            const diffSign = diff >= 0 ? "+" : "−";
-            const diffColor = diff >= 0 ? "#34d399" : "#f87171";
-            const diffAbs = Math.abs(diff);
-
-            const pairs = isDeath ? [
-                ["Loss of Dependency", bd.loss_of_dependency],
-                ["Loss of Consortium", bd.consortium],
-                ["Funeral Expenses", bd.funeral_expenses],
-                ["Loss of Estate", bd.loss_estate],
-                ["Multiplier", bd.multiplier ? (bd.multiplier + "\xd7") : null],
-                ["Age Used", bd.age ? (bd.age + " yrs") : null],
-                ["Future Prospect", bd.future_prospect_percentage != null ? (bd.future_prospect_percentage + "%") : null]
-            ] : [
-                ["Future Income Loss", bd.future_income_loss],
-                ["Medical Expenses", bd.medical_expenses],
-                ["Pain & Suffering", bd.pain_and_suffering],
-                ["Transportation", bd.transportation],
-                ["Special Diet", bd.special_diet],
-                ["Attender Charges", bd.attender_charges],
-                ["Loss of Income", bd.loss_of_income],
-                ["Future Medical", bd.future_medical_expenses],
-                ["Multiplier", bd.multiplier ? (bd.multiplier + "\xd7") : null],
-                ["Disability %", bd.disability != null ? (bd.disability + "%") : null],
-                ["Annual Income", bd.annual_income]
-            ];
-
-            let rowsHtml = "";
-            pairs.forEach(function (pair) {
-                const label = pair[0], val = pair[1];
-                if (val === null || val === undefined || val === 0 || val === "") return;
-                const display = typeof val === "string" ? val : "\u20b9 " + Number(val).toLocaleString("en-IN");
-                rowsHtml += '<tr>' +
-                    '<td style="padding:4px 8px;color:var(--text-secondary);font-size:0.78rem;">' + label + '</td>' +
-                    '<td style="padding:4px 8px;text-align:right;font-weight:600;font-size:0.78rem;color:var(--text-primary);">' + display + '</td>' +
-                    '</tr>';
-            });
-
-            const tribunalRow = tribunalAward > 0 ? (
-                '<tr style="border-top:1px solid var(--border-glass);">' +
-                '<td style="padding:5px 8px;color:#60a5fa;font-size:0.78rem;">Tribunal Award</td>' +
-                '<td style="padding:5px 8px;text-align:right;font-weight:700;color:#60a5fa;font-size:0.78rem;">\u20b9 ' + tribunalAward.toLocaleString("en-IN") + '</td>' +
-                '</tr>' +
-                '<tr>' +
-                '<td style="padding:4px 8px;color:' + diffColor + ';font-size:0.78rem;">Difference</td>' +
-                '<td style="padding:4px 8px;text-align:right;font-weight:700;color:' + diffColor + ';font-size:0.78rem;">' + diffSign + ' \u20b9 ' + diffAbs.toLocaleString("en-IN") + '</td>' +
-                '</tr>'
-            ) : "";
-
-            return '<table style="width:100%;border-collapse:collapse;margin-top:6px;"><tbody>' +
-                rowsHtml +
-                '<tr style="border-top:2px solid var(--border-glass);background:rgba(16,185,129,0.05);">' +
-                '<td style="padding:7px 8px;font-weight:800;color:#34d399;font-size:0.88rem;">Revised Total</td>' +
-                '<td style="padding:7px 8px;text-align:right;font-weight:800;color:#34d399;font-size:0.95rem;">\u20b9 ' + newTotal.toLocaleString("en-IN") + '</td>' +
-                '</tr>' +
-                tribunalRow +
-                '</tbody></table>';
-        }
-
-        // ── Field name map — what user types → API key ──
-        const FIELD_MAP = isDeath ? {
-            "age": "age", "victim age": "age", "claimant age": "age",
-            "monthly income": "monthly_income", "income": "monthly_income", "salary": "monthly_income", "wages": "monthly_income",
-            "dependents": "dependents", "dependent": "dependents", "number of dependents": "dependents", "number of dependent": "dependents", "no of dependents": "dependents", "no. of dependents": "dependents",
-            "consortium": "consortium", "loss of consortium": "consortium",
-            "funeral expenses": "funeral_expenses", "funeral": "funeral_expenses", "funeral costs": "funeral_expenses",
-            "loss of estate": "loss_estate", "estate": "loss_estate", "loss estate": "loss_estate"
-        } : {
-            "age": "age", "victim age": "age", "claimant age": "age",
-            "disability": "disability", "disability percentage": "disability", "disability percent": "disability", "impairment": "disability", "disability %": "disability", "disability percenatge": "disability", "disability perc": "disability",
-            "monthly income": "monthly_income", "income": "monthly_income", "salary": "monthly_income", "wages": "monthly_income",
-            "medical expenses": "medical_expenses", "medical": "medical_expenses", "treatment": "medical_expenses", "medical bills": "medical_expenses", "hospital bills": "medical_expenses",
-            "future medical expenses": "future_medical_expenses", "future medical": "future_medical_expenses", "future treatment": "future_medical_expenses",
-            "pain and suffering": "pain_and_suffering", "pain": "pain_and_suffering", "suffering": "pain_and_suffering", "pain suffering": "pain_and_suffering",
-            "transportation": "transportation", "transport": "transportation", "travel": "transportation", "travel expenses": "transportation",
-            "special diet": "special_diet", "diet": "special_diet", "food": "special_diet", "dietary expenses": "special_diet",
-            "attender charges": "attender_charges", "attender": "attender_charges", "attendant": "attender_charges", "nurse": "attender_charges", "caretaker": "attender_charges",
-            "loss of income": "loss_of_income", "income loss": "loss_of_income", "past income loss": "loss_of_income"
-        };
-
-        // ── Fields that are NOT rupee amounts ──
-        const PERCENT_FIELDS = new Set(["disability"]);          // shown as %
-        const COUNT_FIELDS = new Set(["age", "dependents"]);   // shown as plain number
-        const UNIT_LABEL = function (fieldKey) {
-            if (PERCENT_FIELDS.has(fieldKey)) return "%";
-            if (COUNT_FIELDS.has(fieldKey)) return "";
-            return "₹";
-        };
-        const UNIT_PREFIX = function (fieldKey) {
-            return (PERCENT_FIELDS.has(fieldKey) || COUNT_FIELDS.has(fieldKey)) ? "" : "₹ ";
-        };
-        const UNIT_SUFFIX = function (fieldKey) {
-            return PERCENT_FIELDS.has(fieldKey) ? "%" : "";
-        };
-
-        // ── Parse natural language → { fieldKey, fieldLabel, amount } ──
-        function parseIntent(text) {
-            const lower = text.toLowerCase().trim();
-            // Extract ALL numbers — use the LAST one (it is typically the value the user stated)
-            const allNums = lower.match(/(\d[\d,\.]*)/g);
-            if (!allNums || allNums.length === 0) return null;
-            const amount = parseFloat(allNums[allNums.length - 1].replace(/,/g, ""));
-            if (isNaN(amount)) return null;
-            // Match field — longest phrase wins so "disability percentage" beats "disability"
-            const keys = Object.keys(FIELD_MAP).sort(function (a, b) { return b.length - a.length; });
-            for (let i = 0; i < keys.length; i++) {
-                if (lower.indexOf(keys[i]) !== -1) {
-                    return { fieldKey: FIELD_MAP[keys[i]], fieldLabel: keys[i], amount: amount };
-                }
-            }
-            return null;
-        }
-
-        // ── Handle send ──
-        async function handleRcSend() {
-            const text = rcInput.value.trim();
-            if (!text) return;
-            rcInput.value = "";
-
-            addPanelBubble(text, "user");
-
-            const intent = parseIntent(text);
-            if (!intent) {
-                addPanelBubble(
-                    "I couldn\u2019t identify a compensation head and amount. Try something like:<br>" +
-                    '<em style="color:var(--text-muted);">"disability is 40"</em>, ' +
-                    '<em style="color:var(--text-muted);">"age is 35"</em> or ' +
-                    '<em style="color:var(--text-muted);">"medical expenses is 80000"</em>',
-                    "bot"
-                );
-                return;
-            }
-
-            const loadingTextEl = addPanelBubble(
-                '<i class="fa-solid fa-spinner fa-spin"></i> Recalculating with <strong>' +
-                intent.fieldLabel + '</strong> = ' +
-                UNIT_PREFIX(intent.fieldKey) + intent.amount.toLocaleString("en-IN") + UNIT_SUFFIX(intent.fieldKey) + '...',
-                "bot"
-            );
-
-            const payload = Object.assign({}, baseValues);
-            payload[intent.fieldKey] = intent.amount;
-
-            try {
-                const res = await fetch("/api/calculate/", {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify(payload)
-                });
-                if (!res.ok) throw new Error("API error");
-                const result = await res.json();
-
-                loadingTextEl.innerHTML =
-                    'If <strong>' + intent.fieldLabel + '</strong> were <strong>' +
-                    UNIT_PREFIX(intent.fieldKey) + intent.amount.toLocaleString("en-IN") + UNIT_SUFFIX(intent.fieldKey) +
-                    '</strong>, the revised compensation would be:' +
-                    renderResultTable(result);
-
-                // Stack changes — next question builds on this
-                baseValues[intent.fieldKey] = intent.amount;
-
-            } catch (err) {
-                loadingTextEl.innerHTML =
-                    '<span style="color:#f87171;"><i class="fa-solid fa-circle-exclamation"></i> Calculation failed. Please ensure the backend is running.</span>';
-            }
-        }
-
-        rcSendBtn.addEventListener("click", handleRcSend);
-        rcInput.addEventListener("keypress", function (e) { if (e.key === "Enter") handleRcSend(); });
-
-        // Toggle panel on pill click
-        pill.addEventListener("click", function () {
-            const open = panel.style.display !== "none";
-            panel.style.display = open ? "none" : "block";
-            pill.innerHTML = open
-                ? '<i class="fa-solid fa-calculator"></i> Recalculate Compensation'
-                : '<i class="fa-solid fa-chevron-up"></i> Close Recalculator';
-            if (!open) setTimeout(function () { rcInput.focus(); }, 50);
-        });
-
-        wrapper.appendChild(pill);
-        wrapper.appendChild(panel);
-        assistantChatMessages.appendChild(wrapper);
-        assistantChatMessages.scrollTop = assistantChatMessages.scrollHeight;
     }
 
     function appendAssistantChatBubble(text, sender, isLoader = false) {
@@ -4591,6 +4394,7 @@ This cannot be undone.`)) return;
 
     if (addSupportingDocsBtn && supportingDocsInput) {
         addSupportingDocsBtn.addEventListener("click", () => {
+            setSupportingDocsCollapsed(false);
             supportingDocsInput.click();
         });
     }
@@ -4627,6 +4431,9 @@ This cannot be undone.`)) return;
                     <button type="button" class="preview-extraction-btn" title="View extracted text" style="display: none;">
                         <i class="fa-solid fa-eye"></i>
                     </button>
+                    <button type="button" class="remove-doc-btn" title="Remove this document">
+                        <i class="fa-solid fa-xmark"></i>
+                    </button>
                 </div>
             </div>
 
@@ -4651,12 +4458,15 @@ This cannot be undone.`)) return;
         if (supportingDocsChips) {
             supportingDocsChips.appendChild(chip);
         }
+        setSupportingDocsCollapsed(false);
+        updateCaseDocumentsBadge();
 
         const uploadBtn = chip.querySelector(".upload-btn");
         const docTypeSelect = chip.querySelector(".doc-type-select");
         const enhanceOcrCheckbox = chip.querySelector(".enhance-ocr-checkbox");
         const statusBadge = chip.querySelector(".status-badge");
         const previewBtn = chip.querySelector(".preview-extraction-btn");
+        const removeBtn = chip.querySelector(".remove-doc-btn");
 
         uploadBtn.addEventListener("click", () => {
             docTypeSelect.disabled = true;
@@ -4669,6 +4479,45 @@ This cannot be undone.`)) return;
             const rawText = chip.dataset.rawText ? JSON.parse(chip.dataset.rawText) : [];
             showExtractedTextModal(file.name, rawText);
         });
+
+        removeBtn.addEventListener("click", () => {
+            removeSupportingDocChip(chip, file, statusBadge);
+        });
+    }
+
+    // Removes a wrongly-uploaded supporting document. If it hasn't finished
+    // indexing yet, this simply drops it from the UI. If it already finished
+    // ("done"), the person is asked to confirm since it also needs to be
+    // deleted from the backend's Qdrant index so it stops influencing the
+    // judicial analysis / autofill.
+    async function removeSupportingDocChip(chip, file, statusBadge) {
+        const currentStatus = statusBadge ? statusBadge.textContent.trim().toLowerCase() : "";
+        const isIndexed = currentStatus === "done";
+        const isProcessing = currentStatus === "processing" || (currentStatus && !["queued", "failed", "done", ""].includes(currentStatus));
+
+        if (isIndexed) {
+            const confirmed = window.confirm(`Remove "${file.name}" from this case? It will also be removed from the processed documents used for judicial analysis.`);
+            if (!confirmed) return;
+        } else if (isProcessing) {
+            const confirmed = window.confirm(`"${file.name}" is still being processed. Remove it anyway?`);
+            if (!confirmed) return;
+        }
+
+        chip.style.opacity = "0.5";
+        chip.style.pointerEvents = "none";
+
+        if (isIndexed || isProcessing) {
+            try {
+                await fetch(`/api/qdrant/document/${encodeURIComponent(file.name)}`, { method: "DELETE" });
+            } catch (err) {
+                console.error("Failed to remove supporting document from index:", err);
+            }
+            judicialAnalysisCache.clear();
+        }
+
+        chip.remove();
+        updateCaseDocumentsBadge();
+        showToast(`Removed "${file.name}" from case documents.`, "success");
     }
 
     function showExtractedTextModal(filename, lines) {
@@ -5078,6 +4927,7 @@ This cannot be undone.`)) return;
                                 judicialAnalysisResult.dataset.state === "processing") {
                                 checkJudicialAnalysisBtn.click();
                             }
+                            updateCaseDocumentsBadge();
                         } else {
                             statusBadge.textContent = "failed";
                             statusBadge.className = "status-badge failed";

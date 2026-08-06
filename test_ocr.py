@@ -179,5 +179,56 @@ def test_vision_cross_check_trigger():
         # Cleanup mock files/environment if needed
 
 
+def test_handwriting_escalation_in_initial_pages():
+    from unittest.mock import patch, MagicMock
+    from backend.ocr import ocr_page_with_vision
+
+    # Paddle result that clears the NORMAL trustworthy bar (conf=0.86 >
+    # OCR_PADDLE_CONF_THRESHOLD=0.85, quality=0.42 > OCR_PADDLE_QUALITY_THRESHOLD=0.40)
+    # but not the stricter handwriting thresholds (conf=0.86 < 0.88 AND quality=0.42 < 0.45).
+    mock_paddle_lines = ["Claimant Name: Rajesh", "Age: 32"]
+    mock_vision_text = "Claimant Name: Rajesh\nAge: 32\nAward: 200000"
+
+    with patch("backend.ocr.classify_scanned_page", return_value="text-heavy"), \
+         patch("backend.ocr.call_paddle_ocr", return_value=(mock_paddle_lines, 0.86, False)) as mock_paddle, \
+         patch("backend.ocr.score_ocr_page_quality", return_value=0.42), \
+         patch("backend.ocr.call_vision_model", return_value=mock_vision_text) as mock_vision, \
+         patch("backend.ocr.Image.open") as mock_image_open:
+
+        mock_img = MagicMock()
+        mock_img.convert.return_value = mock_img
+        mock_img.size = (800, 800)
+        mock_image_open.return_value = mock_img
+
+        with patch("backend.ocr.preprocess_for_vision", return_value=mock_img), \
+             patch("backend.ocr.image_to_base64", return_value="mock_b64"), \
+             patch("backend.ocr._vision_is_paused", return_value=False), \
+             patch("backend.ocr.OCR_ENABLE_VISION_ESCALATION", True):
+
+            # page_idx=0 (< OCR_HANDWRITING_CHECK_PAGES=3): should force vision
+            # even though Paddle's own result clears the normal trustworthy bar.
+            lines, meta = ocr_page_with_vision(
+                page_idx=0, total_pages=10, rendered_img_path="dummy_path.png",
+                fitz_text="", pdf_path=None,
+                vision_available=True, paddle_available=True, track="high_court"
+            )
+            mock_vision.assert_called_once()
+            assert "Award: 200000" in lines
+
+            mock_paddle.reset_mock()
+            mock_vision.reset_mock()
+
+            # page_idx=5 (>= OCR_HANDWRITING_CHECK_PAGES=3), same Paddle result:
+            # should NOT force vision, normal trustworthy-bar logic applies.
+            lines2, meta2 = ocr_page_with_vision(
+                page_idx=5, total_pages=10, rendered_img_path="dummy_path.png",
+                fitz_text="", pdf_path=None,
+                vision_available=True, paddle_available=True, track="high_court"
+            )
+            mock_vision.assert_not_called()
+            assert "Age: 32" in lines2
+
+
 if __name__ == "__main__":
     test_ocr_and_parsing()
+    test_handwriting_escalation_in_initial_pages()

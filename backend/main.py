@@ -14,6 +14,9 @@ logger = logging.getLogger("MainApp")
 # Add root folder to sys.path
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+from dotenv import load_dotenv
+load_dotenv()
+
 from backend.calculator import router as calculator_router, CompensationRequest
 from backend.ocr import router as ocr_router
 from backend.vector_db import semantic_search, get_qdrant_client, VECTOR_DB_INITIALIZED
@@ -103,7 +106,9 @@ async def legal_ai_chat(request: ChatRequest):
         case_filter = None if request.case_type == "all" else request.case_type
         
         # 1. Perform semantic search
-        logger_results = semantic_search(request.message, limit=3, case_type_filter=case_filter, case_session_id_filter=request.case_session_id)
+        logger_results = await asyncio.to_thread(
+            semantic_search, request.message, limit=3, case_type_filter=case_filter, case_session_id_filter=request.case_session_id
+        )
         
         if not logger_results:
             # Fallback chat response if Qdrant is empty
@@ -257,6 +262,33 @@ def is_case_summary_query(query: str) -> bool:
         return True
         
     return False
+
+def _fallback_extract_award_total(ocr_text):
+    import re as _re
+    # Look for common patterns of total award amounts
+    patterns = [
+        r'total\s+compensation\s*(?:of\s*)?(?:rs\.?|inr|rupees)\s*([\d,]{4,10})',
+        r'award\s+amount\s*(?:of\s*)?(?:rs\.?|inr|rupees)\s*([\d,]{4,10})',
+        r'compensation\s+amount\s*(?:of\s*)?(?:rs\.?|inr|rupees)\s*([\d,]{4,10})',
+        r'tribunal\s+(?:has\s+)?awarded\s*(?:rs\.?|inr|rupees)\s*([\d,]{4,10})',
+        r'(?:^|\n)\s*total\s*[:\-]?\s*(?:rs\.?|inr|rupees)\s*([\d,]{4,10})\s*/?-?\s*(?:\n|$)',
+    ]
+    candidates = []
+    for pat in patterns:
+        for m in _re.finditer(pat, ocr_text, _re.IGNORECASE | _re.MULTILINE):
+            raw = m.group(1).replace(",", "").strip()
+            try:
+                val = float(raw)
+            except ValueError:
+                continue
+            if val >= 1000:  # compensation figures are never sub-Rs.1000; filters out stray digits
+                candidates.append((m.start(), val))
+    if not candidates:
+        return None
+    # The final award figure is almost always stated at/near the END of a judgment
+    # (after the reasoning), so prefer the LAST anchored match in reading order.
+    candidates.sort(key=lambda c: c[0])
+    return candidates[-1][1]
 
 async def prepare_pdf_chat_prompt(request: PDFChatRequest):
 
@@ -447,6 +479,18 @@ async def prepare_pdf_chat_prompt(request: PDFChatRequest):
             tribunal_total = float(pf.get("award_amount") or 0)
         except (TypeError, ValueError):
             tribunal_total = 0
+        tribunal_total_source = "workstation field" if tribunal_total > 0 else None
+
+        # If the workstation's cached award_amount is blank (autofill wasn't run /
+        # field cleared), fall back to pulling the figure directly out of the OCR
+        # text so the rest of the precompute (verdict + subtraction-reconciliation
+        # of missing heads) can still run instead of silently degrading.
+        if tribunal_total <= 0 and request.ocr_text:
+            fallback_total = _fallback_extract_award_total(request.ocr_text)
+            if fallback_total:
+                tribunal_total = fallback_total
+                tribunal_total_source = "OCR text (fallback regex — workstation field was blank)"
+
         try:
             calc_total = float(
                 cr.get("final_amount") or cr.get("total_compensation") or 0
@@ -456,9 +500,16 @@ async def prepare_pdf_chat_prompt(request: PDFChatRequest):
 
         if tribunal_total == 0 or calc_total == 0:
             math_relation = "unknown"
+            missing_side = "the tribunal award total" if tribunal_total == 0 else "the calculator total"
             precomputed_comparison = (
-                "Tribunal total or calculator total not available in workstation. "
-                "Determine verdict from OCR text only."
+                f"{missing_side.capitalize()} could not be determined from either the workstation fields "
+                f"or the OCR text, so no quantum comparison (Adequate / Under-compensated / "
+                f"Over-compensated) is possible for this case. "
+                f"HARD RULE: Overall Verdict MUST be written as "
+                f"'QUANTUM NOT DETERMINABLE (insufficient data)' — do NOT write Adequate, "
+                f"Under-Compensated, or Over-Compensated when this message is shown, even if some "
+                f"individual heads above appear to match. If this is a liability appeal, resolve the "
+                f"verdict on liability grounds only and say so explicitly."
             )
         elif abs(tribunal_total - calc_total) < 1:
             math_relation = "equal"
@@ -521,7 +572,10 @@ async def prepare_pdf_chat_prompt(request: PDFChatRequest):
             f"Disability % (CALCULATOR INPUT ONLY — NOT a tribunal finding. "
             f"Do NOT report this as what the tribunal held): "
             f"{pf.get('disability', 'Unknown')}%\n"
-            f"Tribunal Award Total: Rs. {pf.get('award_amount', 'Unknown')}\n"
+            f"Tribunal Award Total: "
+            + (f"Rs. {tribunal_total:,.0f} (source: {tribunal_total_source})" if tribunal_total_source
+               else "Unknown — not found in workstation fields or OCR text")
+            + "\n"
             f"Calculator Estimated Total: Rs. {cr.get('final_amount', 'Unknown')}\n"
             f"{calc_fields_summary}"
             f"\n=== PRECOMPUTED VERDICT (USE EXACTLY AS WRITTEN) ===\n"
@@ -645,7 +699,12 @@ async def prepare_pdf_chat_prompt(request: PDFChatRequest):
             "Liability appeal (disputes who should pay) / Both]\n\n"
 
             "**Overall Verdict:** [UNDER-COMPENSATED / ADEQUATE / OVER-COMPENSATED / "
-            "LIABILITY DISPUTE (quantum not in dispute)]\n"
+            "LIABILITY DISPUTE (quantum not in dispute) / QUANTUM NOT DETERMINABLE (insufficient data)]\n"
+            "HARD RULE: if the '=== PRECOMPUTED VERDICT ===' block above shows MATH RELATION: unknown, "
+            "you MUST use 'QUANTUM NOT DETERMINABLE (insufficient data)' here — never Adequate, "
+            "Under-Compensated, or Over-Compensated, even if some individual heads above happen to match. "
+            "A verdict of 'Adequate' is a factual claim that the total awarded is not less than what is "
+            "due; you cannot make that claim without knowing both totals.\n"
             "Reason: [Copy the COMPARISON sentence from PRECOMPUTED VERDICT verbatim. "
             "Then append any missed heads or liability grounds.]\n\n"
 

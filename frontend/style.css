@@ -2510,6 +2510,138 @@ select.low-confidence-input {
     text-shadow: none !important;
 }
 
+/* Chatbot Button & Prompt Bubble Animations */
+.floating-tool-btn#ai-assistant-trigger {
+    animation: botBounce 3s ease-in-out infinite;
+}
+
+.floating-tool-btn#ai-assistant-trigger:hover {
+    animation: none;
+    transform: translateY(-4px) scale(1.08);
+}
+
+.floating-tool-btn#ai-assistant-trigger.active {
+    animation: none;
+}
+
+@keyframes botBounce {
+    0%, 100% {
+        transform: translateY(0);
+        box-shadow: 0 4px 16px rgba(11, 58, 114, 0.2);
+    }
+    50% {
+        transform: translateY(-6px);
+        box-shadow: 0 8px 24px rgba(11, 58, 114, 0.4), 0 0 12px rgba(197, 155, 39, 0.4);
+    }
+}
+
+.chat-prompt-bubble {
+    position: absolute;
+    right: 0;
+    bottom: 60px;
+    background: rgba(11, 58, 114, 0.95);
+    backdrop-filter: blur(10px);
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    color: #ffffff;
+    padding: 8px 12px;
+    border-radius: 12px;
+    box-shadow: 0 8px 24px rgba(11, 58, 114, 0.25);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    z-index: 998;
+    white-space: nowrap;
+    animation: bubbleFloat 2.5s ease-in-out infinite;
+    font-family: 'Outfit', sans-serif;
+    font-size: 0.82rem;
+    font-weight: 500;
+    transition: opacity 0.3s ease, visibility 0.3s ease, transform 0.3s ease;
+}
+
+.chat-prompt-bubble::after {
+    content: '';
+    position: absolute;
+    bottom: -6px;
+    right: 18px;
+    border-width: 6px 6px 0;
+    border-style: solid;
+    border-color: rgba(11, 58, 114, 0.95) transparent;
+    display: block;
+    width: 0;
+}
+
+@keyframes bubbleFloat {
+    0%, 100% {
+        transform: translateY(0);
+    }
+    50% {
+        transform: translateY(-4px);
+    }
+}
+
+.typing-text {
+    display: inline-block;
+    border-right: 1.5px solid var(--color-secondary, #c59b27);
+    padding-right: 3px;
+    white-space: nowrap;
+    font-weight: 600;
+}
+
+.typing-text.typing {
+    animation: cursorBlink 0.75s step-end infinite;
+}
+
+@keyframes cursorBlink {
+    from, to { border-color: transparent }
+    50% { border-color: var(--color-secondary, #c59b27) }
+}
+
+.bubble-pulse-dot {
+    width: 8px;
+    height: 8px;
+    background-color: var(--color-secondary, #c59b27);
+    border-radius: 50%;
+    display: inline-block;
+    box-shadow: 0 0 8px var(--color-secondary, #c59b27);
+    animation: pulseDot 1.5s infinite;
+}
+
+@keyframes pulseDot {
+    0% {
+        transform: scale(0.85);
+        opacity: 0.6;
+    }
+    50% {
+        transform: scale(1.2);
+        opacity: 1;
+        box-shadow: 0 0 12px var(--color-secondary, #c59b27);
+    }
+    100% {
+        transform: scale(0.85);
+        opacity: 0.6;
+    }
+}
+
+.chat-prompt-close {
+    background: transparent;
+    border: none;
+    color: rgba(255, 255, 255, 0.7);
+    font-size: 1.1rem;
+    font-weight: 600;
+    cursor: pointer;
+    line-height: 1;
+    padding: 0;
+    margin-left: 4px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: color 0.2s ease;
+}
+
+.chat-prompt-close:hover {
+    color: #ffffff;
+}
+
 .slideover-panel {
     position: fixed;
     right: 0;
@@ -3458,4 +3590,163 @@ select.low-confidence-input {
     background: rgba(239, 68, 68, 0.1);
     color: #ef4444;
     border: 1px solid rgba(239, 68, 68, 0.2);
+}
+
+/* Collapsible Case Documents Header */
+.case-documents-header {
+    width: 100%;
+    background: transparent;
+    border: none;
+    padding: 8px 0;
+    margin-bottom: 8px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    cursor: pointer;
+    color: var(--text-primary);
+    transition: opacity 0.2s;
+    outline: none;
+    font-family: inherit;
+}
+
+.case-documents-header:hover {
+    opacity: 0.85;
+}
+
+.case-documents-header-left {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.case-documents-chevron {
+    font-size: 0.85rem;
+    color: var(--text-muted);
+    transition: transform 0.2s ease;
+}
+
+.case-documents-chevron.rotated {
+    transform: rotate(-90deg);
+}
+
+.case-documents-count-badge {
+    background: var(--color-primary);
+    color: white;
+    font-size: 0.72rem;
+    font-weight: 700;
+    padding: 1px 6px;
+    border-radius: 10px;
+    min-width: 16px;
+    text-align: center;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    line-height: 1.2;
+}
+
+.case-documents-header-hint {
+    font-size: 0.75rem;
+    color: var(--text-muted);
+    font-weight: 500;
+}
+
+/* Case Documents Body */
+.case-documents-body {
+    max-height: 1200px;
+    opacity: 1;
+    overflow: visible;
+    transition: max-height 0.3s ease-out, opacity 0.2s ease, margin 0.3s ease;
+    margin-bottom: 8px;
+}
+
+.case-documents-body.collapsed {
+    max-height: 0;
+    opacity: 0;
+    overflow: hidden;
+    margin-bottom: 0;
+    pointer-events: none;
+}
+
+/* Supporting Documents Dropdown (nested inside Case Documents) */
+.supporting-docs-dropdown {
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-sm);
+    background: var(--bg-panel);
+    margin-bottom: 4px;
+    overflow: hidden;
+}
+
+.supporting-docs-toggle-header {
+    width: 100%;
+    background: transparent;
+    border: none;
+    padding: 8px 10px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    cursor: pointer;
+    color: var(--text-primary);
+    transition: opacity 0.2s, background 0.2s;
+    outline: none;
+    font-family: inherit;
+    font-size: 0.8rem;
+    font-weight: 700;
+}
+
+.supporting-docs-toggle-header:hover {
+    opacity: 0.85;
+    background: rgba(255, 255, 255, 0.02);
+}
+
+.supporting-docs-toggle-left {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.supporting-docs-chevron {
+    font-size: 0.8rem;
+    color: var(--text-muted);
+    transition: transform 0.2s ease;
+}
+
+.supporting-docs-chevron.rotated {
+    transform: rotate(-90deg);
+}
+
+.supporting-docs-body {
+    max-height: 2000px;
+    opacity: 1;
+    overflow: visible;
+    transition: max-height 0.3s ease-out, opacity 0.2s ease, padding 0.3s ease;
+    padding: 0 10px 10px;
+}
+
+.supporting-docs-body.collapsed {
+    max-height: 0;
+    opacity: 0;
+    overflow: hidden;
+    padding-top: 0;
+    padding-bottom: 0;
+    pointer-events: none;
+}
+
+/* Remove Document Button */
+.supporting-doc-chip .remove-doc-btn {
+    background: transparent;
+    border: none;
+    color: var(--text-muted, #64748b);
+    font-size: 0.85rem;
+    cursor: pointer;
+    padding: 4px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 4px;
+    transition: all 0.2s ease;
+}
+
+.supporting-doc-chip .remove-doc-btn:hover {
+    color: var(--color-danger, #ef4444);
+    background: rgba(239, 68, 68, 0.1);
 }

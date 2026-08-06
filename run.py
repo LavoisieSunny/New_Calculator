@@ -37,6 +37,9 @@ sys.stderr.reconfigure(line_buffering=True)
 # Ensure root folder is in sys.path
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
+from dotenv import load_dotenv
+load_dotenv()
+
 from config.ports import HOST, PORT, DEBUG
 
 if __name__ == "__main__":

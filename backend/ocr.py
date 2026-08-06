@@ -1,4 +1,6 @@
 import os
+os.environ["FLAGS_use_mkldnn"] = "0"
+os.environ["PADDLE_PDX_ENABLE_MKLDNN_BYDEFAULT"] = "0"
 import re
 import sys
 import gc
@@ -89,6 +91,16 @@ OCR_PADDLE_LANG              = os.getenv("OCR_PADDLE_LANG", "hi")  # "hi" -> PP-
 OCR_PADDLE_CONF_THRESHOLD    = float(os.getenv("OCR_PADDLE_CONF_THRESHOLD", "0.85"))   # avg per-line rec confidence
 OCR_PADDLE_QUALITY_THRESHOLD = float(os.getenv("OCR_PADDLE_QUALITY_THRESHOLD", "0.40")) # heuristic legal-text quality score
 OCR_ENABLE_VISION_ESCALATION = os.getenv("OCR_ENABLE_VISION_ESCALATION", "true").lower() == "true"
+# Number of leading pages (0-indexed page_idx < N) treated as "metadata-
+# critical" — case number, cause title, computer sheet, party details.
+# On these pages we hold Paddle to a stricter bar than elsewhere in the
+# bundle and force a vision escalation even if Paddle's result would
+# otherwise clear the normal OCR_PADDLE_CONF_THRESHOLD/QUALITY_THRESHOLD
+# bar, because handwriting/stamps/skew on these specific pages costs us
+# the fields the whole autofill pipeline depends on.
+OCR_HANDWRITING_CHECK_PAGES = int(os.getenv("OCR_HANDWRITING_CHECK_PAGES", "3"))
+OCR_HANDWRITING_CONF_THRESHOLD = float(os.getenv("OCR_HANDWRITING_CONF_THRESHOLD", "0.90"))
+OCR_HANDWRITING_QUALITY_THRESHOLD = float(os.getenv("OCR_HANDWRITING_QUALITY_THRESHOLD", "0.50"))
 OCR_HYBRID_LABEL = f"PaddleOCR+{OCR_VISION_MODEL}"
 OCR_MEMORY_WARN_MB = int(os.getenv("OCR_MEMORY_WARN_MB", "3000"))  # soft RSS warning threshold
 # NOTE: OCR_MEMORY_WARN_MB previously existed but was never actually enforced
@@ -386,9 +398,10 @@ def get_ocr_instance(lang: str = None):
             _PADDLE_INSTANCES[lang] = _init_paddle_engine(
                 PaddleOCR,
                 lang=lang,
+                enable_mkldnn=False,
                 use_doc_orientation_classify=False,
                 use_doc_unwarping=False,
-                use_textline_orientation=False,
+                use_textline_orientation=True,
             )
             _tlog(f"PaddleOCR singleton ({lang}) ready in {time.time() - t0:.1f}s.")
             import paddle
@@ -417,9 +430,10 @@ def get_supporting_ocr_instance(lang: str = None):
             _SUPPORTING_PADDLE_INSTANCES[lang] = _init_paddle_engine(
                 PaddleOCR,
                 lang=lang,
+                enable_mkldnn=False,
                 use_doc_orientation_classify=False,
                 use_doc_unwarping=False,
-                use_textline_orientation=False,
+                use_textline_orientation=True,
             )
             _tlog(f"Supporting PaddleOCR singleton ({lang}) ready in {time.time() - t0:.1f}s.")
     return _SUPPORTING_PADDLE_INSTANCES[lang]
@@ -1132,7 +1146,75 @@ def is_extracted_text_sparse(text_lines: list) -> bool:
     )
     if is_poor:
         logger.info(f"Digital text layer: poor quality (hits={kw_hits}, gibberish={gibberish_ratio:.2f}). Triggering OCR.")
-    return is_poor
+        return True
+
+    # Page-by-page check for custom-encoded Devanagari (Hindi) fonts that extract as English gibberish
+    pages = {}
+    current_page = 1
+    pages[current_page] = []
+    for line in text_lines:
+        line_str = line.strip()
+        if line_str.startswith("--- PAGE") and line_str.endswith("---"):
+            m = re.match(r"--- PAGE\s+(\d+)\s+---", line_str)
+            if m:
+                current_page = int(m.group(1))
+            else:
+                current_page += 1
+            pages[current_page] = []
+        else:
+            if line_str:
+                pages[current_page].append(line_str)
+
+    bad_pages_count = 0
+    total_pages_with_text = 0
+
+    common_english = {
+        "the", "of", "and", "to", "a", "in", "is", "that", "it", "was",
+        "for", "on", "with", "as", "by", "at", "an", "be", "this", "or",
+        "from", "are", "have", "not", "but", "court", "appeal", "case",
+        "judgment", "order", "claimant", "tribunal", "compensation", "award",
+        "accident", "deceased", "injured", "insurance", "vs", "versus", "respondent",
+        "appellant", "member", "claims", "district", "mp", "state", "under", "section",
+        "act", "no", "date", "year", "years", "month", "income", "amount", "rs", "rupees",
+        "liability", "vehicle", "driver", "owner", "policy", "insure", "insured", "injury",
+        "death", "disability", "permanent", "medical", "expenses", "funeral", "consortium"
+    }
+
+    for page_num, page_lines in pages.items():
+        if not page_lines:
+            continue
+        page_text = " ".join(page_lines)
+        alphas = [c for c in page_text if c.isalpha()]
+        if not alphas:
+            continue
+
+        total_pages_with_text += 1
+        deva_chars = sum(1 for c in page_text if '\u0900' <= c <= '\u097F')
+        deva_ratio = deva_chars / len(alphas)
+
+        # Valid Devanagari pages skip this check
+        if deva_ratio > 0.05:
+            continue
+
+        # Extract Latin alphabetic words
+        words = [w.lower().strip(",.():-") for w in page_text.split() if w.isalpha()]
+        if len(words) < 10:
+            continue
+
+        english_words = sum(1 for w in words if w in common_english)
+        english_ratio = english_words / len(words)
+
+        # Mostly Latin text, but very low English vocabulary ratio -> custom-encoded Hindi font
+        if english_ratio < 0.15:
+            logger.info(f"Page {page_num} detected as custom-encoded garbage (Latin words={len(words)}, English ratio={english_ratio:.2f})")
+            bad_pages_count += 1
+
+    # Trigger OCR if any page is custom font garbage (common for annexures in High Court bundles)
+    if bad_pages_count > 0:
+        logger.info(f"Digital text layer has {bad_pages_count} custom-encoded font pages out of {total_pages_with_text}. Triggering OCR.")
+        return True
+
+    return False
 
 
 # ======================================================
@@ -1188,6 +1270,31 @@ def _paddle_result_is_trustworthy(lines, confidence, quality_score):
         and confidence >= OCR_PADDLE_CONF_THRESHOLD
         and quality_score >= OCR_PADDLE_QUALITY_THRESHOLD
     )
+
+
+def _looks_like_handwriting(lines, confidence, quality_score):
+    """
+    Heuristic handwriting/scribble suspicion check, distinct from (and
+    stricter than) _paddle_result_is_trustworthy. Flags a page if:
+    1. Paddle's own per-line confidence AND the legal-text quality score are
+       BOTH below their respective thresholds at the same time -- a single
+       weak signal alone (e.g. so-so confidence but a perfectly good quality
+       score) is normal printed-scan noise, not handwriting, and forcing a
+       vision-model call for it just burns the serialized qwen2.5vl slot for
+       nothing, since reconcile_paddle_and_vision() would discard the vision
+       output in favor of Paddle's good-quality result anyway, or
+    2. Paddle found visually-plausible content but very few recognizable
+       lines/words -- lots of ink, little machine-readable text -- which is
+       the classic handwriting signature Paddle's printed-text models choke on.
+    """
+    if not lines:
+        return True
+    if confidence < OCR_HANDWRITING_CONF_THRESHOLD and quality_score < OCR_HANDWRITING_QUALITY_THRESHOLD:
+        return True
+    word_count = sum(len(l.split()) for l in lines)
+    if len(lines) <= 2 and word_count <= 4:
+        return True
+    return False
 
 
 def reconcile_paddle_and_vision(paddle_lines: list, vis_lines: list) -> tuple:
@@ -1397,9 +1504,17 @@ def ocr_page_with_vision(
             paddle_duration += time.time() - t0
             paddle_q = score_ocr_page_quality(paddle_lines)
 
-        if _paddle_result_is_trustworthy(paddle_lines, paddle_conf, paddle_q):
+        handwriting_forced = (
+            page_idx < OCR_HANDWRITING_CHECK_PAGES
+            and _looks_like_handwriting(paddle_lines, paddle_conf, paddle_q)
+        )
+
+        if _paddle_result_is_trustworthy(paddle_lines, paddle_conf, paddle_q) and not handwriting_forced:
             lines, engine_used, confidence = paddle_lines, "PaddleOCR", paddle_conf
         elif vision_available and OCR_ENABLE_VISION_ESCALATION and not _vision_is_paused():
+            if handwriting_forced:
+                _tlog(f"[OCR] Page {page_num}: within first {OCR_HANDWRITING_CHECK_PAGES} pages and "
+                      f"suspected handwriting (conf={paddle_conf:.2f}, q={paddle_q:.2f}) -> forcing vision")
             _tlog(f"[OCR] Page {page_num}: low-content Paddle result untrusted "
                   f"(conf={paddle_conf:.2f}, q={paddle_q:.2f}, lines={len(paddle_lines)}) "
                   f"-> escalating to vision")
@@ -1452,12 +1567,18 @@ def ocr_page_with_vision(
                 table_mds = extract_tables_via_structure(rendered_img_path, page_num=page_num)
                 structure_duration += time.time() - t0
             
-            # Escalate to vision ONLY if Paddle OCR is low confidence / not trustworthy
-            should_escalate = (not paddle_good)
+            # Escalate to vision if Paddle OCR is low confidence/not trustworthy,
+            # OR if this is one of the metadata-critical leading pages and Paddle's
+            # result looks handwriting-suspect even though it clears the normal bar.
+            handwriting_forced = (
+                page_idx < OCR_HANDWRITING_CHECK_PAGES
+                and _looks_like_handwriting(paddle_lines, paddle_conf, paddle_q)
+            )
+            should_escalate = (not paddle_good) or handwriting_forced
 
-            
             if should_escalate and vision_available and OCR_ENABLE_VISION_ESCALATION and not _vision_is_paused():
-                logger.info(f"Page {page_num}: PaddleOCR quality low (conf={paddle_conf:.2f}, q={paddle_q:.2f}) -> escalating to vision model ({OCR_VISION_MODEL})")
+                reason = "quality low" if not paddle_good else f"handwriting-suspect within first {OCR_HANDWRITING_CHECK_PAGES} pages"
+                logger.info(f"Page {page_num}: PaddleOCR {reason} (conf={paddle_conf:.2f}, q={paddle_q:.2f}) -> escalating to vision model ({OCR_VISION_MODEL})")
                 img_b64 = image_to_base64(_get_processed(), quality=85)
                 t0 = time.time()
                 raw_text = call_vision_model(img_b64, page_num=page_num)
@@ -1605,6 +1726,7 @@ def ocr_page_with_vision(
         "lines": len(lines), "ocr_boxes": [],
         "render_time": 0.0, "ocr_time": ocr_time, "total_page_time": elapsed,
         "confidence_untrusted": confidence == 0.0 and bool(lines),
+        "handwriting_forced": locals().get("handwriting_forced", False),
         "vision_cross_checked": is_cross_check,
         "paddle_time": round(paddle_duration, 3),
         "vision_time": round(vision_duration, 3),
@@ -3288,9 +3410,13 @@ async def ai_recover_fields(request: AIRecoverRequest):
 
         from backend.llm_client import summarize_grounds_and_relief, generate_final_judicial_summary
         case_tp = recovered_data.get("case_type") or "death"
-        summary_res = summarize_grounds_and_relief(sections_dict, heuristic_signal, case_tp)
-        final_judicial_res = generate_final_judicial_summary(
-            sections_dict, heuristic_signal, case_tp, supporting_docs=supporting_docs, force_refresh=True
+        summary_res, final_judicial_res = await asyncio.gather(
+            asyncio.to_thread(summarize_grounds_and_relief, sections_dict, heuristic_signal, case_tp),
+            asyncio.to_thread(
+                generate_final_judicial_summary,
+                sections_dict, heuristic_signal, case_tp,
+                supporting_docs=supporting_docs, force_refresh=True
+            )
         )
 
         formatted["grounds_relief_summary"] = summary_res
@@ -3402,7 +3528,8 @@ async def refresh_judicial_summary(request: RefreshJudicialSummaryRequest):
         from backend.llm_client import generate_final_judicial_summary
         heuristic_signal = classify_enhancement_or_reduction(sections_dict)
 
-        final_judicial_res = generate_final_judicial_summary(
+        final_judicial_res = await asyncio.to_thread(
+            generate_final_judicial_summary,
             sections_dict,
             heuristic_signal,
             request.case_type,

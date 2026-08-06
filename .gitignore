@@ -3,6 +3,9 @@
 venv/
 ENV/
 
+# Environment variables / secrets — copy .env.example to .env locally
+.env
+
 # Python caching
 __pycache__/
 **/__pycache__/
