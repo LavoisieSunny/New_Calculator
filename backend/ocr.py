@@ -109,7 +109,6 @@ OCR_MEMORY_WARN_MB = int(os.getenv("OCR_MEMORY_WARN_MB", "3000"))  # soft RSS wa
 # production. OCR_MEMORY_GATE_MAX_WAIT bounds how long a worker will pause for
 # memory to free up before proceeding anyway (never deadlock the batch).
 OCR_MEMORY_GATE_MAX_WAIT = float(os.getenv("OCR_MEMORY_GATE_MAX_WAIT", "20.0"))
-OCR_VISION_MAX_DIM = int(os.getenv("OCR_VISION_MAX_DIM", "1120"))
 
 # Vision model Ollama concurrency semaphore —
 # qwen2.5vl:7b runs one inference at a time on a single GPU/CPU.
@@ -242,12 +241,6 @@ _LEGAL_QUALITY_KEYWORDS = [
     "deceased", "injured", "monthly", "insurance", "motor", "claim"
 ]
 
-_LEGAL_QUALITY_KEYWORDS_HINDI = [
-    "न्यायाधिकरण", "अधिकरण", "दावेदार", "याचिकाकर्ता", "दुर्घटना",
-    "मुआवजा", "क्षतिपूर्ति", "मृतक", "घायल", "बीमा", "न्यायालय",
-    "पंचाट", "रुपये", "मासिक", "आय", "दावा", "प्रार्थी"
-]
-
 # Devanagari unicode range
 _DEVANAGARI_RE = re.compile(r'[\u0900-\u097F]')
 
@@ -325,178 +318,6 @@ def call_vision_model(image_b64: str, page_num: int = 0) -> str:
             logger.error(f"Page {page_num}: Vision model call error: {e}")
             _record_vision_result(success=False, page_num=page_num)
             return ""
-
-
-# ======================================================
-# BATCHED VISION CALLS — coalesce concurrent page escalations into one
-# multi-image Ollama request instead of N serial single-page requests.
-# Does NOT require the server to support parallel requests — still goes
-# through the same _VISION_SEMAPHORE(1) — it just reduces total round-trip
-# count, which is the only lever available when you can't touch server config.
-# ======================================================
-
-_VISION_BATCH_PROMPT_TEMPLATE = (
-    "You are an expert OCR engine for Indian legal court documents. "
-    "You will be given {n} scanned page images, in order. "
-    "For EACH image, extract ALL text exactly as it appears, and output it "
-    "under a marker line '===PAGE k===' (k = that image's position, 1-indexed, "
-    "starting at 1) placed immediately before that page's text.\n"
-    "Rules for each page's text:\n"
-    "- Preserve Hindi (Devanagari) and English text faithfully, both scripts.\n"
-    "- For tables, output each row on a new line with cells separated by ' | '.\n"
-    "- Include legible handwritten text; skip completely illegible text.\n"
-    "- Preserve numbers, dates, case numbers, amounts (Rs., /-) exactly as written.\n"
-    "- No commentary, no markdown, plain text only, per page.\n"
-    "- If a page is blank or has only stamps/seals with no readable text, "
-    "output '[BLANK PAGE]' for that page's section.\n"
-    "You MUST output all {n} pages' sections in order, each starting with its "
-    "own '===PAGE k===' marker line exactly as specified — do not skip any, "
-    "do not merge two pages under one marker."
-)
-
-
-def _split_batch_vision_response(content: str, n: int, page_nums: list) -> list:
-    """Splits a multi-page vision response on '===PAGE k===' markers back into
-    per-page text blocks, in submission order. If the model ignored the marker
-    format, degrades to 'first page gets the whole response, rest empty' —
-    callers already treat empty vision output as 'fall back to Paddle result
-    for that page', so a parse miss costs quality on that page, not correctness."""
-    marker_re = re.compile(r"===\s*PAGE\s*(\d+)\s*===", re.IGNORECASE)
-    parts = marker_re.split(content)
-    found = {}
-    for i in range(1, len(parts) - 1, 2):
-        try:
-            idx = int(parts[i])
-            found[idx] = parts[i + 1].strip()
-        except (ValueError, IndexError):
-            continue
-
-    if not found:
-        logger.warning(
-            f"Vision batch response had no '===PAGE n===' markers for pages "
-            f"{page_nums} — model ignored batching format. Falling back: "
-            f"page 1 of this batch gets the full response, rest empty."
-        )
-        return [content] + [""] * (n - 1)
-
-    return [found.get(i + 1, "") for i in range(n)]
-
-
-def call_vision_model_batch(images_b64: list, page_nums: list) -> list:
-    """
-    Batched version of call_vision_model(). Sends `n` page images in a single
-    Ollama /api/chat call and splits the response back into per-page text
-    using '===PAGE k===' markers. Still serialized through the same
-    _VISION_SEMAPHORE(1) — this reduces the NUMBER of requests, not the
-    concurrency, so it's safe against a shared/single-tenant Ollama instance.
-    """
-    n = len(images_b64)
-    if n == 0:
-        return []
-    if n == 1:
-        return [call_vision_model(images_b64[0], page_num=page_nums[0])]
-
-    if _vision_is_paused():
-        logger.warning(f"Vision batch ({n} pages, {page_nums}) skipped: model in cooldown.")
-        return [""] * n
-
-    prompt = _VISION_BATCH_PROMPT_TEMPLATE.format(n=n)
-    url = f"{OCR_OLLAMA_ENDPOINT.rstrip('/')}/api/chat"
-    payload = {
-        "model": OCR_VISION_MODEL,
-        "stream": False,
-        "options": {
-            "temperature": 0.0,
-            "num_predict": 1024 * n,   # scale output budget with batch size
-            "num_ctx": min(3072 * n, 16384),  # cap so we don't blow past model limits
-        },
-        "messages": [
-            {"role": "user", "content": prompt, "images": images_b64}
-        ]
-    }
-    body = json.dumps(payload).encode("utf-8")
-    req = urllib.request.Request(
-        url, data=body, headers={"Content-Type": "application/json"}, method="POST"
-    )
-
-    batch_timeout = OCR_PAGE_TIMEOUT * n  # scale timeout with batch size
-    with _VISION_SEMAPHORE:
-        try:
-            with urllib.request.urlopen(req, timeout=batch_timeout) as resp:
-                result = json.loads(resp.read().decode("utf-8"))
-                content = result.get("message", {}).get("content", "").strip()
-                _record_vision_result(success=bool(content), page_num=page_nums[0])
-        except Exception as e:
-            logger.error(f"Vision batch call error ({n} pages, {page_nums}): {e}")
-            _record_vision_result(success=False, page_num=page_nums[0])
-            return [""] * n
-
-    return _split_batch_vision_response(content, n, page_nums)
-
-
-class _VisionBatchRequest:
-    __slots__ = ("image_b64", "page_num", "event", "result")
-    def __init__(self, image_b64, page_num):
-        self.image_b64 = image_b64
-        self.page_num = page_num
-        self.event = threading.Event()
-        self.result = ""
-
-
-class VisionBatcher:
-    """
-    Coalesces concurrent vision-escalation calls from your worker-pool threads
-    (OCR_PAGE_WORKER_POOL_SIZE lets several pages run concurrently already)
-    into a single multi-image request instead of N serialized single-page
-    requests. submit() has the SAME blocking signature as call_vision_model(),
-    so it's a drop-in replacement at every call site.
-    """
-    def __init__(self, batch_size=3, max_wait_seconds=2.5):
-        self.batch_size = batch_size
-        self.max_wait_seconds = max_wait_seconds
-        self._pending = []
-        self._lock = threading.Lock()
-        self._flush_timer = None
-
-    def submit(self, image_b64: str, page_num: int = 0) -> str:
-        req = _VisionBatchRequest(image_b64, page_num)
-        flush_now = False
-        with self._lock:
-            self._pending.append(req)
-            if len(self._pending) >= self.batch_size:
-                flush_now = True
-            elif self._flush_timer is None:
-                self._flush_timer = threading.Timer(self.max_wait_seconds, self._flush)
-                self._flush_timer.daemon = True
-                self._flush_timer.start()
-        if flush_now:
-            self._flush()
-        req.event.wait(timeout=OCR_PAGE_TIMEOUT * self.batch_size)
-        return req.result
-
-    def _flush(self):
-        with self._lock:
-            if self._flush_timer is not None:
-                self._flush_timer.cancel()
-                self._flush_timer = None
-            if not self._pending:
-                return
-            batch = self._pending
-            self._pending = []
-        try:
-            results = call_vision_model_batch(
-                [r.image_b64 for r in batch],
-                [r.page_num for r in batch],
-            )
-        except Exception as e:
-            logger.error(f"Vision batch flush failed: {e}")
-            results = [""] * len(batch)
-        for r, text in zip(batch, results):
-            r.result = text
-            r.event.set()
-
-
-VISION_BATCHER = VisionBatcher(batch_size=3, max_wait_seconds=2.5)
 
 
 def is_vision_model_available() -> bool:
@@ -585,10 +406,33 @@ def get_ocr_instance(lang: str = None):
     return _PADDLE_INSTANCES[lang]
 
 
-_SUPPORTING_PADDLE_INFER_LOCK = _PADDLE_INFER_LOCK
+_SUPPORTING_PADDLE_INSTANCES = {"hi": None, "en": None}
+_SUPPORTING_PADDLE_INIT_LOCK = threading.Lock()
+_SUPPORTING_PADDLE_INFER_LOCK = threading.Lock()
 
 def get_supporting_ocr_instance(lang: str = None):
-    return get_ocr_instance(lang)
+    global _SUPPORTING_PADDLE_INSTANCES
+    if lang is None:
+        lang = OCR_PADDLE_LANG
+    if lang not in _SUPPORTING_PADDLE_INSTANCES:
+        _SUPPORTING_PADDLE_INSTANCES[lang] = None
+    if _SUPPORTING_PADDLE_INSTANCES[lang] is not None:
+        return _SUPPORTING_PADDLE_INSTANCES[lang]
+    with _SUPPORTING_PADDLE_INIT_LOCK:
+        if _SUPPORTING_PADDLE_INSTANCES[lang] is None:
+            if not PADDLEOCR_IMPORTED:
+                raise ImportError("paddleocr is not installed or failed to import at startup.")
+            _tlog(f"Loading Supporting PaddleOCR singleton (PP-OCRv5, lang={lang})...")
+            t0 = time.time()
+            _SUPPORTING_PADDLE_INSTANCES[lang] = _init_paddle_engine(
+                PaddleOCR,
+                lang=lang,
+                use_doc_orientation_classify=False,
+                use_doc_unwarping=False,
+                use_textline_orientation=False,
+            )
+            _tlog(f"Supporting PaddleOCR singleton ({lang}) ready in {time.time() - t0:.1f}s.")
+    return _SUPPORTING_PADDLE_INSTANCES[lang]
 
 SUPPORTING_DOCS_POOL = _cf.ThreadPoolExecutor(max_workers=2, thread_name_prefix="supporting_ocr")
 _SUPPORTING_PAGE_SEMAPHORE = threading.Semaphore(4)
@@ -1141,26 +985,11 @@ def preprocess_for_vision(pil_img) -> Image.Image:
     """
     Lightweight preprocessing optimised for vision model input:
     - Convert to RGB (model expects colour)
-    - Resize to max_dim (multiple of 28 for Qwen2.5-VL patch alignment) to speed up inference and save memory
     - Mild CLAHE contrast boost (helps faded scans)
     - NO binarization — vision models read grayscale gradients better than hard thresholds
     """
     try:
         import cv2
-        
-        # Resize image to fit max_dim to optimize visual tokens & inference speed
-        w, h = pil_img.size
-        max_dim = OCR_VISION_MAX_DIM
-        if max_dim > 0 and max(w, h) > max_dim:
-            ratio = max_dim / max(w, h)
-            # Align dimensions to multiples of 28 for Qwen2.5-VL patches
-            nw = int(round(w * ratio / 28) * 28)
-            nh = int(round(h * ratio / 28) * 28)
-            nw = max(28, nw)
-            nh = max(28, nh)
-            logger.info(f"Resizing for vision model: {w}x{h} -> {nw}x{nh}")
-            pil_img = pil_img.resize((nw, nh), Image.Resampling.LANCZOS)
-
         img_np = np.array(pil_img.convert("RGB"))
         # Convert to LAB, apply CLAHE to L channel only
         lab = cv2.cvtColor(img_np, cv2.COLOR_RGB2LAB)
@@ -1326,15 +1155,7 @@ def score_ocr_page_quality(text_lines: list) -> float:
         return 0.0
     line_score = min(len(real) / 10.0, 1.0)
     full = " ".join(real).lower()
-    
-    # Adapt keyword scoring to support Devanagari (Hindi) pages
-    has_devanagari = bool(_DEVANAGARI_RE.search(full))
-    if has_devanagari:
-        kw_hits = sum(1 for kw in _LEGAL_QUALITY_KEYWORDS_HINDI if kw in full)
-        kw_hits += sum(1 for kw in _LEGAL_QUALITY_KEYWORDS if kw in full)
-    else:
-        kw_hits = sum(1 for kw in _LEGAL_QUALITY_KEYWORDS if kw in full)
-
+    kw_hits = sum(1 for kw in _LEGAL_QUALITY_KEYWORDS if kw in full)
     kw_score = min(kw_hits / 5.0, 1.0)
     words = full.split()
     if words:
@@ -1390,7 +1211,7 @@ def _looks_like_handwriting(lines, confidence, quality_score):
        vision-model call for it just burns the serialized qwen2.5vl slot for
        nothing, since reconcile_paddle_and_vision() would discard the vision
        output in favor of Paddle's good-quality result anyway, or
-       2. Paddle found visually-plausible content but very few recognizable
+    2. Paddle found visually-plausible content but very few recognizable
        lines/words -- lots of ink, little machine-readable text -- which is
        the classic handwriting signature Paddle's printed-text models choke on.
     """
