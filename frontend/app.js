@@ -2449,6 +2449,12 @@ This cannot be undone.`)) return;
             lastExtractedFields[key] = fields[key];
         });
 
+        // Capture the age extraction source so the chatbot knows which part
+        // of the document it came from (Particulars Block, OCR fallback, etc.)
+        if (suggestions.confidence_scores && suggestions.confidence_scores.age && suggestions.confidence_scores.age.source) {
+            lastExtractedFields["age_source"] = suggestions.confidence_scores.age.source;
+        }
+
         // ── Alias normalisation: map LLM/heuristic field name variants to
         //    the canonical keys that injuryMapping/deathMapping expect ──────
         const fieldAliases = {
