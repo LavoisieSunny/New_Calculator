@@ -721,8 +721,31 @@ def build_justification(parsed_fields: dict | None, calculator_result: dict | No
       "formula_analysis": {...}        # injury cases only
     }
     """
-    pf = parsed_fields or {}
-    case_type_hint = str(pf.get("case_type") or (calculator_result or {}).get("case_type") or "").strip().lower() or None
+    pf = dict(parsed_fields or {})
+    cr = calculator_result or {}
+
+    # Fold in the itemised pecuniary-head values (medical expenses, pain & suffering,
+    # transportation, attender charges, consortium, etc.) from the calculator that has
+    # ALREADY been run on the frontend, when those fields are missing from
+    # parsed_fields. parsed_fields only carries the top-level inputs (age/income/
+    # disability/dependents/marital_status); the itemised heads live on
+    # calculator_result. Without this fold-in, Step 2 recomputes calc_total from an
+    # incomplete field set and can land on Rs. 0 even though the user has already run
+    # the calculator and is looking at a real, non-zero total on screen -- producing a
+    # contradictory verdict (e.g. "OVER/UNDER-COMPENSATED vs. a calculator estimate of
+    # Rs. 0" right after the on-screen calculator showed a matching, non-zero total).
+    # This does NOT trust cr["final_amount"] directly -- Step 2 below still always
+    # recomputes the total from these per-field inputs server-side.
+    _carry_over_fields = (
+        "medical_expenses", "future_medical_expenses", "pain_and_suffering",
+        "transportation", "special_diet", "attender_charges", "loss_of_income",
+        "consortium", "funeral_expenses", "loss_estate",
+    )
+    for _f in _carry_over_fields:
+        if _is_blank(pf.get(_f)) and not _is_blank(cr.get(_f)):
+            pf[_f] = cr.get(_f)
+
+    case_type_hint = str(pf.get("case_type") or cr.get("case_type") or "").strip().lower() or None
 
     # STEP 0
     resolved_fields, field_sources, reparsed_case_type = resolve_case_data(pf, ocr_text, case_type_hint)

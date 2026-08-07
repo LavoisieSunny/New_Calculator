@@ -684,6 +684,10 @@ async def prepare_pdf_chat_prompt(request: PDFChatRequest):
 
             "=== OUTPUT FORMAT ===\n\n"
 
+            "FORMATTING RULE: NEVER use Markdown headers (#, ##, ###, etc.) anywhere in "
+            "your response. Use **bold** (double asterisks) for the section labels shown "
+            "below exactly as written — do not prefix them with '#' characters.\n\n"
+
             "**Who Filed the Appeal:** "
             "[Claimant seeking enhancement / Insurance company seeking reduction/exoneration]\n\n"
 
@@ -701,6 +705,12 @@ async def prepare_pdf_chat_prompt(request: PDFChatRequest):
             "Under-Compensated or Over-Compensated. The tribunal total exactly matching the "
             "calculator total is, by definition, an adequate award on quantum, irrespective of "
             "who filed the appeal or what the grounds argue.\n"
+            "HARD RULE 3: if MATH RELATION: tribunal_lower, the Overall Verdict MUST be "
+            "UNDER-COMPENSATED. If MATH RELATION: tribunal_higher, the Overall Verdict MUST be "
+            "OVER-COMPENSATED. The aggregate verdict always follows the MATH RELATION direction "
+            "given above — it is a statement about the TOTAL, not about any single head. Never "
+            "flip the direction because one or two individual heads below look 'Low'; discuss "
+            "those heads in the Head-wise Analysis section instead, without changing this verdict.\n"
             "Reason: [Copy the COMPARISON sentence from PRECOMPUTED VERDICT verbatim. "
             "Then append any missed heads or liability grounds, written clearly and professionally.]\n\n"
 
