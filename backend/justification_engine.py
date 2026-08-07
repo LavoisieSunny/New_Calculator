@@ -746,6 +746,35 @@ def build_justification(parsed_fields: dict | None, calculator_result: dict | No
     calc_breakdown = resolve_calculator_total(resolved_fields, case_type)
     calc_total = calc_breakdown.get("final_amount", 0)
 
+    # STEP 2b -- guard against a false "tribunal_higher" / OVER-COMPENSATED verdict
+    # when calc_total is 0 only because the calculator inputs (age, income,
+    # disability, medical expenses, pain & suffering, etc.) were never entered/
+    # resolved for this case -- not because the calculator genuinely computed a
+    # zero-value claim. Comparing a real tribunal award against an empty
+    # calculator is a data-insufficiency case, not a quantum finding.
+    _relevant_calc_fields = _INJURY_FIELDS if case_type == "injury" else _DEATH_FIELDS
+    _has_any_calc_input = any(
+        not _is_blank(resolved_fields.get(f)) and safe_float(resolved_fields.get(f), 0.0) != 0.0
+        for f in _relevant_calc_fields
+    )
+    if (not calc_total or calc_total == 0) and not _has_any_calc_input:
+        return {
+            "status": "insufficient_data",
+            "message": (
+                "The calculator inputs for this case (age, income, disability, and the "
+                "pecuniary heads such as medical expenses, pain & suffering, "
+                "transportation, etc.) have not been entered on the workstation form, "
+                "so the calculator total is Rs. 0 and cannot be meaningfully compared "
+                "against the tribunal's award. Please fill in the calculator fields (or "
+                "click Autofill) before requesting a quantum justification."
+            ),
+            "case_type": case_type,
+            "tribunal_total": tribunal_total,
+            "calculator_total": calc_total,
+            "calculator_breakdown": calc_breakdown,
+            "field_sources": field_sources,
+        }
+
     if tribunal_total is None:
         return {
             "status": "insufficient_data",

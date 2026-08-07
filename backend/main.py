@@ -526,7 +526,7 @@ async def prepare_pdf_chat_prompt(request: PDFChatRequest):
             else: # tribunal_higher
                 precomputed_comparison = (
                     f"Tribunal awarded Rs. {tribunal_total:,.0f}, which is "
-                    f"Rs. {diff:,.0f} MORE than the calculator estimate of "
+                    f"Rs. {abs(diff):,.0f} MORE than the calculator estimate of "
                     f"Rs. {calc_total:,.0f}."
                 )
         # ─────────────────────────────────────────────────────────────────
