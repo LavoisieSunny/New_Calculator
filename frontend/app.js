@@ -1380,7 +1380,18 @@ document.addEventListener("DOMContentLoaded", () => {
                                 caseTypeSelect.value = detectedCaseType;
                                 caseTypeSelect.dispatchEvent(new Event("change"));
                                 updateEnhancementCheck(data);
-                                showToast(`Case PDF analyzed! Auto-detected ${detectedCaseType === "death" ? "Death" : "Injury"} Case. Click the 'Auto-fill Workstation Form' button below the enhancement section to populate the fields.`, "success");
+                                showToast(`Case PDF analyzed! Auto-filling workstation and running the calculator...`, "success");
+
+                                // Auto-run the full autofill pipeline right away -- the chatbot
+                                // must have real field + calculator data the moment it opens,
+                                // not depend on the person finding and clicking the Autofill button.
+                                let autofillSucceeded = false;
+                                if (currentOcrRawText && currentOcrRawText.length > 0) {
+                                    autofillSucceeded = await runAiRecovery(currentOcrRawText, data.track);
+                                }
+                                if (!autofillSucceeded) {
+                                    applyAllOcrSuggestions(data.suggestions, null, null, null, true, true);
+                                }
                             } else {
                                 showCaseTypeConfirmationPrompt(data, file, false);
                             }
@@ -1725,7 +1736,7 @@ This cannot be undone.`)) return;
         if (caseType && (caseType === "injury" || caseType === "death")) {
             caseTypeSelect.value = caseType;
             caseTypeSelect.dispatchEvent(new Event("change"));
-            applyAllOcrSuggestions(matchedFile.suggestions, null, null, null, true, false);
+            applyAllOcrSuggestions(matchedFile.suggestions, null, null, null, true, true);
             window.lastRawText = (matchedFile.raw_text || []).join("\n");
             switchTab("calculator");
             if (currentOcrRawText.length > 0) {
@@ -1822,7 +1833,7 @@ This cannot be undone.`)) return;
             if (isBatch) {
                 if (data.suggestions) {
                     data.suggestions.case_type = type;
-                    applyAllOcrSuggestions(data.suggestions, null, null, null, true, false);
+                    applyAllOcrSuggestions(data.suggestions, null, null, null, true, true);
                 }
                 switchTab("calculator");
                 if (currentOcrRawText.length > 0) {
@@ -1831,7 +1842,7 @@ This cannot be undone.`)) return;
             } else {
                 if (data.suggestions) {
                     data.suggestions.case_type = type;
-                    applyAllOcrSuggestions(data.suggestions, null, null, null, false, false);
+                    applyAllOcrSuggestions(data.suggestions, null, null, null, false, true);
                     updateEnhancementCheck(data);
                 }
                 showToast(`Form updated for ${type === "injury" ? "Injury" : "Death"} Case!`, "success");
@@ -4172,6 +4183,7 @@ This cannot be undone.`)) return;
                 tribunal_funeral: lastExtractedFields["funeral_expenses"] || "",
                 tribunal_estate: lastExtractedFields["loss_estate"] || "",
                 extracted_age: lastExtractedFields["age"] || "",
+                age_source: lastExtractedFields["age_source"] || "",
                 extracted_disability: lastExtractedFields["disability"] || "",
                 extracted_monthly_income: lastExtractedFields["monthly_income"] || "",
                 extracted_dependents: lastExtractedFields["dependents"] || ""
@@ -4403,12 +4415,12 @@ This cannot be undone.`)) return;
                         success = await runAiRecovery(currentOcrRawText, window.detectedTrack);
                     }
                     if (!success) {
-                        applyAllOcrSuggestions(data.suggestions, null, null, null, false, false);
+                        applyAllOcrSuggestions(data.suggestions, null, null, null, false, true);
                         showToast("AI refinement unavailable — filled from heuristic OCR extraction only. Please review all fields.", "warning");
                     }
                 } catch (err) {
                     console.error("Autofill click handler error:", err);
-                    applyAllOcrSuggestions(data.suggestions, null, null, null, false, false);
+                    applyAllOcrSuggestions(data.suggestions, null, null, null, false, true);
                     showToast("AI refinement unavailable — filled from heuristic OCR extraction only. Please review all fields.", "warning");
                 } finally {
                     setAutofillFieldsPending(false);

@@ -446,6 +446,13 @@ async def prepare_pdf_chat_prompt(request: PDFChatRequest):
                 f"[Current PDF Workstation OCR Text]:\n{ocr_for_llm}"
             )
     if request.parsed_fields:
+        age_source_note = ""
+        if not request.is_justify and request.parsed_fields.get("age_source"):
+            age_source_note = (
+                f" The 'age' field was extracted from: {request.parsed_fields['age_source']} "
+                "(highest-priority source — treat as authoritative over any other age figure "
+                "appearing elsewhere in the OCR text.)"
+            )
         workstation_blocks.append(
             "[Current PDF Workstation Parsed Fields — CALCULATOR INPUT VALUES ONLY. "
             "These reflect whatever is currently typed into the left-hand form and may "
@@ -456,7 +463,7 @@ async def prepare_pdf_chat_prompt(request: PDFChatRequest):
             "retrieved PDF context above, not from this block. Only use this block when "
             "the question is specifically about the calculator's current inputs or "
             "outputs.]:\n"
-            f"{json.dumps(request.parsed_fields, indent=2)}"
+            f"{json.dumps(request.parsed_fields, indent=2)}" + age_source_note
         )
     if request.calculator_result:
         workstation_blocks.append(f"[Current Deterministic Calculator Math Output]:\n{json.dumps(request.calculator_result, indent=2)}")

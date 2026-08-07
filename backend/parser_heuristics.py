@@ -3378,41 +3378,41 @@ def parse_extracted_text(text_lines, case_type=None):
             sub_fields.sort(key=lambda x: acc_block_text.find(x[0]))
             block_place = ", ".join([v for l, v in sub_fields])
 
-    # 2. Deceased block
+    # 2. Deceased/Injured block
     deceased_match = re.search(
-        r'\b(?:NAME\s+AND\s+DESCRIPTION\s+OF\s+THE\s+(?:INJURED/)?DECEASED|DECEASED\s+PERSON|DESCRIPTION\s+OF\s+DECEASED)\b.*?(?=\bIN\s+FATAL\s+ACCIDENT\b|\bDETAILS\b|\(\s*[I|V|X|L|C|D|M]+\s*\)|$)',
+        r'\b(?:NAME\s+AND\s+DESCRIPTION\s+OF\s+THE\s+(?:INJURED/)?DECEASED(?:(?:\s+PERSON)?)?|DECEASED\s+PERSON|DESCRIPTION\s+OF\s+DECEASED|INJURED\s+PERSON|NAME\s+AND\s+DESCRIPTION\s+OF\s+THE\s+INJURED\s+PERSON)\b.*?(?=\bIN\s+FATAL\s+ACCIDENT\b|\bDETAILS\b|\(\s*[I|V|X|L|C|D|M]+\s*\)|$)',
         full_text,
         re.IGNORECASE | re.DOTALL
     )
     if deceased_match:
         dec_block_text = deceased_match.group(0)
         
-        # Deceased Name
-        name_match = re.search(r'\b(?:1\.?\s*Name)\s*[:\-;\u2022]\s*([^\n]+)', dec_block_text, re.IGNORECASE)
+        # Deceased/Injured Name
+        name_match = re.search(r'\b(?:(?:(?:1|a)\.?\s*|\(\s*[1a]\s*\)\s*)?Name)\s*[:\-;\u2022]\s*([^\n]+)', dec_block_text, re.IGNORECASE)
         if name_match:
             cand_name = clean_legal_name(name_match.group(1).strip())
             if cand_name:
                 block_dec_name = cand_name.title()
             
         # Age
-        age_match = re.search(r'\b(?:2\.?\s*Age)\s*[:\-;\u2022]\s*(\d{1,2})\b', dec_block_text, re.IGNORECASE)
+        age_match = re.search(r'\b(?:(?:(?:2|b)\.?\s*|\(\s*[2b]\s*\)\s*)?Age)\s*[:\-;\u2022]\s*(\d{1,2})\b', dec_block_text, re.IGNORECASE)
         if age_match:
             block_age = int(age_match.group(1))
             
         # Father / Husband Name
-        fh_match = re.search(r'\b(?:3\.?\s*(?:Father|Husband)(?:’|\')?s?\s*Name)\s*[:\-;\u2022]\s*([^\n]+)', dec_block_text, re.IGNORECASE)
+        fh_match = re.search(r'\b(?:(?:(?:3|c)\.?\s*|\(\s*[3c]\s*\)\s*)?(?:Father|Husband)(?:’|\')?s?\s*Name)\s*[:\-;\u2022]\s*([^\n]+)', dec_block_text, re.IGNORECASE)
         if fh_match:
             cand_fh = clean_legal_name(fh_match.group(1).strip())
             if cand_fh:
                 block_father_name = cand_fh.title()
 
         # Occupation
-        occ_match = re.search(r'\b(?:4\.?\s*Occupation)\s*[:\-;\u2022]\s*([^\n]+)', dec_block_text, re.IGNORECASE)
+        occ_match = re.search(r'\b(?:(?:(?:4|d)\.?\s*|\(\s*[4d]\s*\)\s*)?Occupation)\s*[:\-;\u2022]\s*([^\n]+)', dec_block_text, re.IGNORECASE)
         if occ_match:
             block_occupation = occ_match.group(1).strip()
             
         # Claimed Daily Wage
-        earning_match = re.search(r'\b(?:5\.?\s*Earning)\s*[:\-;\u2022]\s*([^\n]+)', dec_block_text, re.IGNORECASE)
+        earning_match = re.search(r'\b(?:(?:(?:5|e)\.?\s*|\(\s*[5e]\s*\)\s*)?Earning)\s*[:\-;\u2022]\s*([^\n]+)', dec_block_text, re.IGNORECASE)
         if earning_match:
             block_earning_daily = earning_match.group(1).strip()
 
