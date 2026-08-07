@@ -506,12 +506,16 @@ async def prepare_pdf_chat_prompt(request: PDFChatRequest):
             
             if math_relation == "equal":
                 precomputed_comparison = (
-                    f"Tribunal awarded Rs. {tribunal_total:,.0f} which EQUALS "
-                    f"the calculator estimate of Rs. {calc_total:,.0f}. "
-                    f"If CLAIMANT filed the appeal: verdict is UNDER-COMPENSATED "
-                    f"(specific heads omitted in grounds of appeal). "
-                    f"If INSURANCE COMPANY filed: verdict is ADEQUATE on quantum "
-                    f"(this may be a liability/exoneration appeal — see grounds)."
+                    f"The tribunal awarded Rs. {tribunal_total:,.0f}, which matches "
+                    f"the calculator's estimated total of Rs. {calc_total:,.0f}. "
+                    f"On quantum, the award is therefore ADEQUATE — the total sum awarded "
+                    f"is neither less than nor more than what the calculator computes as due. "
+                    f"HARD RULE: the Overall Verdict MUST be written as ADEQUATE whenever the "
+                    f"tribunal total equals the calculator total, regardless of who filed the "
+                    f"appeal — never write UNDER-COMPENSATED or OVER-COMPENSATED here. "
+                    f"If the grounds of appeal still raise specific missed heads or a liability "
+                    f"dispute, note those separately under Missed Heads / Liability Grounds "
+                    f"below, without changing the ADEQUATE verdict on overall quantum."
                 )
             elif math_relation == "tribunal_lower":
                 precomputed_comparison = (
@@ -688,13 +692,17 @@ async def prepare_pdf_chat_prompt(request: PDFChatRequest):
 
             "**Overall Verdict:** [UNDER-COMPENSATED / ADEQUATE / OVER-COMPENSATED / "
             "LIABILITY DISPUTE (quantum not in dispute) / QUANTUM NOT DETERMINABLE (insufficient data)]\n"
-            "HARD RULE: if the '=== PRECOMPUTED VERDICT ===' block above shows MATH RELATION: unknown, "
+            "HARD RULE 1: if the '=== PRECOMPUTED VERDICT ===' block above shows MATH RELATION: unknown, "
             "you MUST use 'QUANTUM NOT DETERMINABLE (insufficient data)' here — never Adequate, "
             "Under-Compensated, or Over-Compensated, even if some individual heads above happen to match. "
             "A verdict of 'Adequate' is a factual claim that the total awarded is not less than what is "
             "due; you cannot make that claim without knowing both totals.\n"
+            "HARD RULE 2: if MATH RELATION: equal, you MUST use 'ADEQUATE' here — never "
+            "Under-Compensated or Over-Compensated. The tribunal total exactly matching the "
+            "calculator total is, by definition, an adequate award on quantum, irrespective of "
+            "who filed the appeal or what the grounds argue.\n"
             "Reason: [Copy the COMPARISON sentence from PRECOMPUTED VERDICT verbatim. "
-            "Then append any missed heads or liability grounds.]\n\n"
+            "Then append any missed heads or liability grounds, written clearly and professionally.]\n\n"
 
             "**Head-wise Analysis (Awarded Heads):**\n"
             + head_analysis_hint +
