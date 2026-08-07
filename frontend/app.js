@@ -931,8 +931,15 @@ document.addEventListener("DOMContentLoaded", () => {
         futureTypeSelect.addEventListener("change", handleRecalculateDefaultProspects);
     }
 
-    dobInput.addEventListener("change", updateLiveCalculations);
-    doaInput.addEventListener("change", updateLiveCalculations);
+    function syncAgeFromDob() {
+        const computed = calculateAge(dobInput.value, doaInput.value);
+        if (computed !== null) {
+            ageInput.value = computed;
+        }
+    }
+
+    dobInput.addEventListener("change", () => { syncAgeFromDob(); updateLiveCalculations(); });
+    doaInput.addEventListener("change", () => { syncAgeFromDob(); updateLiveCalculations(); });
     maritalStatusSelect.addEventListener("change", updateLiveCalculations);
     maritalStatusSelect.addEventListener("change", updateDependentsVisibility);
     dependentsInput.addEventListener("input", updateLiveCalculations);
@@ -4170,7 +4177,7 @@ This cannot be undone.`)) return;
                 extracted_dependents: lastExtractedFields["dependents"] || ""
             };
 
-            const calculatorResult = {
+            const calculatorResult = currentCalculationAmount > 0 ? {
                 case_type: caseType,
                 final_amount: currentCalculationAmount,
                 total_compensation: currentCalculationAmount,
@@ -4190,7 +4197,7 @@ This cannot be undone.`)) return;
                 loss_estate: currentCalculationBreakdown.loss_estate || 0,
                 deduction_percentage: currentCalculationBreakdown.deduction_percentage || 0,
                 future_prospect_percentage: currentCalculationBreakdown.future_prospect_percentage || 0
-            };
+            } : null;
 
             // Identify current active PDF filename
             let filename = null;

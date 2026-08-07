@@ -309,11 +309,7 @@ async def prepare_pdf_chat_prompt(request: PDFChatRequest):
     except (TypeError, ValueError):
         calculated_compensation = 0.0
         
-    has_populated_calculator = False
-    if request.calculator_result and calculated_compensation > 0:
-        has_populated_calculator = True
-    elif pf.get("monthly_income") and float(pf.get("monthly_income")) > 0:
-        has_populated_calculator = True
+    has_populated_calculator = calculated_compensation > 0
 
     if has_populated_calculator:
         calculator_instruction_block = (

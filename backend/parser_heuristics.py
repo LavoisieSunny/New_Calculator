@@ -5371,6 +5371,8 @@ def parse_extracted_text(text_lines, case_type=None):
                 dob_val = datetime.strptime(date_of_birth, "%d-%m-%Y")
                 doa_val = datetime.strptime(date_of_accident, "%d-%m-%Y")
                 age = doa_val.year - dob_val.year
+                if (doa_val.month, doa_val.day) < (dob_val.month, dob_val.day):
+                    age -= 1
                 conf_age = 0.80
                 sec_age = "raw_ocr"
                 page_age = 1
