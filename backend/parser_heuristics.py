@@ -3149,6 +3149,32 @@ def extract_appeal_memo_fatal_particulars(full_text: str) -> dict:
             if payable_raw and payable_raw.lower().rstrip(".") != "nil":
                 result["payable_by"] = payable_raw
 
+    # ---- Locate the "In Non-Fatal accident Cases" lettered block (injury cases) ----
+    nonfatal_match = re.search(
+        r'in\s+non[\-\s]?fatal\s+accident\s+cases\s*:?(.*?)'
+        r'(?=details\s+of\s+interest|\(?\s*VI\s*\)?|\Z)',
+        full_text, re.IGNORECASE | re.DOTALL
+    )
+    if nonfatal_match:
+        nf_text = nonfatal_match.group(1)
+        nf_items = {k.lower(): v.strip() for k, v in
+                    re.findall(r'\(([a-fA-F])\)\s*(.*?)(?=\([a-fA-F]\)|\Z)', nf_text, re.DOTALL)}
+
+        if "b" in nf_items:
+            m = re.search(r'(Nil|Rs\.?\s*[\d,]+(?:\.\d+)?\s*/?-?)', nf_items["b"], re.IGNORECASE)
+            if m:
+                result["medical_expenses_awarded"] = _amt(m.group(1))
+
+        if "d" in nf_items:
+            m = re.search(r'(Nil|Rs\.?\s*[\d,]+(?:\.\d+)?\s*/?-?)', nf_items["d"], re.IGNORECASE)
+            if m:
+                result["general_damages_awarded"] = _amt(m.group(1))
+
+        if "e" in nf_items:
+            m = re.search(r'(Nil|Rs\.?\s*[\d,]+(?:\.\d+)?\s*/?-?)', nf_items["e"], re.IGNORECASE)
+            if m and "compensation_awarded" not in result:
+                result["compensation_awarded"] = _amt(m.group(1))
+
     # ---- Top summary / case metadata fields ----
     m = re.search(r'case\s*(?:no\.?|number)\s*[:\-]?\s*([^\n]+)', full_text, re.IGNORECASE)
     if m:
