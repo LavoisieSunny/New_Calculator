@@ -40,6 +40,7 @@ document.addEventListener("DOMContentLoaded", () => {
     let currentCalculationAmount = 0;
     let currentCalculationBreakdown = {};
     let currentOcrRawText = []; // Recover raw text from the last successful single OCR
+    window.autofillReadyPromise = Promise.resolve();
     let lastAiRecoverySignature = null;
     let lastAiRecoveryResult = null;
     let currentCaseSessionId = null;
@@ -1398,12 +1399,14 @@ document.addEventListener("DOMContentLoaded", () => {
                                     // safe to auto-fill and auto-calculate.
                                     showToast(`Case PDF analyzed! Auto-filling workstation and running the calculator... (AI-generated — please verify)`, "success");
                                     let autofillSucceeded = false;
-                                    if (currentOcrRawText && currentOcrRawText.length > 0) {
-                                        autofillSucceeded = await runAiRecovery(currentOcrRawText, data.track);
-                                    }
-                                    if (!autofillSucceeded) {
-                                        applyAllOcrSuggestions(data.suggestions, null, null, null, true, true);
-                                    }
+                                    window.autofillReadyPromise = (async () => {
+                                        if (currentOcrRawText && currentOcrRawText.length > 0) {
+                                            autofillSucceeded = await runAiRecovery(currentOcrRawText, data.track);
+                                        }
+                                        if (!autofillSucceeded) {
+                                            applyAllOcrSuggestions(data.suggestions, null, null, null, true, true);
+                                        }
+                                    })();
                                 }
                             } else {
                                 showCaseTypeConfirmationPrompt(data, file, false);
@@ -4165,6 +4168,7 @@ This cannot be undone.`)) return;
     }
 
     async function handleAssistantChatSend(displayLabel = null) {
+        await window.autofillReadyPromise;
         const query = assistantChatInput.value.trim();
         if (!query) return;
 

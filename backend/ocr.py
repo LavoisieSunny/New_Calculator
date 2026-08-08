@@ -3388,21 +3388,43 @@ async def ai_recover_fields(request: AIRecoverRequest):
         for field in merge_fields:
             heur_val = heuristics_data.get(field)
             llm_val = recovered_data.get(field)
-            
-            # Check if LLM missed it or has very low confidence
+
             llm_conf_obj = recovered_data.get("confidence_scores", {}).get(field)
             llm_conf = 1.0
             if isinstance(llm_conf_obj, dict):
                 llm_conf = llm_conf_obj.get("confidence", 1.0)
             elif llm_conf_obj is not None:
                 llm_conf = float(llm_conf_obj)
-                
-            if (llm_val is None or llm_val == "" or llm_val == 0 or llm_conf < 0.6) and (heur_val is not None and heur_val != "" and heur_val != 0):
-                logger.info(f"[AI-RECOVER-MERGE] Merging heuristic value for '{field}': '{llm_val}' (conf: {llm_conf}) -> '{heur_val}'")
+
+            heur_conf_obj = heuristics_data.get("confidence_scores", {}).get(field)
+            heur_conf = 0.0
+            if isinstance(heur_conf_obj, dict):
+                heur_conf = heur_conf_obj.get("confidence", 0.0)
+            elif heur_conf_obj is not None:
+                heur_conf = float(heur_conf_obj)
+
+            heur_is_present = heur_val is not None and heur_val != "" and heur_val != 0
+            llm_is_weak = (llm_val is None or llm_val == "" or llm_val == 0 or llm_conf < 0.6)
+
+            # A high-confidence heuristic hit (e.g. the Particulars Block in the Memo
+            # of Appeal, conf 0.99) outranks the LLM even when the LLM claims high
+            # confidence -- an LLM's self-reported confidence is not a reliable
+            # signal that it read the correct occurrence of a field that repeats
+            # elsewhere in the document (e.g. a stale age in an earlier tribunal order).
+            heur_is_high_confidence = heur_conf >= 0.9
+
+            if heur_is_present and (llm_is_weak or heur_is_high_confidence):
+                if not llm_is_weak:
+                    logger.info(
+                        f"[AI-RECOVER-MERGE] Overriding LLM value for '{field}': "
+                        f"LLM said '{llm_val}' (conf {llm_conf}) but heuristic found "
+                        f"'{heur_val}' from a high-confidence source (conf {heur_conf}) -- using heuristic."
+                    )
+                else:
+                    logger.info(f"[AI-RECOVER-MERGE] Merging heuristic value for '{field}': '{llm_val}' (conf: {llm_conf}) -> '{heur_val}'")
                 recovered_data[field] = heur_val
                 if "confidence_scores" not in recovered_data:
                     recovered_data["confidence_scores"] = {}
-                heur_conf_obj = heuristics_data.get("confidence_scores", {}).get(field)
                 if heur_conf_obj:
                     recovered_data["confidence_scores"][field] = heur_conf_obj
                 else:
