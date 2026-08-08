@@ -860,6 +860,20 @@ async def prepare_pdf_chat_prompt(request: PDFChatRequest):
     elif is_summary_q:
         system_instruction += f"\n{case_summary_instruction}"
 
+    if not request.is_justify and request.parsed_fields.get("age_source"):
+        system_instruction += (
+            f"\n\nHARD RULE — AGE: The claimant's age is exactly "
+            f"{request.parsed_fields.get('age')}, extracted from "
+            f"{request.parsed_fields['age_source']} (the highest-priority source). "
+            f"You MUST use this exact number every time you state an age anywhere in "
+            f"your response — in bullet points, in narrative prose (e.g. \"a "
+            f"{request.parsed_fields.get('age')}-year-old\"), and in any summary line. "
+            f"Never write a different age number anywhere in the response, even if a "
+            f"different age appears elsewhere in the source document (e.g. an earlier "
+            f"tribunal order) — mention that only explicitly as a separate historical fact, "
+            f"clearly labeled, never as the claimant's current age."
+        )
+
     user_prompt = (
         f"{case_facts_summary}\n"
         f"Context:\n{chunks_combined}\n\n"
