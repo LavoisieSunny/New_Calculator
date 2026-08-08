@@ -3161,17 +3161,17 @@ def extract_appeal_memo_fatal_particulars(full_text: str) -> dict:
                     re.findall(r'\(([a-fA-F])\)\s*(.*?)(?=\([a-fA-F]\)|\Z)', nf_text, re.DOTALL)}
 
         if "b" in nf_items:
-            m = re.search(r'(Nil|Rs\.?\s*[\d,]+(?:\.\d+)?\s*/?-?)', nf_items["b"], re.IGNORECASE)
+            m = re.search(r'(Nil|(?:Rs\.?\s*)?[\d,]+(?:\.\d+)?\s*/?-?)', nf_items["b"], re.IGNORECASE)
             if m:
                 result["medical_expenses_awarded"] = _amt(m.group(1))
 
         if "d" in nf_items:
-            m = re.search(r'(Nil|Rs\.?\s*[\d,]+(?:\.\d+)?\s*/?-?)', nf_items["d"], re.IGNORECASE)
+            m = re.search(r'(Nil|(?:Rs\.?\s*)?[\d,]+(?:\.\d+)?\s*/?-?)', nf_items["d"], re.IGNORECASE)
             if m:
                 result["general_damages_awarded"] = _amt(m.group(1))
 
         if "e" in nf_items:
-            m = re.search(r'(Nil|Rs\.?\s*[\d,]+(?:\.\d+)?\s*/?-?)', nf_items["e"], re.IGNORECASE)
+            m = re.search(r'(Nil|(?:Rs\.?\s*)?[\d,]+(?:\.\d+)?\s*/?-?)', nf_items["e"], re.IGNORECASE)
             if m and "compensation_awarded" not in result:
                 result["compensation_awarded"] = _amt(m.group(1))
 
@@ -4069,6 +4069,22 @@ def parse_extracted_text(text_lines, case_type=None):
             "raw_captured": deceased_occ_match.group(1),
             "final_extracted": occupation
         }
+
+    # 5.b Address only from claimant/petition section
+    address_patterns = [
+        r'\b(?:address|resident\s+of|r/o|residing\s+at)\s*[:\-]\s*(.*)',
+        r'\br/o\b\s*(.*)',
+        r'\bresident\s+of\b\s*(.*)',
+        r'\baddress\b\s*[:\-]?\s*(.*)',
+    ]
+    address, conf_address, sec_address, page_address = contextual_extract(
+        address_patterns, sections,
+        [("claimant_section", 90), ("facts_section", 85), ("memo_of_appeal_section", 80)],
+        default_val="", type_cast=str, field_name="address",
+        debug_info=parser_debug, pages=pages,
+        sections_metadata=sections_metadata, page_importances=page_importances
+    )
+    method_address = "Section-Aware Contextual Regex"
 
     # 6. Place of accident
     if block_place:
@@ -6052,6 +6068,7 @@ def parse_extracted_text(text_lines, case_type=None):
         "future_type": future_type,
         "award_amount": total_compensation,
         "place_of_accident": place_of_accident,
+        "address": address,
         
         "deceased_name": deceased_name,
         "claimant_name": claimant_name,
@@ -6262,6 +6279,14 @@ def parse_extracted_text(text_lines, case_type=None):
                 "source_section": sec_place_of_accident,
                 "source_page": page_place_of_accident,
                 "extraction_method": method_place_of_accident
+            },
+            "address": {
+                "value": address,
+                "confidence": conf_address,
+                "source": sec_address,
+                "source_section": sec_address,
+                "source_page": page_address,
+                "extraction_method": method_address
             },
             "disability": {
                 "value": disability,

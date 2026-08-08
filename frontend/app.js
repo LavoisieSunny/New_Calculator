@@ -1376,21 +1376,34 @@ document.addEventListener("DOMContentLoaded", () => {
 
 
                             const detectedCaseType = data.case_type;
+                            const detectedTrack = data.track || "high_court";
                             if (detectedCaseType && (detectedCaseType === "injury" || detectedCaseType === "death")) {
                                 caseTypeSelect.value = detectedCaseType;
                                 caseTypeSelect.dispatchEvent(new Event("change"));
                                 updateEnhancementCheck(data);
-                                showToast(`Case PDF analyzed! Auto-filling workstation and running the calculator...`, "success");
 
-                                // Auto-run the full autofill pipeline right away -- the chatbot
-                                // must have real field + calculator data the moment it opens,
-                                // not depend on the person finding and clicking the Autofill button.
-                                let autofillSucceeded = false;
-                                if (currentOcrRawText && currentOcrRawText.length > 0) {
-                                    autofillSucceeded = await runAiRecovery(currentOcrRawText, data.track);
-                                }
-                                if (!autofillSucceeded) {
-                                    applyAllOcrSuggestions(data.suggestions, null, null, null, true, true);
+                                if (detectedTrack === "lower_court" && detectedCaseType === "injury") {
+                                    // Lower-court (tribunal-level) injury judgments don't follow a
+                                    // reliable structured format the way death cases or High Court
+                                    // Memos do -- auto-extraction is too unsafe to trust here.
+                                    // Do NOT autofill. Ask the user to fill the workstation manually.
+                                    showToast(
+                                        `This looks like a lower-court injury judgment. Auto-fill isn't reliable for this document type -- please fill the workstation fields in manually.`,
+                                        "warning",
+                                        8000
+                                    );
+                                } else {
+                                    // High Court appeals (any case type) and lower-court death cases
+                                    // (which do follow a reliable structured particulars block) are
+                                    // safe to auto-fill and auto-calculate.
+                                    showToast(`Case PDF analyzed! Auto-filling workstation and running the calculator... (AI-generated — please verify)`, "success");
+                                    let autofillSucceeded = false;
+                                    if (currentOcrRawText && currentOcrRawText.length > 0) {
+                                        autofillSucceeded = await runAiRecovery(currentOcrRawText, data.track);
+                                    }
+                                    if (!autofillSucceeded) {
+                                        applyAllOcrSuggestions(data.suggestions, null, null, null, true, true);
+                                    }
                                 }
                             } else {
                                 showCaseTypeConfirmationPrompt(data, file, false);
@@ -2916,9 +2929,9 @@ This cannot be undone.`)) return;
                     marital_status: maritalStatusSelect.value || "married",
                     future_type: parseInt(futureTypeSelect?.value || 2),
                     future_prospect: (() => { const fp = document.getElementById("future-prospect"); const v = fp ? fp.value : null; return (v !== null && v !== "" && v !== "0") ? parseFloat(v) : null; })(),
-                    consortium: parseFloat(document.getElementById("consortium")?.value || 48400),
-                    funeral_expenses: parseFloat(document.getElementById("funeral-expenses")?.value || 18150),
-                    loss_estate: parseFloat(document.getElementById("loss-estate")?.value || 18150),
+                    consortium: document.getElementById("consortium")?.value ? parseFloat(document.getElementById("consortium").value) : null,
+                    funeral_expenses: document.getElementById("funeral-expenses")?.value ? parseFloat(document.getElementById("funeral-expenses").value) : null,
+                    loss_estate: document.getElementById("loss-estate")?.value ? parseFloat(document.getElementById("loss-estate").value) : null,
                     disability: parseFloat(document.getElementById("disability")?.value || 0)
                 },
                 calculated_amount: currentCalculationAmount
@@ -3102,9 +3115,9 @@ This cannot be undone.`)) return;
             marital_status: maritalStatusSelect.value || "married",
             future_type: Number(futureTypeSelect?.value || 2),
             future_prospect: (() => { const fp = document.getElementById("future-prospect"); const v = fp ? fp.value : null; return (v !== null && v !== "" && v !== "0") ? Number(v) : null; })(),
-            consortium: Number(document.getElementById("consortium")?.value || 48400),
-            funeral_expenses: Number(document.getElementById("funeral-expenses")?.value || 18150),
-            loss_estate: Number(document.getElementById("loss-estate")?.value || 18150),
+            consortium: document.getElementById("consortium")?.value ? Number(document.getElementById("consortium").value) : null,
+            funeral_expenses: document.getElementById("funeral-expenses")?.value ? Number(document.getElementById("funeral-expenses").value) : null,
+            loss_estate: document.getElementById("loss-estate")?.value ? Number(document.getElementById("loss-estate").value) : null,
 
             // Consortium sub-heads read from form
             conlum: Number(document.getElementById("conlum")?.value || 0),

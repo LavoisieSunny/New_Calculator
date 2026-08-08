@@ -389,7 +389,9 @@ async def prepare_pdf_chat_prompt(request: PDFChatRequest):
     for idx, res in enumerate(search_results):
         text_block = res.get("text", "").strip()
         filename = res.get("filename", "unknown")
-        context_blocks.append(f"[Context {idx+1} from {filename}]:\n{text_block}")
+        meta = res.get("metadata", {}) or {}
+        page_no = meta.get("page_number", "?")
+        context_blocks.append(f"[Context {idx+1} — {filename}, Page {page_no}]:\n{text_block}")
         
         precedents.append({
             "filename": filename,
@@ -449,9 +451,15 @@ async def prepare_pdf_chat_prompt(request: PDFChatRequest):
         age_source_note = ""
         if not request.is_justify and request.parsed_fields.get("age_source"):
             age_source_note = (
-                f" The 'age' field was extracted from: {request.parsed_fields['age_source']} "
-                "(highest-priority source — treat as authoritative over any other age figure "
-                "appearing elsewhere in the OCR text.)"
+                f" EXCEPTION — AGE OVERRIDE: the 'age' value above "
+                f"({request.parsed_fields.get('age')}) was extracted from "
+                f"{request.parsed_fields['age_source']}, the highest-priority, current-appeal-stage "
+                "source. This is the claimant's authoritative age — use it in ALL answers, including "
+                "case summaries and factual questions, even though the rule above says to answer "
+                "factual questions from the OCR text. If a different age for the same person appears "
+                "elsewhere in the OCR text (e.g. an earlier tribunal order), do NOT report it as the "
+                "claimant's age — mention it only if explicitly asked what an earlier document said, "
+                "and label it clearly as such (e.g. \"the 2025 tribunal order describes her as 12 at that time\")."
             )
         workstation_blocks.append(
             "[Current PDF Workstation Parsed Fields — CALCULATOR INPUT VALUES ONLY. "
@@ -461,9 +469,9 @@ async def prepare_pdf_chat_prompt(request: PDFChatRequest):
             "case (e.g. 'what disability percentage does the judgment mention', "
             "'what medical expenses were claimed'), you MUST answer from the OCR text / "
             "retrieved PDF context above, not from this block. Only use this block when "
-            "the question is specifically about the calculator's current inputs or "
-            "outputs.]:\n"
-            f"{json.dumps(request.parsed_fields, indent=2)}" + age_source_note
+            "the question is specifically about the calculator's current inputs or outputs."
+            + age_source_note + "]:\n"
+            f"{json.dumps(request.parsed_fields, indent=2)}"
         )
     if request.calculator_result:
         workstation_blocks.append(f"[Current Deterministic Calculator Math Output]:\n{json.dumps(request.calculator_result, indent=2)}")
@@ -793,6 +801,10 @@ async def prepare_pdf_chat_prompt(request: PDFChatRequest):
         "1. Use ONLY the supplied context (Retrieved Precedents and active Workstation details).\n"
         "2. Do NOT invent or hallucinate legal facts, precedents, or claims metrics.\n"
         "3. If the context does not contain the answer, clearly state that the information is missing.\n\n"
+        "CITATION RULE: Every factual claim you make must end with a page reference in the "
+        "form (Page N), taken exactly from the '[Context N — filename, Page N]' labels above. "
+        "Do not invent a page number if none is shown for that piece of text — in that case, "
+        "write (page not available) instead.\n\n"
         "=== FACTUAL QUESTIONS ABOUT THE DOCUMENT (STRICT RULE) ===\n"
         "When the user asks what the PDF/document/judgment states (age, disability %, income, etc.),\n"
         "you MAY use the 'extracted_age', 'extracted_disability', 'extracted_monthly_income',\n"
@@ -950,13 +962,23 @@ async def chat_with_pdf_stream(request: PDFChatRequest):
                 expected = pf.get(field)
                 if expected in (None, "", 0):
                     continue
-                m = re.search(rf"{label}\D{{0,15}}(\d[\d,]*)", full_response, re.IGNORECASE)
-                if m and str(int(float(str(expected)))) not in m.group(1).replace(",", ""):
-                    logger.warning(f"[CONSISTENCY-CHECK] LLM stream said {label}={m.group(1)} but extraction says {expected} — flagging")
-                    extra_msg += (f"\n\n*(Note: the document parser extracted {label} = {expected}; "
-                                  f"please verify against the original PDF if this differs above.)*")
+                m = re.search(
+                    rf"{label}\D{{0,15}}(\d[\d,]*)|(\d[\d,]*)\s*[-\s]?\s*(?:years?[-\s]?old|वर्षीय|यर्स)",
+                    full_response, re.IGNORECASE
+                )
+                if m:
+                    matched_num = m.group(1) or m.group(2)
+                    if matched_num and str(int(float(str(expected)))) not in matched_num.replace(",", ""):
+                        logger.warning(f"[CONSISTENCY-CHECK] LLM stream said {label}={matched_num} but extraction says {expected} — flagging")
+                        extra_msg += (f"\n\n*(Note: the document parser extracted {label} = {expected}; "
+                                      f"please verify against the original PDF if this differs above.)*")
             if extra_msg:
                 yield json.dumps({"message": {"content": extra_msg}}) + "\n"
+            DISCLAIMER = (
+                "\n\n---\n*This response was generated through AI-based judicial document "
+                "analysis and may vary — please refer to the original PDF for verification.*"
+            )
+            yield json.dumps({"message": {"content": DISCLAIMER}}) + "\n"
 
         return StreamingResponse(event_generator(), media_type="text/event-stream")
     except Exception as e:
