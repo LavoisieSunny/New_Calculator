@@ -92,6 +92,21 @@ _INJURY_FIELDS = [
     "coliti", "misex", "loamiti", "lopmarri", "loexlife", "loveaff", "lossofenjoy",
 ]
 
+# Subset of the above that actually contributes a rupee amount to final_amount.
+# "age"/"disability"/"dependents" alone are context, not money -- they must not
+# by themselves satisfy the STEP 2b "do we have enough to compare" guard.
+_INJURY_MONEY_FIELDS = [
+    "monthly_income", "medical_expenses", "future_medical_expenses",
+    "pain_and_suffering", "transportation", "special_diet", "attender_charges",
+    "loss_of_income", "coliti", "misex", "loamiti", "lopmarri", "loexlife",
+    "loveaff", "lossofenjoy",
+]
+_DEATH_MONEY_FIELDS = [
+    "monthly_income", "consortium", "funeral_expenses", "loss_estate",
+    "medical_expenses", "conlum", "conspo", "conpar", "conchil", "conwif",
+    "conmo", "confath", "conhus", "conbro", "consis",
+]
+
 
 def resolve_case_data(parsed_fields: dict | None, ocr_text: str | None, case_type_hint: str | None = None):
     """
@@ -775,7 +790,7 @@ def build_justification(parsed_fields: dict | None, calculator_result: dict | No
     # resolved for this case -- not because the calculator genuinely computed a
     # zero-value claim. Comparing a real tribunal award against an empty
     # calculator is a data-insufficiency case, not a quantum finding.
-    _relevant_calc_fields = _INJURY_FIELDS if case_type == "injury" else _DEATH_FIELDS
+    _relevant_calc_fields = _INJURY_MONEY_FIELDS if case_type == "injury" else _DEATH_MONEY_FIELDS
     _has_any_calc_input = any(
         not _is_blank(resolved_fields.get(f)) and safe_float(resolved_fields.get(f), 0.0) != 0.0
         for f in _relevant_calc_fields
@@ -784,12 +799,15 @@ def build_justification(parsed_fields: dict | None, calculator_result: dict | No
         return {
             "status": "insufficient_data",
             "message": (
-                "The calculator inputs for this case (age, income, disability, and the "
-                "pecuniary heads such as medical expenses, pain & suffering, "
-                "transportation, etc.) have not been entered on the workstation form, "
-                "so the calculator total is Rs. 0 and cannot be meaningfully compared "
-                "against the tribunal's award. Please fill in the calculator fields (or "
-                "click Autofill) before requesting a quantum justification."
+                f"The tribunal awarded Rs. {tribunal_total:,.0f}" if tribunal_total else "The tribunal award amount"
+            ) + (
+                ", but the calculator's money-driving inputs (monthly income, medical expenses, "
+                "pain & suffering, transportation, attendant charges, etc.) have not been entered "
+                "on the workstation form for this session, so no comparable calculator estimate "
+                "exists yet — the calculator total of Rs. 0 does NOT mean the award is over- or "
+                "under-compensated, it means no comparison has been run. Please fill in the "
+                "calculator's pecuniary fields (or click Autofill) before requesting a quantum "
+                "justification."
             ),
             "case_type": case_type,
             "tribunal_total": tribunal_total,
