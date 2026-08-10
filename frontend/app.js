@@ -1025,7 +1025,7 @@ document.addEventListener("DOMContentLoaded", () => {
         }
         const hint = document.getElementById("case-documents-hint");
         if (hint) {
-            hint.textContent = collapsed ? "Click to drop down" : "Click to drop up";
+            hint.innerHTML = collapsed ? '<i class="fa-solid fa-caret-down"></i>' : '<i class="fa-solid fa-caret-up"></i>';
         }
     }
 
@@ -1072,7 +1072,7 @@ document.addEventListener("DOMContentLoaded", () => {
         }
         const hint = document.getElementById("supporting-docs-hint");
         if (hint) {
-            hint.textContent = collapsed ? "Click to drop down" : "Click to drop up";
+            hint.innerHTML = collapsed ? '<i class="fa-solid fa-caret-down"></i>' : '<i class="fa-solid fa-caret-up"></i>';
         }
     }
 
