@@ -1382,32 +1382,7 @@ document.addEventListener("DOMContentLoaded", () => {
                                 caseTypeSelect.value = detectedCaseType;
                                 caseTypeSelect.dispatchEvent(new Event("change"));
                                 updateEnhancementCheck(data);
-
-                                if (detectedTrack === "lower_court" && detectedCaseType === "injury") {
-                                    // Lower-court (tribunal-level) injury judgments don't follow a
-                                    // reliable structured format the way death cases or High Court
-                                    // Memos do -- auto-extraction is too unsafe to trust here.
-                                    // Do NOT autofill. Ask the user to fill the workstation manually.
-                                    showToast(
-                                        `This looks like a lower-court injury judgment. Auto-fill isn't reliable for this document type -- please fill the workstation fields in manually.`,
-                                        "warning",
-                                        8000
-                                    );
-                                } else {
-                                    // High Court appeals (any case type) and lower-court death cases
-                                    // (which do follow a reliable structured particulars block) are
-                                    // safe to auto-fill and auto-calculate.
-                                    showToast(`Case PDF analyzed! Auto-filling workstation and running the calculator... (AI-generated — please verify)`, "success");
-                                    let autofillSucceeded = false;
-                                    window.autofillReadyPromise = (async () => {
-                                        if (currentOcrRawText && currentOcrRawText.length > 0) {
-                                            autofillSucceeded = await runAiRecovery(currentOcrRawText, data.track);
-                                        }
-                                        if (!autofillSucceeded) {
-                                            applyAllOcrSuggestions(data.suggestions, null, null, null, true, true);
-                                        }
-                                    })();
-                                }
+                                showToast(`Case PDF analyzed successfully!`, "success");
                             } else {
                                 showCaseTypeConfirmationPrompt(data, file, false);
                             }
@@ -1858,7 +1833,6 @@ This cannot be undone.`)) return;
             } else {
                 if (data.suggestions) {
                     data.suggestions.case_type = type;
-                    applyAllOcrSuggestions(data.suggestions, null, null, null, false, true);
                     updateEnhancementCheck(data);
                 }
                 showToast(`Form updated for ${type === "injury" ? "Injury" : "Death"} Case!`, "success");
