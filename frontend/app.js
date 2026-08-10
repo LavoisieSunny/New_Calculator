@@ -3587,15 +3587,15 @@ This cannot be undone.`)) return;
         container.innerHTML = innerHTML;
 
         // Render Auto-fill button inside the dedicated container below Check Judicial Analysis
-        const autofillContainer = document.getElementById("autofill-button-container");
-        if (autofillContainer) {
-            autofillContainer.style.display = "block";
-            autofillContainer.innerHTML = `
-                <button type="button" id="btn-trigger-autofill" class="btn btn-success" style="width: 100%; font-weight: 700; display: flex; align-items: center; justify-content: center; gap: 8px; font-size: 0.82rem; padding: 10px 14px; border-radius: var(--radius-sm); border: none; cursor: pointer; transition: all var(--transition-fast) ease;">
-                    <i class="fa-solid fa-magic"></i> Auto-fill Workstation Form
-                </button>
-            `;
-        }
+        // const autofillContainer = document.getElementById("autofill-button-container");
+        // if (autofillContainer) {
+        //     autofillContainer.style.display = "block";
+        //     autofillContainer.innerHTML = `
+        //         <button type="button" id="btn-trigger-autofill" class="btn btn-success" style="width: 100%; font-weight: 700; display: flex; align-items: center; justify-content: center; gap: 8px; font-size: 0.82rem; padding: 10px 14px; border-radius: var(--radius-sm); border: none; cursor: pointer; transition: all var(--transition-fast) ease;">
+        //             <i class="fa-solid fa-magic"></i> Auto-fill Workstation Form
+        //         </button>
+        //     `;
+        // }
 
 
 
