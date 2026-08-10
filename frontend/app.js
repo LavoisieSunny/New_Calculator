@@ -1023,6 +1023,10 @@ document.addEventListener("DOMContentLoaded", () => {
         if (caseDocumentsChevron) {
             caseDocumentsChevron.classList.toggle("rotated", collapsed);
         }
+        const hint = document.getElementById("case-documents-hint");
+        if (hint) {
+            hint.textContent = collapsed ? "Click to drop down" : "Click to drop up";
+        }
     }
 
     function updateCaseDocumentsBadge() {
@@ -1065,6 +1069,10 @@ document.addEventListener("DOMContentLoaded", () => {
         supportingDocsToggle.setAttribute("aria-expanded", (!collapsed).toString());
         if (supportingDocsChevron) {
             supportingDocsChevron.classList.toggle("rotated", collapsed);
+        }
+        const hint = document.getElementById("supporting-docs-hint");
+        if (hint) {
+            hint.textContent = collapsed ? "Click to drop down" : "Click to drop up";
         }
     }
 
