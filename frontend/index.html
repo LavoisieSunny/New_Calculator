@@ -614,6 +614,22 @@
 
                         <!-- Floating Tool Buttons -->
                         <div class="preview-floating-toolbar" id="preview-floating-toolbar">
+                            <div class="gcb-trigger-wrapper" style="position: relative;">
+                                <button type="button" class="floating-tool-btn gcb-trigger" id="general-chatbot-trigger" title="💬 General Chatbot (DeepSeek)">
+                                    <svg class="gcb-logo-svg" viewBox="0 0 24 24" width="22" height="22" xmlns="http://www.w3.org/2000/svg">
+                                        <defs>
+                                            <linearGradient id="gcbLogoGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+                                                <stop offset="0%" stop-color="#a855f7"/>
+                                                <stop offset="100%" stop-color="#6366f1"/>
+                                            </linearGradient>
+                                        </defs>
+                                        <path fill="#ffffff" d="M12 2C6.48 2 2 5.94 2 10.75c0 2.62 1.35 4.96 3.47 6.55-.11.98-.5 2.34-1.4 3.7-.15.23.03.53.3.5 1.77-.2 3.4-.94 4.6-1.66 1.02.28 2.1.43 3.03.43 5.52 0 10-3.94 10-8.75S17.52 2 12 2z"/>
+                                        <circle cx="8.5" cy="10.75" r="1.15" fill="url(#gcbLogoGradient)"/>
+                                        <circle cx="12" cy="10.75" r="1.15" fill="url(#gcbLogoGradient)"/>
+                                        <circle cx="15.5" cy="10.75" r="1.15" fill="url(#gcbLogoGradient)"/>
+                                    </svg>
+                                </button>
+                            </div>
                             <div class="ai-assistant-wrapper" style="position: relative;">
                                 <div class="chat-prompt-bubble" id="chat-prompt-bubble">
                                     <span class="bubble-pulse-dot"></span>
@@ -1029,9 +1045,57 @@
             </div>
         </div>
 
+        <div class="gcb-panel" id="general-chatbot-panel">
+            <div class="gcb-header">
+                <div class="gcb-header-title">
+                    <svg viewBox="0 0 24 24" width="20" height="20" xmlns="http://www.w3.org/2000/svg">
+                        <path fill="#ffffff" d="M12 2C6.48 2 2 5.94 2 10.75c0 2.62 1.35 4.96 3.47 6.55-.11.98-.5 2.34-1.4 3.7-.15.23.03.53.3.5 1.77-.2 3.4-.94 4.6-1.66 1.02.28 2.1.43 3.03.43 5.52 0 10-3.94 10-8.75S17.52 2 12 2z"/>
+                    </svg>
+                    <span>General Chatbot</span>
+                    <span class="gcb-badge">DeepSeek</span>
+                </div>
+                <button type="button" class="gcb-close-btn" id="gcb-close-btn" aria-label="Close">&times;</button>
+            </div>
+
+            <div class="gcb-body">
+                <!-- Upload zone (shown until a document is uploaded) -->
+                <div class="gcb-upload-zone" id="gcb-upload-zone">
+                    <i class="fa-solid fa-file-arrow-up"></i>
+                    <p>Drop a document here or click to upload</p>
+                    <span class="gcb-upload-hint">PDF, DOCX, or TXT</span>
+                    <button type="button" class="gcb-upload-btn" id="gcb-upload-btn">Choose File</button>
+                    <input type="file" id="gcb-file-input" accept=".pdf,.docx,.txt,.md,.csv" hidden>
+                </div>
+
+                <!-- Active file indicator (shown after upload) -->
+                <div class="gcb-file-info" id="gcb-file-info" style="display: none;">
+                    <i class="fa-solid fa-file-lines"></i>
+                    <span class="gcb-file-name" id="gcb-file-name"></span>
+                    <button type="button" class="gcb-remove-file-btn" id="gcb-remove-file-btn" title="Remove document">
+                        <i class="fa-solid fa-trash-can"></i>
+                    </button>
+                </div>
+
+                <!-- Chat log -->
+                <div class="gcb-messages" id="gcb-messages">
+                    <div class="gcb-bubble gcb-bot">
+                        <div class="gcb-avatar"><i class="fa-solid fa-comment-dots"></i></div>
+                        <div class="gcb-text">Hi! Upload a document above and I'll answer any questions you have about it.</div>
+                    </div>
+                </div>
+
+                <!-- Input bar -->
+                <div class="gcb-input-bar">
+                    <input type="text" id="gcb-input" placeholder="Ask a question about your document..." autocomplete="off" disabled>
+                    <button type="button" id="gcb-send-btn" disabled><i class="fa-solid fa-paper-plane"></i></button>
+                </div>
+            </div>
+        </div>
+
     </div>
  
     <!-- Core App Logic -->
     <script src="app.js?v=2.1.0"></script>
+    <script src="general_chatbot.js"></script>
 </body>
 </html>

@@ -20,6 +20,7 @@ load_dotenv()
 
 from backend.calculator import router as calculator_router, CompensationRequest
 from backend.ocr import router as ocr_router
+from backend.general_chatbot import router as general_chatbot_router
 from backend.vector_db import semantic_search, get_qdrant_client, VECTOR_DB_INITIALIZED
 from backend.evaluator import evaluate_compensation_precedents
 from backend.justification_engine import build_justification
@@ -80,6 +81,7 @@ class EvaluateRequest(BaseModel):
 
 app.include_router(calculator_router, prefix="/api/calculate", tags=["Calculation"])
 app.include_router(ocr_router, prefix="/api/ocr", tags=["OCR"])
+app.include_router(general_chatbot_router, prefix="/api/general-chat", tags=["General Chatbot (Test)"])
 
 @app.get("/api/health")
 async def health_check():
