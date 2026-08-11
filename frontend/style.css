@@ -4077,3 +4077,35 @@ select.low-confidence-input {
         height: 70vh;
     }
 }
+
+/* --- Think Block (deepseek-r1 reasoning styles) --- */
+.gcb-think-block {
+    background: rgba(99, 102, 241, 0.04);
+    border-left: 2px solid #6366f1;
+    border-radius: 4px;
+    padding: 8px 12px;
+    margin: 8px 0;
+    font-size: 0.78rem;
+    text-align: left;
+}
+.gcb-think-header {
+    font-weight: 600;
+    color: #6366f1;
+    margin-bottom: 4px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    user-select: none;
+}
+.gcb-think-content {
+    color: var(--text-muted, #64748b);
+    font-style: italic;
+    line-height: 1.4;
+}
+.gcb-think-block.thinking {
+    border-left-style: dashed;
+    border-left-color: #a855f7;
+}
+.gcb-think-block.thinking .gcb-think-header {
+    color: #a855f7;
+}

@@ -223,10 +223,32 @@ document.addEventListener("DOMContentLoaded", () => {
     }
 
     function formatText(text) {
-        return text
+        let formatted = text;
+
+        // Convert markdown bold and italic
+        formatted = formatted
             .replace(/\*\*(.*?)\*\*/g, "<strong>$1</strong>")
-            .replace(/\*(.*?)\*/g, "<em>$1</em>")
-            .replace(/\n/g, "<br>");
+            .replace(/\*(.*?)\*/g, "<em>$1</em>");
+
+        // Handle fully closed think block
+        formatted = formatted.replace(/<think>([\s\S]*?)<\/think>/g, (match, p1) => {
+            const content = p1.trim().replace(/\n/g, "<br>");
+            return `<div class="gcb-think-block"><div class="gcb-think-header"><i class="fa-solid fa-brain"></i> Thought Process</div><div class="gcb-think-content">${content}</div></div>`;
+        });
+
+        // Handle open think block (still thinking)
+        if (formatted.includes("<think>")) {
+            const parts = formatted.split("<think>", 2);
+            const preThink = parts[0];
+            const activeThink = parts[1];
+            const content = activeThink.trim().replace(/\n/g, "<br>");
+            formatted = `${preThink}<div class="gcb-think-block thinking"><div class="gcb-think-header"><i class="fa-solid fa-spinner fa-spin"></i> Thinking...</div><div class="gcb-think-content">${content}</div></div>`;
+        }
+
+        // Convert any other newlines outside the think blocks
+        formatted = formatted.replace(/\n/g, "<br>");
+
+        return formatted;
     }
 
     function addUserMessage(text) {

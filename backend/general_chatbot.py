@@ -240,48 +240,6 @@ async def ask_question(payload: GeneralChatAskRequest):
         if DEEPSEEK_API_KEY:
             headers["Authorization"] = f"Bearer {DEEPSEEK_API_KEY}"
 
-        # --- <think>...</think> filter ---------------------------------
-        # deepseek-r1 is a "reasoning" model: it streams its internal
-        # reasoning wrapped in <think>...</think> before the real answer.
-        # We want this to behave like a normal chatbot, so we buffer just
-        # enough to detect and swallow that block, and only forward the
-        # actual answer text to the client. Harmless no-op for any model
-        # that doesn't use <think> tags (adds ~7 chars of buffering, then
-        # passes everything straight through).
-        THINK_OPEN = "<think>"
-        THINK_CLOSE = "</think>"
-        filter_state = {"phase": "pre", "buf": ""}
-
-        def filter_token(token: str) -> str:
-            if filter_state["phase"] == "answer":
-                return token
-
-            filter_state["buf"] += token
-
-            if filter_state["phase"] == "pre":
-                if THINK_OPEN in filter_state["buf"]:
-                    after = filter_state["buf"].split(THINK_OPEN, 1)[1]
-                    filter_state["phase"] = "think"
-                    filter_state["buf"] = after
-                elif len(filter_state["buf"]) >= len(THINK_OPEN) or not THINK_OPEN.startswith(filter_state["buf"]):
-                    # Long enough (or already diverged) to know no <think> tag is coming.
-                    flushed = filter_state["buf"]
-                    filter_state["phase"] = "answer"
-                    filter_state["buf"] = ""
-                    return flushed
-                else:
-                    return ""  # still an ambiguous prefix of "<think>" — keep buffering
-
-            if filter_state["phase"] == "think":
-                if THINK_CLOSE in filter_state["buf"]:
-                    after = filter_state["buf"].split(THINK_CLOSE, 1)[1]
-                    filter_state["phase"] = "answer"
-                    filter_state["buf"] = ""
-                    return after
-                return ""  # still inside the reasoning block — suppress
-
-            return ""
-
         try:
             with requests.post(
                 f"{DEEPSEEK_API_BASE}/chat/completions",
@@ -314,11 +272,8 @@ async def ask_question(payload: GeneralChatAskRequest):
                         token = chunk["choices"][0]["delta"].get("content", "")
                     except (json.JSONDecodeError, KeyError, IndexError):
                         continue
-                    if not token:
-                        continue
-                    visible = filter_token(token)
-                    if visible:
-                        yield json.dumps({"message": {"content": visible}}) + "\n"
+                    if token:
+                        yield json.dumps({"message": {"content": token}}) + "\n"
         except requests.exceptions.RequestException as e:
             logger.error(f"[GeneralChatbot] Request to DeepSeek failed: {e}")
             yield json.dumps({"message": {"content": "[Error contacting DeepSeek API. Please try again.]"}}) + "\n"
