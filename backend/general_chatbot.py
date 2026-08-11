@@ -3,7 +3,8 @@
 # GENERAL CHATBOT (TEST FEATURE)
 # --------------------------------------------------------------------------
 # Standalone, self-contained module. Upload a document, then ask questions
-# about it. Powered by the DeepSeek API (https://api.deepseek.com).
+# about it. Powered by DeepSeek — by default via a LOCAL Ollama server
+# (http://localhost:11434/v1), or the hosted DeepSeek cloud API if configured.
 #
 # This file is intentionally isolated from the rest of the codebase so it
 # can be removed later with just 3 steps:
@@ -32,9 +33,16 @@ router = APIRouter()
 # ======================================================
 # DEEPSEEK CONFIGURATION
 # ======================================================
+# By default this points at a LOCAL Ollama server serving DeepSeek
+# (Ollama exposes an OpenAI-compatible endpoint at /v1/chat/completions).
+# No API key is required for a local Ollama server.
+#
+# If you instead want to use the hosted DeepSeek cloud API, set:
+#   DEEPSEEK_API_BASE=https://api.deepseek.com
+#   DEEPSEEK_API_KEY=sk-...
 DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY", "")
-DEEPSEEK_API_BASE = os.getenv("DEEPSEEK_API_BASE", "https://api.deepseek.com")
-DEEPSEEK_MODEL = os.getenv("DEEPSEEK_MODEL", "deepseek-chat")
+DEEPSEEK_API_BASE = os.getenv("DEEPSEEK_API_BASE", "http://localhost:11434/v1")
+DEEPSEEK_MODEL = os.getenv("DEEPSEEK_MODEL", "deepseek-r1:14b")
 
 # Roughly cap how much document text we forward to the model per request.
 # deepseek-chat has a large context window, but we keep this conservative
@@ -158,13 +166,6 @@ async def clear_document(payload: GeneralChatClearRequest):
 @router.post("/ask")
 async def ask_question(payload: GeneralChatAskRequest):
     """Stream a DeepSeek-generated answer grounded in the uploaded document."""
-    if not DEEPSEEK_API_KEY:
-        raise HTTPException(
-            status_code=500,
-            detail="DEEPSEEK_API_KEY is not configured on the server. "
-                   "Set it in your .env file to use the General Chatbot."
-        )
-
     session = _SESSIONS.get(payload.session_id)
     if not session:
         raise HTTPException(
@@ -197,13 +198,14 @@ async def ask_question(payload: GeneralChatAskRequest):
     messages.append({"role": "user", "content": payload.question})
 
     def stream_deepseek():
+        headers = {"Content-Type": "application/json"}
+        if DEEPSEEK_API_KEY:
+            headers["Authorization"] = f"Bearer {DEEPSEEK_API_KEY}"
+
         try:
             with requests.post(
                 f"{DEEPSEEK_API_BASE}/chat/completions",
-                headers={
-                    "Authorization": f"Bearer {DEEPSEEK_API_KEY}",
-                    "Content-Type": "application/json",
-                },
+                headers=headers,
                 json={
                     "model": DEEPSEEK_MODEL,
                     "messages": messages,
