@@ -19,7 +19,9 @@ import os
 import io
 import json
 import uuid
+import asyncio
 import logging
+import tempfile
 
 import requests
 from fastapi import APIRouter, UploadFile, File, Form, HTTPException
@@ -59,13 +61,49 @@ _SESSIONS: dict[str, dict] = {}
 # ======================================================
 # TEXT EXTRACTION HELPERS
 # ======================================================
-def _extract_pdf_text(raw: bytes) -> str:
-    import fitz  # PyMuPDF (already a project dependency)
-    text_parts = []
-    with fitz.open(stream=raw, filetype="pdf") as pdf:
-        for page in pdf:
-            text_parts.append(page.get_text())
-    return "\n".join(text_parts).strip()
+def _extract_pdf_text_sync(temp_path: str) -> str:
+    """
+    Digital-text-first, OCR-fallback extraction — reuses the SAME pipeline
+    the rest of this app already uses for scanned MACT judgments
+    (backend/ocr.py), so scanned/image-only PDFs work here too.
+    """
+    # Import lazily so this module doesn't force-load PaddleOCR/vision models
+    # unless a PDF is actually being processed.
+    from backend.ocr import (
+        extract_digital_pdf_text,
+        is_extracted_text_sparse,
+        perform_ocr_on_scanned_pdf,
+    )
+
+    text_lines = extract_digital_pdf_text(temp_path)
+
+    if is_extracted_text_sparse(text_lines):
+        logger.info("[GeneralChatbot] Digital text layer looks sparse/scanned — running OCR pipeline (this can take a while)...")
+        try:
+            ocr_lines, _debug = perform_ocr_on_scanned_pdf(temp_path)
+            if ocr_lines:
+                text_lines = ocr_lines
+        except Exception as e:
+            logger.error(f"[GeneralChatbot] OCR fallback failed: {e}")
+
+    cleaned = [l for l in text_lines if not l.strip().startswith("--- PAGE")]
+    return "\n".join(cleaned).strip()
+
+
+async def _extract_pdf_text(raw: bytes) -> str:
+    """Writes the upload to a temp file (required by the OCR pipeline,
+    which reads PDFs from disk) and runs extraction in a worker thread
+    so the OCR work doesn't block the event loop."""
+    fd, temp_path = tempfile.mkstemp(suffix=".pdf")
+    try:
+        with os.fdopen(fd, "wb") as f:
+            f.write(raw)
+        return await asyncio.to_thread(_extract_pdf_text_sync, temp_path)
+    finally:
+        try:
+            os.remove(temp_path)
+        except OSError:
+            pass
 
 
 def _extract_docx_text(raw: bytes) -> str:
@@ -87,10 +125,10 @@ def _extract_txt_text(raw: bytes) -> str:
     return raw.decode("utf-8", errors="ignore")
 
 
-def extract_document_text(filename: str, raw: bytes) -> str:
+async def extract_document_text(filename: str, raw: bytes) -> str:
     ext = (filename.rsplit(".", 1)[-1] if "." in filename else "").lower()
     if ext == "pdf":
-        text = _extract_pdf_text(raw)
+        text = await _extract_pdf_text(raw)
     elif ext in ("docx",):
         text = _extract_docx_text(raw)
     elif ext in ("txt", "md", "csv"):
@@ -104,8 +142,8 @@ def extract_document_text(filename: str, raw: bytes) -> str:
     if not text.strip():
         raise HTTPException(
             status_code=422,
-            detail="No readable text could be extracted from this file "
-                   "(it may be a scanned/image-only document)."
+            detail="No readable text could be extracted from this file, "
+                   "even after running OCR. It may be blank or badly damaged."
         )
 
     return text
@@ -141,7 +179,7 @@ async def upload_document(file: UploadFile = File(...), session_id: str | None =
     if not raw:
         raise HTTPException(status_code=400, detail="Uploaded file is empty.")
 
-    text = extract_document_text(file.filename, raw)
+    text = await extract_document_text(file.filename, raw)
 
     sid = session_id or str(uuid.uuid4())
     _SESSIONS[sid] = {"filename": file.filename, "text": text}
@@ -202,6 +240,48 @@ async def ask_question(payload: GeneralChatAskRequest):
         if DEEPSEEK_API_KEY:
             headers["Authorization"] = f"Bearer {DEEPSEEK_API_KEY}"
 
+        # --- <think>...</think> filter ---------------------------------
+        # deepseek-r1 is a "reasoning" model: it streams its internal
+        # reasoning wrapped in <think>...</think> before the real answer.
+        # We want this to behave like a normal chatbot, so we buffer just
+        # enough to detect and swallow that block, and only forward the
+        # actual answer text to the client. Harmless no-op for any model
+        # that doesn't use <think> tags (adds ~7 chars of buffering, then
+        # passes everything straight through).
+        THINK_OPEN = "<think>"
+        THINK_CLOSE = "</think>"
+        filter_state = {"phase": "pre", "buf": ""}
+
+        def filter_token(token: str) -> str:
+            if filter_state["phase"] == "answer":
+                return token
+
+            filter_state["buf"] += token
+
+            if filter_state["phase"] == "pre":
+                if THINK_OPEN in filter_state["buf"]:
+                    after = filter_state["buf"].split(THINK_OPEN, 1)[1]
+                    filter_state["phase"] = "think"
+                    filter_state["buf"] = after
+                elif len(filter_state["buf"]) >= len(THINK_OPEN) or not THINK_OPEN.startswith(filter_state["buf"]):
+                    # Long enough (or already diverged) to know no <think> tag is coming.
+                    flushed = filter_state["buf"]
+                    filter_state["phase"] = "answer"
+                    filter_state["buf"] = ""
+                    return flushed
+                else:
+                    return ""  # still an ambiguous prefix of "<think>" — keep buffering
+
+            if filter_state["phase"] == "think":
+                if THINK_CLOSE in filter_state["buf"]:
+                    after = filter_state["buf"].split(THINK_CLOSE, 1)[1]
+                    filter_state["phase"] = "answer"
+                    filter_state["buf"] = ""
+                    return after
+                return ""  # still inside the reasoning block — suppress
+
+            return ""
+
         try:
             with requests.post(
                 f"{DEEPSEEK_API_BASE}/chat/completions",
@@ -234,8 +314,11 @@ async def ask_question(payload: GeneralChatAskRequest):
                         token = chunk["choices"][0]["delta"].get("content", "")
                     except (json.JSONDecodeError, KeyError, IndexError):
                         continue
-                    if token:
-                        yield json.dumps({"message": {"content": token}}) + "\n"
+                    if not token:
+                        continue
+                    visible = filter_token(token)
+                    if visible:
+                        yield json.dumps({"message": {"content": visible}}) + "\n"
         except requests.exceptions.RequestException as e:
             logger.error(f"[GeneralChatbot] Request to DeepSeek failed: {e}")
             yield json.dumps({"message": {"content": "[Error contacting DeepSeek API. Please try again.]"}}) + "\n"
