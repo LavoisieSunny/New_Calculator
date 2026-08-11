@@ -283,6 +283,9 @@ def call_vision_model(image_b64: str, page_num: int = 0) -> str:
     payload = {
         "model": OCR_VISION_MODEL,
         "stream": False,
+        "keep_alive": "30m",      # keep the vision model resident between OCR jobs
+                                    # (avoids a cold model-load penalty on the first
+                                    # vision-escalated page after any idle gap)
         "options": {
             "temperature": 0.0,       # deterministic for OCR
             "num_predict": 4096,      # max output tokens per page
