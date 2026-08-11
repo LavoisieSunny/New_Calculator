@@ -2737,7 +2737,9 @@ def run_background_pdf_indexing(file_id: str, temp_path: str, filename: str):
                     suggestions.get("marital_status") or "married",
                     suggestions.get("dependents") or "",
                     suggestions.get("future_prospect") or 25.0,
-                    suggestions.get("multiplier") or 15
+                    suggestions.get("multiplier") or 15,
+                    occupation=suggestions.get("occupation"),
+                    full_text=full_text
                 )
 
         BATCH_QUEUE[file_id]["status"] = "indexing"
@@ -2938,7 +2940,9 @@ async def process_single_file(
                         suggestions.get("marital_status") or "married",
                         suggestions.get("dependents") or "",
                         suggestions.get("future_prospect") or 25.0,
-                        suggestions.get("multiplier") or 15
+                        suggestions.get("multiplier") or 15,
+                        occupation=suggestions.get("occupation"),
+                        full_text=full_text
                     )
 
             from backend.parser_heuristics import format_suggestions_for_calculator

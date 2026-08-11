@@ -2944,13 +2944,31 @@ def extract_dates_with_context(text):
     return matches
 
 
-def deduce_notional_income(award_amount, age, marital_status, dependents, future_prospect=None, multiplier=None, award_date=None):
+def deduce_notional_income(award_amount, age, marital_status, dependents, future_prospect=None, multiplier=None, award_date=None, occupation=None, full_text=None):
     """
     Algebraically deduces a clean monthly notional income from the award_amount using standard legal formulas.
     Used when explicit monthly income is missing in the judgment text.
     """
     if not award_amount or award_amount <= 0:
         return 5000.0 # standard fallback
+
+    # Early return for non-earning minor cases (precedent: Krishna Gopal)
+    age_val = None
+    if age is not None:
+        age_digit_match = re.search(r'\d+', str(age))
+        if age_digit_match:
+            try:
+                age_val = int(age_digit_match.group(0))
+            except ValueError:
+                pass
+
+    if (not occupation or str(occupation).strip().lower() in ("none", "n/a", "-", "student", "minor")) and age_val is not None and age_val < 18:
+        if full_text:
+            m = re.search(r'\b([\d,]{4,7})\s*[xX×]\s*(\d{1,2})\b', full_text)
+            if m:
+                base_annual = parse_indian_rupee_value(m.group(1))
+                return round(base_annual / 12.0, 2)   # return as monthly, no deduction/prospects applied
+        return 2500.0  # fallback ≈ 30,000/12, the standard Krishna Gopal notional figure
         
     # Standard conventional heads: Consortium (40k base), Funeral (15k base), Estate (15k base) enhanced dynamically
     from datetime import date
@@ -3405,13 +3423,24 @@ def parse_extracted_text(text_lines, case_type=None):
             block_place = ", ".join([v for l, v in sub_fields])
 
     # 2. Deceased/Injured block
-    deceased_match = re.search(
-        r'\b(?:NAME\s+AND\s+DESCRIPTION\s+OF\s+THE\s+(?:INJURED/)?DECEASED(?:(?:\s+PERSON)?)?|DECEASED\s+PERSON|DESCRIPTION\s+OF\s+DECEASED|INJURED\s+PERSON|NAME\s+AND\s+DESCRIPTION\s+OF\s+THE\s+INJURED\s+PERSON)\b.*?(?=\bIN\s+FATAL\s+ACCIDENT\b|\bDETAILS\b|\(\s*[I|V|X|L|C|D|M]+\s*\)|$)',
+    deceased_matches = list(re.finditer(
+        r'\b(?:NAME\s+AND\s+DESCRIPTION\s+OF\s+THE\s+(?:INJURED/)?DECEASED(?:(?:\s+PERSON)?)?|DECEASED\s+PERSON|DESCRIPTION\s+OF\s+DECEASED|INJURED\s+PERSON|NAME\s+AND\s+DESCRIPTION\s+OF\s+THE\s+INJURED\s+PERSON)\b.*?(?=\bIN\s+FATAL\s+ACCIDENT\b|\bDETAILS\b|\bNAME\s+AND\s+DESCRIPTION\b|\bDECEASED\s+PERSON\b|\bDESCRIPTION\s+OF\s+DECEASED\b|\bINJURED\s+PERSON\b|\(\s*[I|V|X|L|C|D|M|0-9\u0966-\u096f]+\s*\)|$)',
         full_text,
         re.IGNORECASE | re.DOTALL
-    )
-    if deceased_match:
-        dec_block_text = deceased_match.group(0)
+    ))
+
+    best_block = None
+    best_match_start = None
+    for m in deceased_matches:
+        block_text = m.group(0)
+        has_name = re.search(r'\bName\s*[:\-;\u2022]', block_text, re.IGNORECASE)
+        has_age  = re.search(r'\bAge\s*[:\-;\u2022]\s*\d{1,2}\b', block_text, re.IGNORECASE)
+        if has_name and has_age:
+            best_block = block_text   # keep the LAST valid one, not the first
+            best_match_start = m.start()
+
+    if best_block:
+        dec_block_text = best_block
         
         # Deceased/Injured Name
         name_match = re.search(r'\b(?:(?:(?:1|a)\.?\s*|\(\s*[1a]\s*\)\s*)?Name)\s*[:\-;\u2022]\s*([^\n]+)', dec_block_text, re.IGNORECASE)
@@ -3662,6 +3691,40 @@ def parse_extracted_text(text_lines, case_type=None):
             "raw_captured": deceased_block_match.group(1),
             "final_extracted": deceased_name
         }
+
+    # Safety check: if block_age matches a known claimant age, treat as unresolved
+    known_claimant_ages = set()
+    claimant_search_text = ""
+    if best_match_start is not None:
+        claimant_search_text = full_text[:best_match_start]
+    else:
+        if "claimant_section" in sections:
+            claimant_search_text += sections["claimant_section"] + "\n"
+        if "petition_block" in sections:
+            claimant_search_text += sections["petition_block"] + "\n"
+        if pages:
+            claimant_search_text += "\n".join(p["text"] for p in pages[:6]) + "\n"
+        else:
+            claimant_search_text += full_text[:6000]
+
+    for m in re.finditer(r'\b(?:age|aged|approximately)\s*(?:about|is|was)?\s*[:\-;]?\s*(\d{1,2})\b', claimant_search_text, re.IGNORECASE):
+        known_claimant_ages.add(int(m.group(1)))
+    for m in re.finditer(r'\b(\d{1,2})\s*(?:years|yrs)\b', claimant_search_text, re.IGNORECASE):
+        known_claimant_ages.add(int(m.group(1)))
+
+    if block_age and known_claimant_ages and block_age in known_claimant_ages:
+        # suspicious — likely picked up a claimant instead of the deceased, treat as unresolved
+        if deceased_name and block_dec_name and deceased_name.strip().lower() == block_dec_name.strip().lower():
+            deceased_name = None
+            conf_deceased_name = 0.0
+            sec_deceased_name = "raw_ocr"
+            page_deceased_name = 1
+            method_deceased_name = "Fallback"
+        block_dec_name = None
+        block_age = None
+        block_father_name = None
+        block_occupation = None
+        block_earning_daily = None
 
     # Apply Deceased overrides (Requirement 6)
     if claimant_name and any(kw in claimant_name.lower() for kw in ["late shri", "late smt", "late "]):
@@ -5475,7 +5538,9 @@ def parse_extracted_text(text_lines, case_type=None):
                 dependents, 
                 future_prospect, 
                 multiplier,
-                award_date=award_date
+                award_date=award_date,
+                occupation=occupation,
+                full_text=full_text
             )
             if monthly_income > 0:
                 conf_monthly_income = 0.80
