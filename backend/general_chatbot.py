@@ -80,7 +80,7 @@ def _extract_pdf_text_sync(temp_path: str) -> str:
     if is_extracted_text_sparse(text_lines):
         logger.info("[GeneralChatbot] Digital text layer looks sparse/scanned — running OCR pipeline (this can take a while)...")
         try:
-            ocr_lines, _debug = perform_ocr_on_scanned_pdf(temp_path)
+            ocr_lines, _debug = perform_ocr_on_scanned_pdf(temp_path, track="chatbot")
             if ocr_lines:
                 text_lines = ocr_lines
         except Exception as e:
