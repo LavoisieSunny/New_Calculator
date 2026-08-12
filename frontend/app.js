@@ -2162,7 +2162,8 @@ This cannot be undone.`)) return;
             "age": "age",
             "monthly_income": "monthly-income",
             "date_of_accident": "date-of-accident",
-            "place_of_accident": "place-of-accident"
+            "place_of_accident": "place-of-accident",
+            "dependents": "dependents"
         };
 
         // Injury Specific (Part 6)
@@ -2193,7 +2194,6 @@ This cannot be undone.`)) return;
             "future_type": "future-type",
             "claimant_relationship_to_deceased": "claimant-relationship-display",
             "claimant_relationship_type": "claimant-relationship-type-hidden",
-            "dependents": "dependents",
             "conspo": "conspo",
             "conwif": "conwif",
             "conhus": "conhus",
@@ -2320,6 +2320,14 @@ This cannot be undone.`)) return;
                 }
             } else {
                 el.value = val;
+                if (inputId === "dependents") {
+                    const claimantsEl = document.getElementById("consortium_claimants");
+                    if (claimantsEl && (!claimantsEl.value || claimantsEl.value === "1")) {
+                        claimantsEl.value = val;
+                        claimantsEl.dispatchEvent(new Event("input"));
+                        claimantsEl.dispatchEvent(new Event("change"));
+                    }
+                }
             }
             el.dispatchEvent(new Event("input"));
             el.dispatchEvent(new Event("change"));

@@ -1992,6 +1992,19 @@ def format_suggestions_for_calculator(suggestions):
                 "reason": f"Not found in document text — computed via Pranay Sethi escalation for {ref_date}."
             }
 
+        # Auto-extract dependents count from grounds/facts section if not already present with high confidence
+        full_text_val = suggestions.get("full_text") or ""
+        dep_count, dep_conf, dep_reason = extract_dependents_count(full_text_val)
+        if dep_count is not None:
+            raw_dep = suggestions.get("dependents")
+            raw_dep_conf = suggestions.get("confidence_scores", {}).get("dependents", {}).get("confidence", 0.0) if isinstance(suggestions.get("confidence_scores", {}).get("dependents"), dict) else 0.0
+            if not raw_dep or raw_dep_conf < dep_conf:
+                suggestions["dependents"] = dep_count
+                suggestions["confidence_scores"]["dependents"] = {
+                    "confidence": dep_conf,
+                    "reason": dep_reason
+                }
+
     fields = {}
     if case_type == "death":
         fields = {
@@ -3120,6 +3133,53 @@ def _extract_cause_title_block(top_pages_text):
             if candidate:
                 pending_appellant = candidate
     return None
+
+
+def extract_dependents_count(full_text):
+    # Primary: structured "(d) Number of dependants..." field in Memo of Appeal
+    m = re.search(
+        r'Number of dependants?\s*(?:and their relationship[^:]*)?:?\s*'
+        r'(\d+)\s*person',
+        full_text, re.IGNORECASE
+    )
+    if m:
+        return int(m.group(1)), 0.9, "Extracted from 'Number of dependants' field in memo"
+
+    # Hindi Primary: "(d) आश्रितों की संख्या..."
+    m_hi = re.search(
+        r'(?:आश्रितों\s*की\s*संख्या|आश्रितों\s*की\s*संख्या\s*एवं\s*संबंध)\s*[:\-;]?\s*(\d+)\s*(?:व्यक्ति|लोग)?',
+        full_text, re.IGNORECASE
+    )
+    if m_hi:
+        return int(m_hi.group(1)), 0.9, "Extracted from 'Number of dependants' field in Hindi memo"
+
+    # Fallback: count relationship words in a listed sentence
+    # e.g. "father, mother, brother and sisters were made as applicant"
+    m2 = re.search(
+        r'((?:father|mother|brother|sister[s]?|wife|husband|son|daughter)'
+        r'(?:\s*,\s*(?:father|mother|brother|sister[s]?|wife|husband|son|daughter))*'
+        r'\s*(?:and|&)?\s*(?:father|mother|brother|sister[s]?|wife|husband|son|daughter)?)'
+        r'\s*(?:were|was)\s*made\s*(?:as\s*)?(?:the\s*)?applicant',
+        full_text, re.IGNORECASE
+    )
+    if m2:
+        words = re.findall(r'father|mother|brother|sister[s]?|wife|husband|son|daughter', m2.group(1), re.IGNORECASE)
+        return len(words), 0.6, "Counted from relationship list in facts/grounds text"
+
+    # Hindi Fallback relationship words listed sentence:
+    # e.g. "पिता, माता, भाई और बहन आवेदक बने" or similar
+    m2_hi = re.search(
+        r'((?:पिता|माता|भाई|बहन[ों]?|पत्नी|पति|पुत्र|पुत्री|बेटे|बेटी|बेटियां)'
+        r'(?:\s*,\s*(?:पिता|माता|भाई|बहन[ों]?|पत्नी|पति|पुत्र|पुत्री|बेटे|बेटी|बेटियां))*'
+        r'\s*(?:और|एवं|व)?\s*(?:पिता|माता|भाई|बहन[ों]?|पत्नी|पति|पुत्र|पुत्री|बेटे|बेटी|बेटियां)?)'
+        r'\s*(?:को\s*)?(?:आवेदक|प्रार्थी)\s*(?:बनाया|बनाया\s*गया|बने)',
+        full_text
+    )
+    if m2_hi:
+        words = re.findall(r'पिता|माता|भाई|बहन|पत्नी|पति|पुत्र|पुत्री|बेटे|बेटी|बेटियां', m2_hi.group(1))
+        return len(words), 0.6, "Counted from Hindi relationship list in facts/grounds text"
+
+    return None, 0.0, None
 
 
 def extract_appeal_memo_fatal_particulars(full_text: str) -> dict:
@@ -6241,6 +6301,7 @@ def parse_extracted_text(text_lines, case_type=None):
         "anomalies_detected": anomalies_detected,
         "case_classification": case_classification,
         "_debug": parser_debug,
+        "full_text": full_text,
         
         "confidence_scores": {
             "deceased_name": {
