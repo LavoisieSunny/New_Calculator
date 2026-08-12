@@ -4109,3 +4109,34 @@ select.low-confidence-input {
 .gcb-think-block.thinking .gcb-think-header {
     color: #a855f7;
 }
+
+/* Consortium Nested UI Group */
+.consortium-group-container {
+    background: rgba(15, 23, 42, 0.02);
+    border: 1px solid rgba(15, 23, 42, 0.08);
+    padding: 16px;
+    border-radius: var(--radius-sm);
+    margin-bottom: 16px;
+}
+.consortium-subfields {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: 12px;
+    padding-left: 16px;
+    border-left: 2px solid rgba(15, 23, 42, 0.1);
+}
+.consortium-subfields label {
+    font-size: 0.8rem !important;
+    margin-bottom: 4px;
+}
+.consortium-subfields input,
+.consortium-subfields select {
+    font-size: 0.85rem !important;
+}
+.consortium-subfields .input-icon-wrapper input {
+    padding-left: 36px !important;
+}
+.consortium-subfields .field-icon {
+    font-size: 0.8rem !important;
+    left: 12px !important;
+}

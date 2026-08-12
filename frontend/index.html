@@ -385,33 +385,33 @@
                                     </div>
                                 </div>
 
-                                <!-- Loss of Consortium (single field - loc in PHP, matching original claim.php) -->
-                                <div class="form-group">
+                                <!-- Loss of Consortium Group (Nested) -->
+                                <div class="form-group full-width consortium-group-container">
                                     <label for="consortium">Loss of consortium (Rs.)</label>
-                                    <div class="input-icon-wrapper">
+                                    <div class="input-icon-wrapper disabled">
                                         <i class="fa-solid fa-heart field-icon"></i>
-                                        <input type="number" id="consortium" name="consortium" value="40000" placeholder="40000">
+                                        <input type="number" id="consortium" name="consortium" value="40000" readonly>
                                     </div>
-                                </div>
+                                    <p id="consortium_note" class="hint-text"></p>
 
-                                <!-- Consortium Basis Selection -->
-                                <div class="form-group">
-                                    <label for="consortium_mode">Consortium Basis <span class="req">*</span></label>
-                                    <div class="select-wrapper">
-                                        <select id="consortium_mode" name="consortium_mode">
-                                            <option value="flat" selected>Flat (single family sum)</option>
-                                            <option value="satinder_kaur">Per Legal Heir (Satinder Kaur)</option>
-                                        </select>
-                                        <i class="fa-solid fa-chevron-down select-arrow"></i>
-                                    </div>
-                                </div>
-
-                                <!-- Number of Consortium Claimants -->
-                                <div class="form-group">
-                                    <label for="consortium_claimants">Number of Consortium Claimants <span class="req">*</span></label>
-                                    <div class="input-icon-wrapper">
-                                        <i class="fa-solid fa-people-group field-icon"></i>
-                                        <input type="number" id="consortium_claimants" name="consortium_claimants" min="1" value="1" placeholder="e.g. 1">
+                                    <div class="consortium-subfields">
+                                        <div class="form-group" style="margin: 0;">
+                                            <label for="consortium_mode">Consortium Basis</label>
+                                            <div class="select-wrapper">
+                                                <select id="consortium_mode" name="consortium_mode">
+                                                    <option value="flat" selected>Flat (single family sum)</option>
+                                                    <option value="satinder_kaur">Per Legal Heir (Satinder Kaur)</option>
+                                                </select>
+                                                <i class="fa-solid fa-chevron-down select-arrow"></i>
+                                            </div>
+                                        </div>
+                                        <div class="form-group" style="margin: 0;">
+                                            <label for="consortium_claimants">Number of Consortium Claimants</label>
+                                            <div class="input-icon-wrapper">
+                                                <i class="fa-solid fa-people-group field-icon"></i>
+                                                <input type="number" id="consortium_claimants" name="consortium_claimants" min="1" value="1">
+                                            </div>
+                                        </div>
                                     </div>
                                 </div>
 
