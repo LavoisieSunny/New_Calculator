@@ -2737,7 +2737,9 @@ def run_background_pdf_indexing(file_id: str, temp_path: str, filename: str):
                     suggestions.get("marital_status") or "married",
                     suggestions.get("dependents") or "",
                     suggestions.get("future_prospect") or 25.0,
-                    suggestions.get("multiplier") or 15
+                    suggestions.get("multiplier") or 15,
+                    occupation=suggestions.get("occupation"),
+                    full_text=full_text
                 )
 
         BATCH_QUEUE[file_id]["status"] = "indexing"
@@ -2938,7 +2940,9 @@ async def process_single_file(
                         suggestions.get("marital_status") or "married",
                         suggestions.get("dependents") or "",
                         suggestions.get("future_prospect") or 25.0,
-                        suggestions.get("multiplier") or 15
+                        suggestions.get("multiplier") or 15,
+                        occupation=suggestions.get("occupation"),
+                        full_text=full_text
                     )
 
             from backend.parser_heuristics import format_suggestions_for_calculator
@@ -3003,6 +3007,22 @@ async def process_single_file(
             )
             formatted_suggestions["grounds_relief_summary"] = summary_res
             formatted_suggestions["final_judicial_summary"] = final_judicial_res
+
+            # Prime the judicial-summary cache now so a later "Trigger Autofill"
+            # click (ai_recover_fields) can reuse this result instead of
+            # re-running both LLM calls from scratch — this was the main
+            # cause of autofill feeling as slow as the original extraction.
+            _judicial_cache_key = _make_judicial_summary_cache_key(
+                case_session_id, active_track, detected_case_type, full_text, supporting_docs
+            )
+            with _JUDICIAL_SUMMARY_CACHE_LOCK:
+                if len(_JUDICIAL_SUMMARY_CACHE) >= _JUDICIAL_SUMMARY_CACHE_MAX_ENTRIES:
+                    _JUDICIAL_SUMMARY_CACHE.pop(next(iter(_JUDICIAL_SUMMARY_CACHE)))
+                _JUDICIAL_SUMMARY_CACHE[_judicial_cache_key] = {
+                    "final_judicial_summary": final_judicial_res,
+                    "grounds_relief_summary": summary_res,
+                    "case_classification": heuristic_signal
+                }
 
 
             # Index document into Qdrant in background so Chat Assistant works for this file
@@ -3372,21 +3392,43 @@ async def ai_recover_fields(request: AIRecoverRequest):
         for field in merge_fields:
             heur_val = heuristics_data.get(field)
             llm_val = recovered_data.get(field)
-            
-            # Check if LLM missed it or has very low confidence
+
             llm_conf_obj = recovered_data.get("confidence_scores", {}).get(field)
             llm_conf = 1.0
             if isinstance(llm_conf_obj, dict):
                 llm_conf = llm_conf_obj.get("confidence", 1.0)
             elif llm_conf_obj is not None:
                 llm_conf = float(llm_conf_obj)
-                
-            if (llm_val is None or llm_val == "" or llm_val == 0 or llm_conf < 0.6) and (heur_val is not None and heur_val != "" and heur_val != 0):
-                logger.info(f"[AI-RECOVER-MERGE] Merging heuristic value for '{field}': '{llm_val}' (conf: {llm_conf}) -> '{heur_val}'")
+
+            heur_conf_obj = heuristics_data.get("confidence_scores", {}).get(field)
+            heur_conf = 0.0
+            if isinstance(heur_conf_obj, dict):
+                heur_conf = heur_conf_obj.get("confidence", 0.0)
+            elif heur_conf_obj is not None:
+                heur_conf = float(heur_conf_obj)
+
+            heur_is_present = heur_val is not None and heur_val != "" and heur_val != 0
+            llm_is_weak = (llm_val is None or llm_val == "" or llm_val == 0 or llm_conf < 0.6)
+
+            # A high-confidence heuristic hit (e.g. the Particulars Block in the Memo
+            # of Appeal, conf 0.99) outranks the LLM even when the LLM claims high
+            # confidence -- an LLM's self-reported confidence is not a reliable
+            # signal that it read the correct occurrence of a field that repeats
+            # elsewhere in the document (e.g. a stale age in an earlier tribunal order).
+            heur_is_high_confidence = heur_conf >= 0.9
+
+            if heur_is_present and (llm_is_weak or heur_is_high_confidence):
+                if not llm_is_weak:
+                    logger.info(
+                        f"[AI-RECOVER-MERGE] Overriding LLM value for '{field}': "
+                        f"LLM said '{llm_val}' (conf {llm_conf}) but heuristic found "
+                        f"'{heur_val}' from a high-confidence source (conf {heur_conf}) -- using heuristic."
+                    )
+                else:
+                    logger.info(f"[AI-RECOVER-MERGE] Merging heuristic value for '{field}': '{llm_val}' (conf: {llm_conf}) -> '{heur_val}'")
                 recovered_data[field] = heur_val
                 if "confidence_scores" not in recovered_data:
                     recovered_data["confidence_scores"] = {}
-                heur_conf_obj = heuristics_data.get("confidence_scores", {}).get(field)
                 if heur_conf_obj:
                     recovered_data["confidence_scores"][field] = heur_conf_obj
                 else:
@@ -3408,16 +3450,40 @@ async def ai_recover_fields(request: AIRecoverRequest):
         if request.case_session_id:
             supporting_docs = build_supporting_docs_bundle(request.case_session_id)
 
-        from backend.llm_client import summarize_grounds_and_relief, generate_final_judicial_summary
         case_tp = recovered_data.get("case_type") or "death"
-        summary_res, final_judicial_res = await asyncio.gather(
-            asyncio.to_thread(summarize_grounds_and_relief, sections_dict, heuristic_signal, case_tp),
-            asyncio.to_thread(
-                generate_final_judicial_summary,
-                sections_dict, heuristic_signal, case_tp,
-                supporting_docs=supporting_docs, force_refresh=True
-            )
+
+        # Reuse the summary/analysis already computed at upload time whenever
+        # possible — only case_type actually changes what these two LLM calls
+        # produce, and the cache key already encodes it, so a hit here means
+        # nothing relevant changed and it's safe to skip both LLM calls.
+        judicial_cache_key = _make_judicial_summary_cache_key(
+            request.case_session_id, track, case_tp, full_text, supporting_docs
         )
+        with _JUDICIAL_SUMMARY_CACHE_LOCK:
+            cached_summary = _JUDICIAL_SUMMARY_CACHE.get(judicial_cache_key)
+
+        if cached_summary is not None:
+            logger.info(f"[AI-RECOVER] Judicial summary cache hit for session {request.case_session_id} — skipping duplicate LLM calls")
+            summary_res = cached_summary["grounds_relief_summary"]
+            final_judicial_res = cached_summary["final_judicial_summary"]
+        else:
+            from backend.llm_client import summarize_grounds_and_relief, generate_final_judicial_summary
+            summary_res, final_judicial_res = await asyncio.gather(
+                asyncio.to_thread(summarize_grounds_and_relief, sections_dict, heuristic_signal, case_tp),
+                asyncio.to_thread(
+                    generate_final_judicial_summary,
+                    sections_dict, heuristic_signal, case_tp,
+                    supporting_docs=supporting_docs, force_refresh=True
+                )
+            )
+            with _JUDICIAL_SUMMARY_CACHE_LOCK:
+                if len(_JUDICIAL_SUMMARY_CACHE) >= _JUDICIAL_SUMMARY_CACHE_MAX_ENTRIES:
+                    _JUDICIAL_SUMMARY_CACHE.pop(next(iter(_JUDICIAL_SUMMARY_CACHE)))
+                _JUDICIAL_SUMMARY_CACHE[judicial_cache_key] = {
+                    "final_judicial_summary": final_judicial_res,
+                    "grounds_relief_summary": summary_res,
+                    "case_classification": heuristic_signal
+                }
 
         formatted["grounds_relief_summary"] = summary_res
         formatted["final_judicial_summary"] = final_judicial_res

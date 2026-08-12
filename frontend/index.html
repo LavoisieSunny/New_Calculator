@@ -147,7 +147,7 @@
                                         <span class="main-label" style="margin: 0;">Case Documents</span>
                                         <span id="case-documents-count-badge" class="case-documents-count-badge" style="display: none;">0</span>
                                     </span>
-                                    <span class="case-documents-header-hint">Click to expand / collapse</span>
+                                    <span id="case-documents-hint" class="case-documents-header-hint"><i class="fa-solid fa-caret-up"></i></span>
                                 </button>
 
                                 <div id="case-documents-body" class="case-documents-body">
@@ -185,11 +185,11 @@
                                             <span>Supporting Documents</span>
                                             <span id="supporting-docs-count-badge" class="case-documents-count-badge" style="display: none;">0</span>
                                         </span>
-                                        <span class="case-documents-header-hint">Click to expand / collapse</span>
+                                        <span id="supporting-docs-hint" class="case-documents-header-hint"><i class="fa-solid fa-caret-up"></i></span>
                                     </button>
 
                                     <div id="supporting-docs-body" class="supporting-docs-body">
-                                        <button type="button" id="add-supporting-docs-btn" class="btn btn-secondary" style="width: 100%; display: inline-flex; align-items: center; justify-content: center; gap: 6px; padding: 9px 12px; font-size: 0.8rem; font-weight: 700; border-radius: var(--radius-sm); margin-bottom: 8px;">
+                                        <button type="button" id="add-supporting-docs-btn" class="btn btn-neutral" style="width: 100%; display: inline-flex; align-items: center; justify-content: center; gap: 6px; padding: 9px 12px; font-size: 0.8rem; font-weight: 700; border-radius: var(--radius-sm); margin-bottom: 8px;">
                                             <i class="fa-solid fa-folder-open"></i> Upload Supporting Document
                                         </button>
 
@@ -208,7 +208,7 @@
                                      Court file against any supporting (lower court / hospital) docs.
                                      Does not auto-run — only when the button below is clicked. -->
                                 <div id="judicial-analysis-section" style="margin-bottom: 12px;">
-                                    <button type="button" id="check-judicial-analysis-btn" class="btn btn-secondary" style="width: 100%; display: inline-flex; align-items: center; justify-content: center; gap: 6px; padding: 8px 12px; font-size: 0.8rem; font-weight: 700; border-radius: var(--radius-sm);">
+                                    <button type="button" id="check-judicial-analysis-btn" class="btn btn-neutral" style="width: 100%; display: inline-flex; align-items: center; justify-content: center; gap: 6px; padding: 8px 12px; font-size: 0.8rem; font-weight: 700; border-radius: var(--radius-sm);">
                                         <i class="fa-solid fa-scale-balanced"></i> Check Judicial Analysis
                                     </button>
                                     <div id="judicial-analysis-result" style="margin-top: 10px; display: none;"></div>
@@ -385,12 +385,33 @@
                                     </div>
                                 </div>
 
-                                <!-- Loss of Consortium (single field - loc in PHP, matching original claim.php) -->
-                                <div class="form-group">
+                                <!-- Loss of Consortium Group (Nested) -->
+                                <div class="form-group full-width consortium-group-container">
                                     <label for="consortium">Loss of consortium (Rs.)</label>
-                                    <div class="input-icon-wrapper">
+                                    <div class="input-icon-wrapper disabled">
                                         <i class="fa-solid fa-heart field-icon"></i>
-                                        <input type="number" id="consortium" name="consortium" value="40000" placeholder="40000">
+                                        <input type="number" id="consortium" name="consortium" value="40000" readonly>
+                                    </div>
+                                    <p id="consortium_note" class="hint-text"></p>
+
+                                    <div class="consortium-subfields">
+                                        <div class="form-group" style="margin: 0;">
+                                            <label for="consortium_mode">Consortium Basis</label>
+                                            <div class="select-wrapper">
+                                                <select id="consortium_mode" name="consortium_mode">
+                                                    <option value="flat" selected>Flat (single family sum)</option>
+                                                    <option value="satinder_kaur">Per Legal Heir (Satinder Kaur)</option>
+                                                </select>
+                                                <i class="fa-solid fa-chevron-down select-arrow"></i>
+                                            </div>
+                                        </div>
+                                        <div class="form-group" style="margin: 0;">
+                                            <label for="consortium_claimants">Number of Consortium Claimants</label>
+                                            <div class="input-icon-wrapper">
+                                                <i class="fa-solid fa-people-group field-icon"></i>
+                                                <input type="number" id="consortium_claimants" name="consortium_claimants" min="1" value="1">
+                                            </div>
+                                        </div>
                                     </div>
                                 </div>
 
@@ -570,16 +591,42 @@
                     <div class="panel" id="calculator-right-pane" style="position: relative; display: flex; flex-direction: column; padding: 0; gap: 0; overflow: hidden; height: 100%;">
                         
                         <!-- Tab 1 Content: PDF Preview -->
-                        <div id="pane-tab-pdf-content" class="pane-tab-content active" style="flex: 1; display: flex; flex-direction: column; height: 100%; overflow: hidden; margin: 0; padding: 0;">
+                        <div id="pane-tab-pdf-content" class="pane-tab-content active" style="flex: 1; display: flex; flex-direction: column; height: 100%; overflow: hidden; margin: 0; padding: 0; position: relative;">
+                            <!-- Floating Word Download Button on the Bottom-Left -->
+                            <button type="button" class="floating-tool-btn" id="download-word-btn" title="Download Word Doc" style="position: absolute; left: 30px; bottom: 30px; z-index: 999; display: inline-flex; background: #2b579a; border-color: #2b579a; box-shadow: 0 4px 16px rgba(43, 87, 154, 0.35); opacity: 0.5; cursor: not-allowed;" disabled>
+                                <i class="fa-solid fa-file-word"></i>
+                            </button>
+
                             <!-- High-Fidelity PDF Preview Panel -->
                             <div class="card preview-card" id="single-preview-card" style="height: 100%; width: 100%; display: flex; flex-direction: column; margin: 0; padding: 0; border: none; box-shadow: none; background: transparent; flex: 1; overflow: hidden;">
-                                <div class="card-header" style="height: 40px; padding: 0 16px; border-bottom: 1px solid var(--border-color); display: flex; align-items: center; margin: 0; flex-shrink: 0; background: var(--bg-panel);">
-                                    <h3>PDF Preview</h3>
+                                <div class="card-header" style="display: none !important;">
+                                    <span id="single-preview-filename"></span>
                                 </div>
-                                <div class="single-preview-container" id="single-preview-container" style="flex: 1; height: calc(100% - 40px); width: 100%; overflow: hidden; background: #ffffff; padding: 0; margin: 0; border: none; border-radius: 0;">
+                                <div class="single-preview-container" id="single-preview-container" style="position: relative; flex: 1; height: 100%; width: 100%; overflow: hidden; background: #ffffff; padding: 0; margin: 0; border: none; border-radius: 0;">
                                     <div class="preview-empty-state" style="display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100%; gap: 10px; opacity: 0.5;">
                                         <i class="fa-solid fa-file-pdf" style="font-size: 3rem; color: var(--color-primary)"></i>
                                         <p style="font-size: 0.8rem; color: var(--text-secondary)">Upload a PDF on the left to see the live document preview here.</p>
+                                    </div>
+                                    <!-- Annotation Canvas Overlay -->
+                                    <canvas id="pdf-annotation-canvas" style="display: none; position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 5; cursor: crosshair;"></canvas>
+
+                                    <!-- Short Notes Draggable/Floating Widget -->
+                                    <div id="pdf-notes-container" class="pdf-notes-container" style="display: none; position: absolute; top: 12px; left: 12px; z-index: 1000; width: 280px; background: var(--bg-panel); border: 1px solid var(--border-color); border-radius: var(--radius-sm); box-shadow: var(--shadow-premium); padding: 12px; flex-direction: column; gap: 8px; backdrop-filter: blur(15px);">
+                                        <div style="display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid var(--border-color); padding-bottom: 6px;">
+                                            <span style="font-family: 'Outfit', sans-serif; font-weight: 700; font-size: 0.85rem; color: var(--text-primary); display: flex; align-items: center; gap: 6px;">
+                                                <i class="fa-solid fa-note-sticky" style="color: #3b82f6;"></i> Short Notes
+                                            </span>
+                                            <button type="button" id="notes-close-btn" style="background: transparent; border: none; font-size: 1.1rem; cursor: pointer; color: var(--text-muted); line-height: 1; transition: color 0.2s;" onmouseover="this.style.color='var(--color-danger)'" onmouseout="this.style.color='var(--text-muted)'">&times;</button>
+                                        </div>
+                                        <textarea id="notes-textarea" placeholder="Type your notes here..." style="width: 100%; height: 130px; resize: vertical; border: 1px solid var(--border-color); border-radius: 4px; padding: 8px; font-family: 'Inter', sans-serif; font-size: 0.8rem; background: var(--bg-main); color: var(--text-primary); outline: none; line-height: 1.4; transition: border-color 0.2s;" onfocus="this.style.borderColor='var(--color-primary)'" onblur="this.style.borderColor='var(--border-color)'"></textarea>
+                                        <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 2px;">
+                                            <span id="notes-save-status" style="font-size: 0.7rem; color: var(--text-muted); display: flex; align-items: center; gap: 4px;">
+                                                <i class="fa-solid fa-circle-check" style="color: #10b981;"></i> Saved to cache
+                                            </span>
+                                            <button type="button" id="notes-erase-btn" style="padding: 4px 8px; font-size: 0.72rem; height: 26px; border: 1px solid var(--color-danger); color: var(--color-danger); background: transparent; transition: all 0.2s; cursor: pointer; border-radius: 4px;" onmouseover="this.style.background='var(--color-danger)'; this.style.color='white'" onmouseout="this.style.background='transparent'; this.style.color='var(--color-danger)'">
+                                                <i class="fa-solid fa-trash-can"></i> Erase Note
+                                            </button>
+                                        </div>
                                     </div>
                                 </div>
                             </div>
@@ -588,6 +635,22 @@
 
                         <!-- Floating Tool Buttons -->
                         <div class="preview-floating-toolbar" id="preview-floating-toolbar">
+                            <div class="gcb-trigger-wrapper" style="position: relative;">
+                                <button type="button" class="floating-tool-btn gcb-trigger" id="general-chatbot-trigger" title="💬 General Chatbot (DeepSeek)">
+                                    <svg class="gcb-logo-svg" viewBox="0 0 24 24" width="22" height="22" xmlns="http://www.w3.org/2000/svg">
+                                        <defs>
+                                            <linearGradient id="gcbLogoGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+                                                <stop offset="0%" stop-color="#a855f7"/>
+                                                <stop offset="100%" stop-color="#6366f1"/>
+                                            </linearGradient>
+                                        </defs>
+                                        <path fill="#ffffff" d="M12 2C6.48 2 2 5.94 2 10.75c0 2.62 1.35 4.96 3.47 6.55-.11.98-.5 2.34-1.4 3.7-.15.23.03.53.3.5 1.77-.2 3.4-.94 4.6-1.66 1.02.28 2.1.43 3.03.43 5.52 0 10-3.94 10-8.75S17.52 2 12 2z"/>
+                                        <circle cx="8.5" cy="10.75" r="1.15" fill="url(#gcbLogoGradient)"/>
+                                        <circle cx="12" cy="10.75" r="1.15" fill="url(#gcbLogoGradient)"/>
+                                        <circle cx="15.5" cy="10.75" r="1.15" fill="url(#gcbLogoGradient)"/>
+                                    </svg>
+                                </button>
+                            </div>
                             <div class="ai-assistant-wrapper" style="position: relative;">
                                 <div class="chat-prompt-bubble" id="chat-prompt-bubble">
                                     <span class="bubble-pulse-dot"></span>
@@ -598,9 +661,55 @@
                                     <i class="fa-solid fa-robot"></i>
                                 </button>
                             </div>
-                            <button type="button" class="floating-tool-btn" id="download-word-btn" title="Download Word Doc" style="display: none; background: #2b579a; border-color: #2b579a; box-shadow: 0 4px 16px rgba(43, 87, 154, 0.35);">
-                                <i class="fa-solid fa-file-word"></i>
-                            </button>
+                            <div class="pencil-tool-wrapper" style="position: relative; display: inline-block;">
+                                <button type="button" class="floating-tool-btn" id="pencil-tool-trigger" title="✏️ Annotation Tools" style="background: #eab308; border-color: #eab308; box-shadow: 0 4px 16px rgba(234, 179, 8, 0.35);">
+                                    <i class="fa-solid fa-pencil"></i>
+                                </button>
+                                <!-- Pencil Options Dropdown/Toolbar -->
+                                <div class="pencil-options-menu" id="pencil-options-menu" style="display: none; position: absolute; bottom: 60px; right: 0; background: var(--bg-panel); border: 1px solid var(--border-color); border-radius: var(--radius-sm); box-shadow: var(--shadow-premium); padding: 10px; flex-direction: column; gap: 8px; z-index: 1000; min-width: 180px;">
+                                    <div style="font-family: 'Outfit', sans-serif; font-size: 0.8rem; font-weight: 700; color: var(--text-muted); border-bottom: 1px solid var(--border-color); padding-bottom: 4px; margin-bottom: 4px; display: flex; align-items: center; gap: 6px;">
+                                        <i class="fa-solid fa-paintbrush"></i> Annotation Tools
+                                    </div>
+                                    <button type="button" class="pencil-menu-item" id="pencil-btn-pencil" style="display: flex; align-items: center; gap: 8px; width: 100%; padding: 6px 12px; background: transparent; border: none; color: var(--text-primary); text-align: left; cursor: pointer; border-radius: 4px; font-size: 0.85rem; font-weight: 500;">
+                                        <i class="fa-solid fa-pen" style="color: #ef4444; width: 16px;"></i> Draw (Pencil)
+                                    </button>
+                                    <button type="button" class="pencil-menu-item" id="pencil-btn-marker" style="display: flex; align-items: center; gap: 8px; width: 100%; padding: 6px 12px; background: transparent; border: none; color: var(--text-primary); text-align: left; cursor: pointer; border-radius: 4px; font-size: 0.85rem; font-weight: 500;">
+                                        <i class="fa-solid fa-highlighter" style="color: #eab308; width: 16px;"></i> Highlight (Marker)
+                                    </button>
+                                    <button type="button" class="pencil-menu-item" id="pencil-btn-eraser" style="display: flex; align-items: center; gap: 8px; width: 100%; padding: 6px 12px; background: transparent; border: none; color: var(--text-primary); text-align: left; cursor: pointer; border-radius: 4px; font-size: 0.85rem; font-weight: 500;">
+                                        <i class="fa-solid fa-eraser" style="color: #64748b; width: 16px;"></i> Precision Eraser
+                                    </button>
+                                    <button type="button" class="pencil-menu-item" id="pencil-btn-notes" style="display: flex; align-items: center; gap: 8px; width: 100%; padding: 6px 12px; background: transparent; border: none; color: var(--text-primary); text-align: left; cursor: pointer; border-radius: 4px; font-size: 0.85rem; font-weight: 500;">
+                                        <i class="fa-solid fa-note-sticky" style="color: #3b82f6; width: 16px;"></i> Short Notes
+                                    </button>
+                                    <hr style="border: none; border-top: 1px solid var(--border-color); margin: 4px 0;">
+                                    <button type="button" class="pencil-menu-item" id="pencil-btn-undo" style="display: flex; align-items: center; gap: 8px; width: 100%; padding: 6px 12px; background: transparent; border: none; color: var(--text-primary); text-align: left; cursor: pointer; border-radius: 4px; font-size: 0.85rem; font-weight: 500;">
+                                        <i class="fa-solid fa-arrow-rotate-left" style="color: #10b981; width: 16px;"></i> Undo Last
+                                    </button>
+                                    <button type="button" class="pencil-menu-item" id="pencil-btn-clear" style="display: flex; align-items: center; gap: 8px; width: 100%; padding: 6px 12px; background: transparent; border: none; color: var(--text-primary); text-align: left; cursor: pointer; border-radius: 4px; font-size: 0.85rem; font-weight: 500;">
+                                        <i class="fa-solid fa-trash-can" style="color: #ef4444; width: 16px;"></i> Clear All
+                                    </button>
+                                    <div style="border-top: 1px solid var(--border-color); margin-top: 4px; padding-top: 8px; display: flex; flex-direction: column; gap: 6px;">
+                                        <div style="font-family: 'Outfit', sans-serif; font-size: 0.72rem; font-weight: 700; color: var(--text-muted); display: flex; justify-content: space-between; align-items: center;">
+                                            <span>Color</span>
+                                            <div style="display: flex; gap: 4px;" id="pencil-colors">
+                                                <span class="color-dot active" data-color="#ef4444" style="background: #ef4444; width: 12px; height: 12px; border-radius: 50%; display: inline-block; cursor: pointer; border: 1px solid rgba(0,0,0,0.1);"></span>
+                                                <span class="color-dot" data-color="#3b82f6" style="background: #3b82f6; width: 12px; height: 12px; border-radius: 50%; display: inline-block; cursor: pointer; border: 1px solid rgba(0,0,0,0.1);"></span>
+                                                <span class="color-dot" data-color="#10b981" style="background: #10b981; width: 12px; height: 12px; border-radius: 50%; display: inline-block; cursor: pointer; border: 1px solid rgba(0,0,0,0.1);"></span>
+                                                <span class="color-dot" data-color="#eab308" style="background: #eab308; width: 12px; height: 12px; border-radius: 50%; display: inline-block; cursor: pointer; border: 1px solid rgba(0,0,0,0.1);"></span>
+                                            </div>
+                                        </div>
+                                        <div style="font-family: 'Outfit', sans-serif; font-size: 0.72rem; font-weight: 700; color: var(--text-muted); display: flex; justify-content: space-between; align-items: center; margin-top: 4px;">
+                                            <span>Brush Size</span>
+                                            <div style="display: flex; gap: 4px;" id="pencil-sizes">
+                                                <button type="button" class="size-btn active" data-size="2.5" style="background: var(--bg-main); border: 1px solid var(--border-color); border-radius: 3px; font-size: 0.65rem; padding: 2px 4px; cursor: pointer; color: var(--text-primary);">Thin</button>
+                                                <button type="button" class="size-btn" data-size="5" style="background: var(--bg-main); border: 1px solid var(--border-color); border-radius: 3px; font-size: 0.65rem; padding: 2px 4px; cursor: pointer; color: var(--text-primary);">Med</button>
+                                                <button type="button" class="size-btn" data-size="10" style="background: var(--bg-main); border: 1px solid var(--border-color); border-radius: 3px; font-size: 0.65rem; padding: 2px 4px; cursor: pointer; color: var(--text-primary);">Thick</button>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
                         </div>
 
                     </div>
@@ -957,9 +1066,57 @@
             </div>
         </div>
 
+        <div class="gcb-panel" id="general-chatbot-panel">
+            <div class="gcb-header">
+                <div class="gcb-header-title">
+                    <svg viewBox="0 0 24 24" width="20" height="20" xmlns="http://www.w3.org/2000/svg">
+                        <path fill="#ffffff" d="M12 2C6.48 2 2 5.94 2 10.75c0 2.62 1.35 4.96 3.47 6.55-.11.98-.5 2.34-1.4 3.7-.15.23.03.53.3.5 1.77-.2 3.4-.94 4.6-1.66 1.02.28 2.1.43 3.03.43 5.52 0 10-3.94 10-8.75S17.52 2 12 2z"/>
+                    </svg>
+                    <span>General Chatbot</span>
+                    <span class="gcb-badge">DeepSeek</span>
+                </div>
+                <button type="button" class="gcb-close-btn" id="gcb-close-btn" aria-label="Close">&times;</button>
+            </div>
+
+            <div class="gcb-body">
+                <!-- Upload zone (shown until a document is uploaded) -->
+                <div class="gcb-upload-zone" id="gcb-upload-zone">
+                    <i class="fa-solid fa-file-arrow-up"></i>
+                    <p>Drop a document here or click to upload</p>
+                    <span class="gcb-upload-hint">PDF, DOCX, or TXT</span>
+                    <button type="button" class="gcb-upload-btn" id="gcb-upload-btn">Choose File</button>
+                    <input type="file" id="gcb-file-input" accept=".pdf,.docx,.txt,.md,.csv" hidden>
+                </div>
+
+                <!-- Active file indicator (shown after upload) -->
+                <div class="gcb-file-info" id="gcb-file-info" style="display: none;">
+                    <i class="fa-solid fa-file-lines"></i>
+                    <span class="gcb-file-name" id="gcb-file-name"></span>
+                    <button type="button" class="gcb-remove-file-btn" id="gcb-remove-file-btn" title="Remove document">
+                        <i class="fa-solid fa-trash-can"></i>
+                    </button>
+                </div>
+
+                <!-- Chat log -->
+                <div class="gcb-messages" id="gcb-messages">
+                    <div class="gcb-bubble gcb-bot">
+                        <div class="gcb-avatar"><i class="fa-solid fa-comment-dots"></i></div>
+                        <div class="gcb-text">Hi! Upload a document above and I'll answer any questions you have about it.</div>
+                    </div>
+                </div>
+
+                <!-- Input bar -->
+                <div class="gcb-input-bar">
+                    <input type="text" id="gcb-input" placeholder="Ask a question about your document..." autocomplete="off" disabled>
+                    <button type="button" id="gcb-send-btn" disabled><i class="fa-solid fa-paper-plane"></i></button>
+                </div>
+            </div>
+        </div>
+
     </div>
  
     <!-- Core App Logic -->
     <script src="app.js?v=2.1.0"></script>
+    <script src="general_chatbot.js"></script>
 </body>
 </html>

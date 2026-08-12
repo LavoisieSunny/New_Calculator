@@ -14,7 +14,7 @@ def get_conventional_heads_enhanced(base_amount: float, reference_date: date, an
     if (reference_date.month, reference_date.day) < (anchor_date.month, anchor_date.day):
         years_elapsed -= 1
     periods = years_elapsed // 3
-    return float(round(base_amount * (1.0 + 0.10 * periods), 2))
+    return float(round(base_amount * (1.10 ** periods), 2))
 
 # ======================================================
 # SAFE NUMERIC PARSING HELPERS (Task 4)
@@ -81,6 +81,7 @@ class CompensationRequest(BaseModel):
     loss_estate: Optional[float] = None
 
     consortium_claimants: Optional[int] = None
+    consortium_mode: str = "flat"   # "flat" or "satinder_kaur"
 
     # Consortium Breakdown Subheadings (from PHP claim calculator)
     conlum: float = 0.0
@@ -347,16 +348,21 @@ def calculate_death_compensation(
         logger.warning("No reliable award_date or date_of_accident available. Falling back to today's date.")
         ref_date = date.today()
 
-    consortium_default = get_conventional_heads_enhanced(40000.0, ref_date)
+    consortium_default = get_conventional_heads_enhanced(40000.0, ref_date)   # always auto-escalated, no manual step
     funeral_default = get_conventional_heads_enhanced(15000.0, ref_date)
     loss_estate_default = get_conventional_heads_enhanced(15000.0, ref_date)
+    consortium_per_person = consortium_default   # ignore data.consortium override entirely — fully automated now
 
-    consortium_claimants_val = safe_int(data.consortium_claimants)
+    consortium_claimants_val = safe_int(data.consortium_claimants, 1)
     if consortium_claimants_val <= 0:
         consortium_claimants_val = 1
 
-    consortium_per_person = safe_float(data.consortium, consortium_default) if data.consortium is not None else consortium_default
-    consortium = consortium_per_person * consortium_claimants_val
+    consortium_mode = (data.consortium_mode or "flat").strip().lower()
+    if consortium_mode in ("satinder_kaur", "per_lr", "per_heir"):
+        consortium = consortium_per_person * consortium_claimants_val
+    else:
+        consortium = consortium_per_person   # flat — one sum regardless of claimant count
+
     funeral_expenses = safe_float(data.funeral_expenses, funeral_default) if data.funeral_expenses is not None else funeral_default
     loss_estate = safe_float(data.loss_estate, loss_estate_default) if data.loss_estate is not None else loss_estate_default
 
@@ -383,6 +389,8 @@ def calculate_death_compensation(
     # the breakdown replaces/overrides the generic consortium amount.
     if consortium_breakdown_total > 0.0:
         consortium = 0.0
+        consortium_settled = conlum + conspo + conpar + conchil + conwif + conmo + confath + conhus
+        consortium_contested = conbro + consis
 
     medical_expenses = safe_float(data.medical_expenses, 0.0)
 

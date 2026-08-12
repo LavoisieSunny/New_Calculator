@@ -40,6 +40,7 @@ document.addEventListener("DOMContentLoaded", () => {
     let currentCalculationAmount = 0;
     let currentCalculationBreakdown = {};
     let currentOcrRawText = []; // Recover raw text from the last successful single OCR
+    window.autofillReadyPromise = Promise.resolve();
     let lastAiRecoverySignature = null;
     let lastAiRecoveryResult = null;
     let currentCaseSessionId = null;
@@ -931,8 +932,15 @@ document.addEventListener("DOMContentLoaded", () => {
         futureTypeSelect.addEventListener("change", handleRecalculateDefaultProspects);
     }
 
-    dobInput.addEventListener("change", updateLiveCalculations);
-    doaInput.addEventListener("change", updateLiveCalculations);
+    function syncAgeFromDob() {
+        const computed = calculateAge(dobInput.value, doaInput.value);
+        if (computed !== null) {
+            ageInput.value = computed;
+        }
+    }
+
+    dobInput.addEventListener("change", () => { syncAgeFromDob(); updateLiveCalculations(); });
+    doaInput.addEventListener("change", () => { syncAgeFromDob(); updateLiveCalculations(); });
     maritalStatusSelect.addEventListener("change", updateLiveCalculations);
     maritalStatusSelect.addEventListener("change", updateDependentsVisibility);
     dependentsInput.addEventListener("input", updateLiveCalculations);
@@ -1015,6 +1023,10 @@ document.addEventListener("DOMContentLoaded", () => {
         if (caseDocumentsChevron) {
             caseDocumentsChevron.classList.toggle("rotated", collapsed);
         }
+        const hint = document.getElementById("case-documents-hint");
+        if (hint) {
+            hint.innerHTML = collapsed ? '<i class="fa-solid fa-caret-down"></i>' : '<i class="fa-solid fa-caret-up"></i>';
+        }
     }
 
     function updateCaseDocumentsBadge() {
@@ -1057,6 +1069,10 @@ document.addEventListener("DOMContentLoaded", () => {
         supportingDocsToggle.setAttribute("aria-expanded", (!collapsed).toString());
         if (supportingDocsChevron) {
             supportingDocsChevron.classList.toggle("rotated", collapsed);
+        }
+        const hint = document.getElementById("supporting-docs-hint");
+        if (hint) {
+            hint.innerHTML = collapsed ? '<i class="fa-solid fa-caret-down"></i>' : '<i class="fa-solid fa-caret-up"></i>';
         }
     }
 
@@ -1164,6 +1180,42 @@ document.addEventListener("DOMContentLoaded", () => {
         }
     });
 
+    function updatePdfPreview(blobUrl, filename, badgeHtml) {
+        window.currentPdfName = filename;
+        if (typeof loadPdfNotes === "function") {
+            loadPdfNotes(filename);
+        }
+
+        if (singlePreviewFilename) {
+            singlePreviewFilename.innerHTML = `${filename} ${badgeHtml || ""}`;
+        }
+
+        if (singlePreviewContainer) {
+            let iframe = singlePreviewContainer.querySelector(".pdf-iframe");
+            if (!iframe) {
+                iframe = document.createElement("iframe");
+                iframe.className = "pdf-iframe";
+                iframe.style.width = "100%";
+                iframe.style.height = "100%";
+                iframe.style.border = "none";
+                const canvas = singlePreviewContainer.querySelector("#pdf-annotation-canvas");
+                if (canvas) {
+                    singlePreviewContainer.insertBefore(iframe, canvas);
+                } else {
+                    singlePreviewContainer.appendChild(iframe);
+                }
+            }
+            iframe.src = `${blobUrl}#toolbar=0`;
+            const emptyState = singlePreviewContainer.querySelector(".preview-empty-state");
+            if (emptyState) emptyState.style.display = "none";
+        }
+
+        if (singlePreviewCard) {
+            singlePreviewCard.classList.remove("hidden-section");
+            singlePreviewCard.classList.add("show");
+        }
+    }
+
     async function handleSinglePdfUpload(file) {
         window.lastEnhancementVerdict = null;
         window.currentRenderedVerdict = null;
@@ -1182,18 +1234,8 @@ document.addEventListener("DOMContentLoaded", () => {
         } catch (e) {
             console.error("Failed to ensure case session id:", e);
         }
-        if (singlePreviewFilename) {
-            singlePreviewFilename.innerHTML = `${file.name} <span class="badge source-badge" id="single-preview-source-badge" style="margin-left: 8px; background: rgba(251, 191, 36, 0.2); color: #f59e0b; border: 1px solid rgba(251, 191, 36, 0.3); font-size: 0.7rem; padding: 2px 6px; border-radius: 4px; display: inline-block;"><i class="fa-solid fa-spinner fa-spin"></i> Extracting...</span>`;
-        }
-        if (singlePreviewContainer) {
-            singlePreviewContainer.innerHTML = `
-                <iframe class="pdf-iframe" src="${immediateBlobUrl}#toolbar=0" width="100%" height="100%"></iframe>
-            `;
-        }
-        if (singlePreviewCard) {
-            singlePreviewCard.classList.remove("hidden-section");
-            singlePreviewCard.classList.add("show");
-        }
+        const badgeHtml = `<span class="badge source-badge" id="single-preview-source-badge" style="margin-left: 8px; background: rgba(251, 191, 36, 0.2); color: #f59e0b; border: 1px solid rgba(251, 191, 36, 0.3); font-size: 0.7rem; padding: 2px 6px; border-radius: 4px; display: inline-block;"><i class="fa-solid fa-spinner fa-spin"></i> Extracting...</span>`;
+        updatePdfPreview(immediateBlobUrl, file.name, badgeHtml);
         const earlyPdfTabBtn = document.querySelector('.pane-tab-btn[data-pane-tab="pdf"]');
         if (earlyPdfTabBtn) {
             earlyPdfTabBtn.click();
@@ -1294,9 +1336,13 @@ document.addEventListener("DOMContentLoaded", () => {
                             window.lastRawText = currentOcrRawText.join("\n");
                             if (downloadWordBtn) {
                                 if (currentOcrRawText.length > 0) {
-                                    downloadWordBtn.style.display = "inline-flex";
+                                    downloadWordBtn.disabled = false;
+                                    downloadWordBtn.style.opacity = "1";
+                                    downloadWordBtn.style.cursor = "pointer";
                                 } else {
-                                    downloadWordBtn.style.display = "none";
+                                    downloadWordBtn.disabled = true;
+                                    downloadWordBtn.style.opacity = "0.5";
+                                    downloadWordBtn.style.cursor = "not-allowed";
                                 }
                             }
 
@@ -1339,11 +1385,37 @@ document.addEventListener("DOMContentLoaded", () => {
 
 
                             const detectedCaseType = data.case_type;
+                            const detectedTrack = data.track || "high_court";
                             if (detectedCaseType && (detectedCaseType === "injury" || detectedCaseType === "death")) {
                                 caseTypeSelect.value = detectedCaseType;
                                 caseTypeSelect.dispatchEvent(new Event("change"));
                                 updateEnhancementCheck(data);
-                                showToast(`Case PDF analyzed! Auto-detected ${detectedCaseType === "death" ? "Death" : "Injury"} Case. Click the 'Auto-fill Workstation Form' button below the enhancement section to populate the fields.`, "success");
+
+                                if (detectedTrack === "lower_court" && detectedCaseType === "injury") {
+                                    // Lower-court (tribunal-level) injury judgments don't follow a
+                                    // reliable structured format the way death cases or High Court
+                                    // Memos do -- auto-extraction is too unsafe to trust here.
+                                    // Do NOT autofill. Ask the user to fill the workstation manually.
+                                    showToast(
+                                        `This looks like a lower-court injury judgment. Auto-fill isn't reliable for this document type -- please fill the workstation fields in manually.`,
+                                        "warning",
+                                        8000
+                                    );
+                                } else {
+                                    // High Court appeals (any case type) and lower-court death cases
+                                    // (which do follow a reliable structured particulars block) are
+                                    // safe to auto-fill and auto-calculate.
+                                    showToast(`Case PDF analyzed! Auto-filling workstation and running the calculator... (AI-generated — please verify)`, "success");
+                                    let autofillSucceeded = false;
+                                    window.autofillReadyPromise = (async () => {
+                                        if (currentOcrRawText && currentOcrRawText.length > 0) {
+                                            autofillSucceeded = await runAiRecovery(currentOcrRawText, data.track);
+                                        }
+                                        if (!autofillSucceeded) {
+                                            applyAllOcrSuggestions(data.suggestions, null, null, null, true, true);
+                                        }
+                                    })();
+                                }
                             } else {
                                 showCaseTypeConfirmationPrompt(data, file, false);
                             }
@@ -1584,6 +1656,17 @@ document.addEventListener("DOMContentLoaded", () => {
                     window.detectedTrack = matchedFile.track || "high_court";
                     currentOcrRawText = matchedFile.raw_text || [];
                     window.lastRawText = currentOcrRawText.join("\n");
+                    if (downloadWordBtn) {
+                        if (currentOcrRawText.length > 0) {
+                            downloadWordBtn.disabled = false;
+                            downloadWordBtn.style.opacity = "1";
+                            downloadWordBtn.style.cursor = "pointer";
+                        } else {
+                            downloadWordBtn.disabled = true;
+                            downloadWordBtn.style.opacity = "0.5";
+                            downloadWordBtn.style.cursor = "not-allowed";
+                        }
+                    }
 
                     loadPdfPreview(matchedFile.filename);
                     updateEnhancementCheck(matchedFile);
@@ -1655,9 +1738,13 @@ This cannot be undone.`)) return;
         currentOcrRawText = matchedFile.raw_text || [];
         if (downloadWordBtn) {
             if (currentOcrRawText.length > 0) {
-                downloadWordBtn.style.display = "inline-flex";
+                downloadWordBtn.disabled = false;
+                downloadWordBtn.style.opacity = "1";
+                downloadWordBtn.style.cursor = "pointer";
             } else {
-                downloadWordBtn.style.display = "none";
+                downloadWordBtn.disabled = true;
+                downloadWordBtn.style.opacity = "0.5";
+                downloadWordBtn.style.cursor = "not-allowed";
             }
         }
 
@@ -1665,21 +1752,15 @@ This cannot be undone.`)) return;
         const fileObj = uploadedFileObjects[matchedFile.filename];
         if (fileObj && singlePreviewContainer && singlePreviewFilename) {
             const blobUrl = URL.createObjectURL(fileObj);
-            singlePreviewFilename.innerHTML = `${matchedFile.filename} <span class="badge source-badge" style="margin-left: 8px; background: rgba(59, 130, 246, 0.2); color: #60a5fa; border: 1px solid rgba(59, 130, 246, 0.3); font-size: 0.7rem; padding: 2px 6px; border-radius: 4px; display: inline-block;">Source: Batch Library</span>`;
-            singlePreviewContainer.innerHTML = `
-                <iframe class="pdf-iframe" src="${blobUrl}#toolbar=0" width="100%" height="100%"></iframe>
-            `;
-            if (singlePreviewCard) {
-                singlePreviewCard.classList.remove("hidden-section");
-                singlePreviewCard.classList.add("show");
-            }
+            const badgeHtml = `<span class="badge source-badge" style="margin-left: 8px; background: rgba(59, 130, 246, 0.2); color: #60a5fa; border: 1px solid rgba(59, 130, 246, 0.3); font-size: 0.7rem; padding: 2px 6px; border-radius: 4px; display: inline-block;">Source: Batch Library</span>`;
+            updatePdfPreview(blobUrl, matchedFile.filename, badgeHtml);
         }
 
         const caseType = matchedFile.suggestions ? matchedFile.suggestions.case_type : null;
         if (caseType && (caseType === "injury" || caseType === "death")) {
             caseTypeSelect.value = caseType;
             caseTypeSelect.dispatchEvent(new Event("change"));
-            applyAllOcrSuggestions(matchedFile.suggestions, null, null, null, true, false);
+            applyAllOcrSuggestions(matchedFile.suggestions, null, null, null, true, true);
             window.lastRawText = (matchedFile.raw_text || []).join("\n");
             switchTab("calculator");
             if (currentOcrRawText.length > 0) {
@@ -1776,7 +1857,7 @@ This cannot be undone.`)) return;
             if (isBatch) {
                 if (data.suggestions) {
                     data.suggestions.case_type = type;
-                    applyAllOcrSuggestions(data.suggestions, null, null, null, true, false);
+                    applyAllOcrSuggestions(data.suggestions, null, null, null, true, true);
                 }
                 switchTab("calculator");
                 if (currentOcrRawText.length > 0) {
@@ -1785,7 +1866,7 @@ This cannot be undone.`)) return;
             } else {
                 if (data.suggestions) {
                     data.suggestions.case_type = type;
-                    applyAllOcrSuggestions(data.suggestions, null, null, null, false, false);
+                    applyAllOcrSuggestions(data.suggestions, null, null, null, false, true);
                     updateEnhancementCheck(data);
                 }
                 showToast(`Form updated for ${type === "injury" ? "Injury" : "Death"} Case!`, "success");
@@ -1823,9 +1904,13 @@ This cannot be undone.`)) return;
                 currentOcrRawText = matchedFile.raw_text || [];
                 if (downloadWordBtn) {
                     if (currentOcrRawText.length > 0) {
-                        downloadWordBtn.style.display = "inline-flex";
+                        downloadWordBtn.disabled = false;
+                        downloadWordBtn.style.opacity = "1";
+                        downloadWordBtn.style.cursor = "pointer";
                     } else {
-                        downloadWordBtn.style.display = "none";
+                        downloadWordBtn.disabled = true;
+                        downloadWordBtn.style.opacity = "0.5";
+                        downloadWordBtn.style.cursor = "not-allowed";
                     }
                 }
 
@@ -1833,14 +1918,8 @@ This cannot be undone.`)) return;
                 const fileObj = uploadedFileObjects[matchedFile.filename];
                 if (fileObj && singlePreviewContainer && singlePreviewFilename) {
                     const blobUrl = URL.createObjectURL(fileObj);
-                    singlePreviewFilename.innerHTML = `${matchedFile.filename} <span class="badge source-badge" style="margin-left: 8px; background: rgba(59, 130, 246, 0.2); color: #60a5fa; border: 1px solid rgba(59, 130, 246, 0.3); font-size: 0.7rem; padding: 2px 6px; border-radius: 4px; display: inline-block;">Source: Batch Library</span>`;
-                    singlePreviewContainer.innerHTML = `
-                        <iframe class="pdf-iframe" src="${blobUrl}#toolbar=0" width="100%" height="100%"></iframe>
-                    `;
-                    if (singlePreviewCard) {
-                        singlePreviewCard.classList.remove("hidden-section");
-                        singlePreviewCard.classList.add("show");
-                    }
+                    const badgeHtml = `<span class="badge source-badge" style="margin-left: 8px; background: rgba(59, 130, 246, 0.2); color: #60a5fa; border: 1px solid rgba(59, 130, 246, 0.3); font-size: 0.7rem; padding: 2px 6px; border-radius: 4px; display: inline-block;">Source: Batch Library</span>`;
+                    updatePdfPreview(blobUrl, matchedFile.filename, badgeHtml);
                 }
 
                 applyAllOcrSuggestions(matchedFile.suggestions);
@@ -1874,21 +1953,23 @@ This cannot be undone.`)) return;
 
 
             if (downloadWordBtn) {
-                downloadWordBtn.style.display = "inline-flex";
+                if (currentOcrRawText.length > 0) {
+                    downloadWordBtn.disabled = false;
+                    downloadWordBtn.style.opacity = "1";
+                    downloadWordBtn.style.cursor = "pointer";
+                } else {
+                    downloadWordBtn.disabled = true;
+                    downloadWordBtn.style.opacity = "0.5";
+                    downloadWordBtn.style.cursor = "not-allowed";
+                }
             }
 
             // Update workstation preview card with the batch-loaded PDF if possible
             const fileObj = uploadedFileObjects[matchedFile.filename];
             if (fileObj && singlePreviewContainer && singlePreviewFilename) {
                 const blobUrl = URL.createObjectURL(fileObj);
-                singlePreviewFilename.innerHTML = `${matchedFile.filename} <span class="badge source-badge" style="margin-left: 8px; background: rgba(59, 130, 246, 0.2); color: #60a5fa; border: 1px solid rgba(59, 130, 246, 0.3); font-size: 0.7rem; padding: 2px 6px; border-radius: 4px; display: inline-block;">Source: Batch Library</span>`;
-                singlePreviewContainer.innerHTML = `
-                    <iframe class="pdf-iframe" src="${blobUrl}#toolbar=0" width="100%" height="100%"></iframe>
-                `;
-                if (singlePreviewCard) {
-                    singlePreviewCard.classList.remove("hidden-section");
-                    singlePreviewCard.classList.add("show");
-                }
+                const badgeHtml = `<span class="badge source-badge" style="margin-left: 8px; background: rgba(59, 130, 246, 0.2); color: #60a5fa; border: 1px solid rgba(59, 130, 246, 0.3); font-size: 0.7rem; padding: 2px 6px; border-radius: 4px; display: inline-block;">Source: Batch Library</span>`;
+                updatePdfPreview(blobUrl, matchedFile.filename, badgeHtml);
             }
 
             // Switch to workstation tab
@@ -2081,7 +2162,8 @@ This cannot be undone.`)) return;
             "age": "age",
             "monthly_income": "monthly-income",
             "date_of_accident": "date-of-accident",
-            "place_of_accident": "place-of-accident"
+            "place_of_accident": "place-of-accident",
+            "dependents": "dependents"
         };
 
         // Injury Specific (Part 6)
@@ -2112,7 +2194,6 @@ This cannot be undone.`)) return;
             "future_type": "future-type",
             "claimant_relationship_to_deceased": "claimant-relationship-display",
             "claimant_relationship_type": "claimant-relationship-type-hidden",
-            "dependents": "dependents",
             "conspo": "conspo",
             "conwif": "conwif",
             "conhus": "conhus",
@@ -2145,8 +2226,13 @@ This cannot be undone.`)) return;
             if (parent) {
                 const existingReason = parent.querySelector(".custom-empty-reason");
                 if (existingReason) existingReason.remove();
+                const existingWarning = parent.querySelector(".verification-warning");
+                if (existingWarning) existingWarning.remove();
+                const existingNote = parent.querySelector(".estimated-note");
+                if (existingNote) existingNote.remove();
             }
             el.classList.remove("not-stated-input");
+            el.classList.remove("low-confidence-input");
 
             if (!isAllowed) {
                 // Reset/clear value if not allowed to avoid carrying over stale data
@@ -2181,22 +2267,49 @@ This cannot be undone.`)) return;
             const conf = lastExtractedConfidences[cacheKey];
             const threshold = parseFloat(localStorage.getItem("autofill_confidence_threshold") || "0.75");
             if (conf !== undefined && conf !== null && conf < threshold) {
-                el.value = "";
-                el.classList.add("low-confidence-input");
-                
-                const parent = el.closest(".form-group");
-                if (parent && !parent.querySelector(".verification-warning")) {
-                    const warning = document.createElement("span");
-                    warning.className = "verification-warning";
-                    warning.style.color = "#f59e0b";
-                    warning.style.fontSize = "0.75rem";
-                    warning.style.fontWeight = "600";
-                    warning.style.marginTop = "4px";
-                    warning.style.display = "block";
-                    warning.innerHTML = `<i class="fa-solid fa-circle-info"></i> Low confidence (${Math.round(conf * 100)}%) — left blank for manual entry`;
-                    parent.appendChild(warning);
+                const reason = lastExtractedReasons[cacheKey] || "";
+                if (reason.includes("computed via")) {
+                    // Keep the number visible
+                    if (inputId === "date-of-birth" || inputId === "date-of-accident") {
+                        const htmlDate = toHtmlDateValue(val);
+                        if (htmlDate) el.value = htmlDate;
+                    } else {
+                        el.value = val;
+                    }
+                    el.dispatchEvent(new Event("input"));
+                    el.dispatchEvent(new Event("change"));
+
+                    // Show small, non-blocking note: "Estimated — not found in document text"
+                    const parent = el.closest(".form-group");
+                    if (parent && !parent.querySelector(".estimated-note")) {
+                        const note = document.createElement("span");
+                        note.className = "estimated-note";
+                        note.style.color = "#64748b"; // muted slate color
+                        note.style.fontSize = "0.7rem";
+                        note.style.fontStyle = "italic";
+                        note.style.marginTop = "2px";
+                        note.style.display = "block";
+                        note.innerHTML = `<i class="fa-solid fa-circle-info"></i> Estimated — not found in document text`;
+                        parent.appendChild(note);
+                    }
+                } else {
+                    el.value = "";
+                    el.classList.add("low-confidence-input");
+                    
+                    const parent = el.closest(".form-group");
+                    if (parent && !parent.querySelector(".verification-warning")) {
+                        const warning = document.createElement("span");
+                        warning.className = "verification-warning";
+                        warning.style.color = "#f59e0b";
+                        warning.style.fontSize = "0.75rem";
+                        warning.style.fontWeight = "600";
+                        warning.style.marginTop = "4px";
+                        warning.style.display = "block";
+                        warning.innerHTML = `<i class="fa-solid fa-circle-info"></i> Low confidence (${Math.round(conf * 100)}%) — left blank for manual entry`;
+                        parent.appendChild(warning);
+                    }
+                    return;
                 }
-                return;
             }
 
             // Direct Auto-fill only when confidence is high (>= threshold)
@@ -2207,6 +2320,14 @@ This cannot be undone.`)) return;
                 }
             } else {
                 el.value = val;
+                if (inputId === "dependents") {
+                    const claimantsEl = document.getElementById("consortium_claimants");
+                    if (claimantsEl && (!claimantsEl.value || claimantsEl.value === "1")) {
+                        claimantsEl.value = val;
+                        claimantsEl.dispatchEvent(new Event("input"));
+                        claimantsEl.dispatchEvent(new Event("change"));
+                    }
+                }
             }
             el.dispatchEvent(new Event("input"));
             el.dispatchEvent(new Event("change"));
@@ -2391,6 +2512,12 @@ This cannot be undone.`)) return;
         Object.keys(fields).forEach(key => {
             lastExtractedFields[key] = fields[key];
         });
+
+        // Capture the age extraction source so the chatbot knows which part
+        // of the document it came from (Particulars Block, OCR fallback, etc.)
+        if (suggestions.confidence_scores && suggestions.confidence_scores.age && suggestions.confidence_scores.age.source) {
+            lastExtractedFields["age_source"] = suggestions.confidence_scores.age.source;
+        }
 
         // ── Alias normalisation: map LLM/heuristic field name variants to
         //    the canonical keys that injuryMapping/deathMapping expect ──────
@@ -2644,11 +2771,15 @@ This cannot be undone.`)) return;
 
             try {
                 let filename = "extracted_text";
-                if (singlePreviewFilename) {
-                    const filenameText = singlePreviewFilename.textContent || singlePreviewFilename.innerText;
-                    const cleanFilename = filenameText.split("Source:")[0].trim();
+                if (singlePreviewFilename && singlePreviewFilename.innerHTML) {
+                    const parts = singlePreviewFilename.innerHTML.split("<span");
+                    let cleanFilename = parts[0].trim();
                     if (cleanFilename && cleanFilename !== "No File Loaded") {
-                        filename = cleanFilename;
+                        if (cleanFilename.toLowerCase().endsWith(".pdf")) {
+                            filename = cleanFilename.slice(0, -4);
+                        } else {
+                            filename = cleanFilename;
+                        }
                     }
                 }
 
@@ -2849,9 +2980,9 @@ This cannot be undone.`)) return;
                     marital_status: maritalStatusSelect.value || "married",
                     future_type: parseInt(futureTypeSelect?.value || 2),
                     future_prospect: (() => { const fp = document.getElementById("future-prospect"); const v = fp ? fp.value : null; return (v !== null && v !== "" && v !== "0") ? parseFloat(v) : null; })(),
-                    consortium: parseFloat(document.getElementById("consortium")?.value || 48400),
-                    funeral_expenses: parseFloat(document.getElementById("funeral-expenses")?.value || 18150),
-                    loss_estate: parseFloat(document.getElementById("loss-estate")?.value || 18150),
+                    consortium: document.getElementById("consortium")?.value ? parseFloat(document.getElementById("consortium").value) : null,
+                    funeral_expenses: document.getElementById("funeral-expenses")?.value ? parseFloat(document.getElementById("funeral-expenses").value) : null,
+                    loss_estate: document.getElementById("loss-estate")?.value ? parseFloat(document.getElementById("loss-estate").value) : null,
                     disability: parseFloat(document.getElementById("disability")?.value || 0)
                 },
                 calculated_amount: currentCalculationAmount
@@ -3035,9 +3166,11 @@ This cannot be undone.`)) return;
             marital_status: maritalStatusSelect.value || "married",
             future_type: Number(futureTypeSelect?.value || 2),
             future_prospect: (() => { const fp = document.getElementById("future-prospect"); const v = fp ? fp.value : null; return (v !== null && v !== "" && v !== "0") ? Number(v) : null; })(),
-            consortium: Number(document.getElementById("consortium")?.value || 48400),
-            funeral_expenses: Number(document.getElementById("funeral-expenses")?.value || 18150),
-            loss_estate: Number(document.getElementById("loss-estate")?.value || 18150),
+            consortium: document.getElementById("consortium")?.value ? Number(document.getElementById("consortium").value) : null,
+            funeral_expenses: document.getElementById("funeral-expenses")?.value ? Number(document.getElementById("funeral-expenses").value) : null,
+            loss_estate: document.getElementById("loss-estate")?.value ? Number(document.getElementById("loss-estate").value) : null,
+            consortium_claimants: document.getElementById("consortium_claimants")?.value ? Number(document.getElementById("consortium_claimants").value) : 1,
+            consortium_mode: document.getElementById("consortium_mode")?.value || "flat",
 
             // Consortium sub-heads read from form
             conlum: Number(document.getElementById("conlum")?.value || 0),
@@ -3187,7 +3320,7 @@ This cannot be undone.`)) return;
                     yearsElapsed -= 1;
                 }
                 const periods = Math.floor(yearsElapsed / 3);
-                return Math.round(baseAmount * (1.0 + 0.10 * periods) * 100) / 100;
+                return Math.round(baseAmount * (1.10 ** periods) * 100) / 100;
             }
 
             function getVal(val, defaultVal) {
@@ -3201,13 +3334,21 @@ This cannot be undone.`)) return;
             const consortiumDefault = getConventionalHeadsEnhanced(40000.0, refDateStr);
             const funeralDefault = getConventionalHeadsEnhanced(15000.0, refDateStr);
             const lossEstateDefault = getConventionalHeadsEnhanced(15000.0, refDateStr);
+            const consortiumPerPerson = consortiumDefault; // ignore data.consortium override entirely
 
-            let claimants = Number(data.consortium_claimants);
-            if (isNaN(claimants) || claimants <= 0) {
-                claimants = 1;
+            let consortiumClaimantsVal = Number(data.consortium_claimants);
+            if (isNaN(consortiumClaimantsVal) || consortiumClaimantsVal <= 0) {
+                consortiumClaimantsVal = 1;
             }
-            const consortiumPerPerson = getVal(data.consortium, consortiumDefault);
-            let consortium = consortiumPerPerson * claimants;
+
+            const consortiumMode = (data.consortium_mode || "flat").trim().toLowerCase();
+            let consortium = consortiumPerPerson;
+            if (consortiumMode === "satinder_kaur" || consortiumMode === "per_lr" || consortiumMode === "per_heir") {
+                consortium = consortiumPerPerson * consortiumClaimantsVal;
+            }
+
+            let consortiumSettled = consortium;
+            let consortiumContested = 0;
 
             if (consortium_breakdown_total > 0) {
                 consortium = 0;
@@ -3504,15 +3645,15 @@ This cannot be undone.`)) return;
         container.innerHTML = innerHTML;
 
         // Render Auto-fill button inside the dedicated container below Check Judicial Analysis
-        const autofillContainer = document.getElementById("autofill-button-container");
-        if (autofillContainer) {
-            autofillContainer.style.display = "block";
-            autofillContainer.innerHTML = `
-                <button type="button" id="btn-trigger-autofill" class="btn btn-success" style="width: 100%; font-weight: 700; display: flex; align-items: center; justify-content: center; gap: 8px; font-size: 0.82rem; padding: 10px 14px; border-radius: var(--radius-sm); border: none; cursor: pointer; transition: all var(--transition-fast) ease;">
-                    <i class="fa-solid fa-magic"></i> Auto-fill Workstation Form
-                </button>
-            `;
-        }
+        // const autofillContainer = document.getElementById("autofill-button-container");
+        // if (autofillContainer) {
+        //     autofillContainer.style.display = "block";
+        //     autofillContainer.innerHTML = `
+        //         <button type="button" id="btn-trigger-autofill" class="btn btn-success" style="width: 100%; font-weight: 700; display: flex; align-items: center; justify-content: center; gap: 8px; font-size: 0.82rem; padding: 10px 14px; border-radius: var(--radius-sm); border: none; cursor: pointer; transition: all var(--transition-fast) ease;">
+        //             <i class="fa-solid fa-magic"></i> Auto-fill Workstation Form
+        //         </button>
+        //     `;
+        // }
 
 
 
@@ -4085,6 +4226,7 @@ This cannot be undone.`)) return;
     }
 
     async function handleAssistantChatSend(displayLabel = null) {
+        await window.autofillReadyPromise;
         const query = assistantChatInput.value.trim();
         if (!query) return;
 
@@ -4120,10 +4262,15 @@ This cannot be undone.`)) return;
                 tribunal_future_medical: lastExtractedFields["future_medical_expenses"] || "",
                 tribunal_consortium: lastExtractedFields["consortium"] || "",
                 tribunal_funeral: lastExtractedFields["funeral_expenses"] || "",
-                tribunal_estate: lastExtractedFields["loss_estate"] || ""
+                tribunal_estate: lastExtractedFields["loss_estate"] || "",
+                extracted_age: lastExtractedFields["age"] || "",
+                age_source: lastExtractedFields["age_source"] || "",
+                extracted_disability: lastExtractedFields["disability"] || "",
+                extracted_monthly_income: lastExtractedFields["monthly_income"] || "",
+                extracted_dependents: lastExtractedFields["dependents"] || ""
             };
 
-            const calculatorResult = {
+            const calculatorResult = currentCalculationAmount > 0 ? {
                 case_type: caseType,
                 final_amount: currentCalculationAmount,
                 total_compensation: currentCalculationAmount,
@@ -4143,7 +4290,7 @@ This cannot be undone.`)) return;
                 loss_estate: currentCalculationBreakdown.loss_estate || 0,
                 deduction_percentage: currentCalculationBreakdown.deduction_percentage || 0,
                 future_prospect_percentage: currentCalculationBreakdown.future_prospect_percentage || 0
-            };
+            } : null;
 
             // Identify current active PDF filename
             let filename = null;
@@ -4349,12 +4496,12 @@ This cannot be undone.`)) return;
                         success = await runAiRecovery(currentOcrRawText, window.detectedTrack);
                     }
                     if (!success) {
-                        applyAllOcrSuggestions(data.suggestions, null, null, null, false, false);
+                        applyAllOcrSuggestions(data.suggestions, null, null, null, false, true);
                         showToast("AI refinement unavailable — filled from heuristic OCR extraction only. Please review all fields.", "warning");
                     }
                 } catch (err) {
                     console.error("Autofill click handler error:", err);
-                    applyAllOcrSuggestions(data.suggestions, null, null, null, false, false);
+                    applyAllOcrSuggestions(data.suggestions, null, null, null, false, true);
                     showToast("AI refinement unavailable — filled from heuristic OCR extraction only. Please review all fields.", "warning");
                 } finally {
                     setAutofillFieldsPending(false);
@@ -4948,6 +5095,373 @@ This cannot be undone.`)) return;
         }
     }
 
+    // PDF Annotation Canvas & Drawing tools
+    const annotationCanvas = document.getElementById("pdf-annotation-canvas");
+    const pencilTrigger = document.getElementById("pencil-tool-trigger");
+    const pencilMenu = document.getElementById("pencil-options-menu");
+    const btnPencil = document.getElementById("pencil-btn-pencil");
+    const btnMarker = document.getElementById("pencil-btn-marker");
+    const btnEraser = document.getElementById("pencil-btn-eraser");
+    const btnClear = document.getElementById("pencil-btn-clear");
+    const btnNotes = document.getElementById("pencil-btn-notes");
+    const btnUndo = document.getElementById("pencil-btn-undo");
+
+    // Short Notes Widget Elements
+    const notesContainer = document.getElementById("pdf-notes-container");
+    const notesTextarea = document.getElementById("notes-textarea");
+    const notesCloseBtn = document.getElementById("notes-close-btn");
+    const notesEraseBtn = document.getElementById("notes-erase-btn");
+
+    let isDrawing = false;
+    let lastX = 0;
+    let lastY = 0;
+    let activeTool = "none"; // none, pencil, marker, eraser
+    let ctx = null;
+
+    let drawingColor = "#ef4444"; // default drawing color
+    let drawingSize = 2.5; // default thin brush size
+    let drawingHistory = []; // undo history stack
+
+    if (annotationCanvas) {
+        ctx = annotationCanvas.getContext("2d");
+    }
+
+    function initCanvasSize() {
+        if (!annotationCanvas || !ctx) return;
+        const currentWidth = annotationCanvas.clientWidth;
+        const currentHeight = annotationCanvas.clientHeight;
+        
+        // Only set canvas dimensions if they changed, since setting them clears the context
+        if (annotationCanvas.width !== currentWidth || annotationCanvas.height !== currentHeight) {
+            // Backup current drawings
+            const tempCanvas = document.createElement("canvas");
+            tempCanvas.width = annotationCanvas.width;
+            tempCanvas.height = annotationCanvas.height;
+            const tempCtx = tempCanvas.getContext("2d");
+            tempCtx.drawImage(annotationCanvas, 0, 0);
+
+            annotationCanvas.width = currentWidth;
+            annotationCanvas.height = currentHeight;
+            
+            // Restore drawings
+            ctx.drawImage(tempCanvas, 0, 0);
+        }
+    }
+
+    // Initialize size on window resize if canvas is active
+    window.addEventListener("resize", () => {
+        if (activeTool !== "none") {
+            initCanvasSize();
+        }
+    });
+
+    if (pencilTrigger && pencilMenu) {
+        pencilTrigger.addEventListener("click", (e) => {
+            e.stopPropagation();
+            const isMenuOpen = pencilMenu.style.display === "flex";
+            pencilMenu.style.display = isMenuOpen ? "none" : "flex";
+        });
+
+        // Close menu when clicking outside
+        document.addEventListener("click", () => {
+            pencilMenu.style.display = "none";
+        });
+
+        pencilMenu.addEventListener("click", (e) => {
+            e.stopPropagation();
+        });
+    }
+
+    function selectTool(tool) {
+        activeTool = tool;
+        if (!annotationCanvas || !ctx) return;
+
+        // Reset highlight states
+        [btnPencil, btnMarker, btnEraser].forEach(btn => {
+            if (btn) btn.style.background = "transparent";
+        });
+
+        if (tool === "none") {
+            annotationCanvas.style.display = "none";
+            pencilTrigger.style.background = "#eab308";
+            pencilTrigger.classList.remove("active");
+        } else {
+            annotationCanvas.style.display = "block";
+            initCanvasSize();
+            pencilTrigger.style.background = "#ca8a04";
+            pencilTrigger.classList.add("active");
+            
+            if (tool === "pencil") {
+                if (btnPencil) btnPencil.style.background = "rgba(15, 23, 42, 0.08)";
+            } else if (tool === "marker") {
+                if (btnMarker) btnMarker.style.background = "rgba(15, 23, 42, 0.08)";
+            } else if (tool === "eraser") {
+                if (btnEraser) btnEraser.style.background = "rgba(15, 23, 42, 0.08)";
+            }
+        }
+    }
+
+    if (btnPencil) {
+        btnPencil.addEventListener("click", () => {
+            selectTool(activeTool === "pencil" ? "none" : "pencil");
+            pencilMenu.style.display = "none";
+        });
+    }
+
+    if (btnMarker) {
+        btnMarker.addEventListener("click", () => {
+            selectTool(activeTool === "marker" ? "none" : "marker");
+            pencilMenu.style.display = "none";
+        });
+    }
+
+    if (btnEraser) {
+        btnEraser.addEventListener("click", () => {
+            selectTool(activeTool === "eraser" ? "none" : "eraser");
+            pencilMenu.style.display = "none";
+        });
+    }
+
+    if (btnClear) {
+        btnClear.addEventListener("click", () => {
+            if (ctx && annotationCanvas) {
+                saveDrawingState();
+                ctx.clearRect(0, 0, annotationCanvas.width, annotationCanvas.height);
+                showToast("Annotations cleared", "info");
+            }
+            pencilMenu.style.display = "none";
+        });
+    }
+
+    // Brush Settings: Color dots selection listener
+    const colorDots = document.querySelectorAll("#pencil-colors .color-dot");
+    colorDots.forEach(dot => {
+        dot.addEventListener("click", (e) => {
+            colorDots.forEach(d => d.classList.remove("active"));
+            dot.classList.add("active");
+            drawingColor = dot.getAttribute("data-color");
+            e.stopPropagation();
+        });
+    });
+
+    // Brush Settings: Size options selection listener
+    const sizeBtns = document.querySelectorAll("#pencil-sizes .size-btn");
+    sizeBtns.forEach(btn => {
+        btn.addEventListener("click", (e) => {
+            sizeBtns.forEach(b => b.classList.remove("active"));
+            btn.classList.add("active");
+            drawingSize = parseFloat(btn.getAttribute("data-size"));
+            e.stopPropagation();
+        });
+    });
+
+    // Undo drawing feature helper
+    function saveDrawingState() {
+        if (!annotationCanvas || !ctx) return;
+        drawingHistory.push(annotationCanvas.toDataURL());
+        if (drawingHistory.length > 30) {
+            drawingHistory.shift(); // limit history buffer
+        }
+    }
+
+    if (btnUndo) {
+        btnUndo.addEventListener("click", () => {
+            if (drawingHistory.length > 0) {
+                const lastState = drawingHistory.pop();
+                const img = new Image();
+                img.onload = () => {
+                    ctx.clearRect(0, 0, annotationCanvas.width, annotationCanvas.height);
+                    ctx.drawImage(img, 0, 0);
+                };
+                img.src = lastState;
+                showToast("Undo applied", "info");
+            } else {
+                showToast("No drawing actions to undo", "warning");
+            }
+            pencilMenu.style.display = "none";
+        });
+    }
+
+    // Short Notes: Toggle container visibility
+    if (btnNotes && notesContainer) {
+        btnNotes.addEventListener("click", () => {
+            const isVisible = notesContainer.style.display === "flex";
+            notesContainer.style.display = isVisible ? "none" : "flex";
+            pencilMenu.style.display = "none";
+            if (!isVisible && window.currentPdfName) {
+                loadPdfNotes(window.currentPdfName);
+            }
+        });
+    }
+
+    // Short Notes caching helper functions
+    window.loadPdfNotes = function(filename) {
+        if (!notesTextarea) return;
+        const key = "mact_pdf_notes_" + filename;
+        const savedNotes = localStorage.getItem(key);
+        if (savedNotes) {
+            notesTextarea.value = savedNotes;
+            updateNotesSaveStatus(true);
+        } else {
+            notesTextarea.value = "";
+            updateNotesSaveStatus(false, "No notes saved");
+        }
+    };
+
+    function savePdfNotes() {
+        if (!notesTextarea) return;
+        const filename = window.currentPdfName || "default";
+        const key = "mact_pdf_notes_" + filename;
+        const val = notesTextarea.value;
+        if (val.trim()) {
+            localStorage.setItem(key, val);
+            updateNotesSaveStatus(true);
+        } else {
+            localStorage.removeItem(key);
+            updateNotesSaveStatus(false, "Empty");
+        }
+    }
+
+    function updateNotesSaveStatus(saved, customMsg) {
+        const statusSpan = document.getElementById("notes-save-status");
+        if (!statusSpan) return;
+        if (saved) {
+            statusSpan.innerHTML = `<i class="fa-solid fa-circle-check" style="color: #10b981;"></i> Saved to cache`;
+        } else {
+            statusSpan.innerHTML = customMsg ? `<i class="fa-solid fa-info-circle"></i> ${customMsg}` : `<i class="fa-solid fa-circle-xmark"></i> Not saved`;
+        }
+    }
+
+    // Bind event listeners for notes widget
+    if (notesTextarea) {
+        notesTextarea.addEventListener("input", savePdfNotes);
+    }
+
+    if (notesCloseBtn && notesContainer) {
+        notesCloseBtn.addEventListener("click", () => {
+            notesContainer.style.display = "none";
+        });
+    }
+
+    if (notesEraseBtn) {
+        notesEraseBtn.addEventListener("click", () => {
+            if (confirm("Are you sure you want to completely erase these notes?")) {
+                if (notesTextarea) {
+                    notesTextarea.value = "";
+                    const filename = window.currentPdfName || "default";
+                    const key = "mact_pdf_notes_" + filename;
+                    localStorage.removeItem(key);
+                    updateNotesSaveStatus(false, "Erased");
+                    showToast("Notes erased completely", "info");
+                }
+            }
+        });
+    }
+
+    // Canvas drawing mouse & touch listeners
+    if (annotationCanvas && ctx) {
+        annotationCanvas.addEventListener("mousedown", (e) => {
+            if (activeTool === "none") return;
+            saveDrawingState();
+            isDrawing = true;
+            const rect = annotationCanvas.getBoundingClientRect();
+            lastX = e.clientX - rect.left;
+            lastY = e.clientY - rect.top;
+        });
+
+        annotationCanvas.addEventListener("mousemove", (e) => {
+            if (!isDrawing || activeTool === "none") return;
+            const rect = annotationCanvas.getBoundingClientRect();
+            const x = e.clientX - rect.left;
+            const y = e.clientY - rect.top;
+
+            ctx.beginPath();
+            ctx.moveTo(lastX, lastY);
+            ctx.lineTo(x, y);
+
+            if (activeTool === "pencil") {
+                ctx.strokeStyle = drawingColor;
+                ctx.lineWidth = drawingSize;
+                ctx.globalAlpha = 1.0;
+                ctx.globalCompositeOperation = "source-over";
+                ctx.lineCap = "round";
+                ctx.lineJoin = "round";
+            } else if (activeTool === "marker") {
+                ctx.strokeStyle = drawingColor;
+                ctx.lineWidth = 16;
+                ctx.globalAlpha = 0.40;
+                ctx.globalCompositeOperation = "source-over";
+                ctx.lineCap = "square";
+                ctx.lineJoin = "miter";
+            } else if (activeTool === "eraser") {
+                ctx.strokeStyle = "rgba(0,0,0,1)";
+                ctx.lineWidth = 24;
+                ctx.globalAlpha = 1.0;
+                ctx.globalCompositeOperation = "destination-out"; // precision erase
+                ctx.lineCap = "round";
+                ctx.lineJoin = "round";
+            }
+
+            ctx.stroke();
+            lastX = x;
+            lastY = y;
+        });
+
+        annotationCanvas.addEventListener("mouseup", () => { isDrawing = false; });
+        annotationCanvas.addEventListener("mouseout", () => { isDrawing = false; });
+
+        // Touch event support for tablets
+        annotationCanvas.addEventListener("touchstart", (e) => {
+            if (activeTool === "none" || e.touches.length === 0) return;
+            saveDrawingState();
+            isDrawing = true;
+            const rect = annotationCanvas.getBoundingClientRect();
+            lastX = e.touches[0].clientX - rect.left;
+            lastY = e.touches[0].clientY - rect.top;
+            e.preventDefault();
+        });
+
+        annotationCanvas.addEventListener("touchmove", (e) => {
+            if (!isDrawing || activeTool === "none" || e.touches.length === 0) return;
+            const rect = annotationCanvas.getBoundingClientRect();
+            const x = e.touches[0].clientX - rect.left;
+            const y = e.touches[0].clientY - rect.top;
+
+            ctx.beginPath();
+            ctx.moveTo(lastX, lastY);
+            ctx.lineTo(x, y);
+
+            if (activeTool === "pencil") {
+                ctx.strokeStyle = drawingColor;
+                ctx.lineWidth = drawingSize;
+                ctx.globalAlpha = 1.0;
+                ctx.globalCompositeOperation = "source-over";
+                ctx.lineCap = "round";
+                ctx.lineJoin = "round";
+            } else if (activeTool === "marker") {
+                ctx.strokeStyle = drawingColor;
+                ctx.lineWidth = 16;
+                ctx.globalAlpha = 0.40;
+                ctx.globalCompositeOperation = "source-over";
+                ctx.lineCap = "square";
+                ctx.lineJoin = "miter";
+            } else if (activeTool === "eraser") {
+                ctx.strokeStyle = "rgba(0,0,0,1)";
+                ctx.lineWidth = 24;
+                ctx.globalAlpha = 1.0;
+                ctx.globalCompositeOperation = "destination-out";
+                ctx.lineCap = "round";
+                ctx.lineJoin = "round";
+            }
+
+            ctx.stroke();
+            lastX = x;
+            lastY = y;
+            e.preventDefault();
+        });
+
+        annotationCanvas.addEventListener("touchend", () => { isDrawing = false; });
+    }
 
 });
 

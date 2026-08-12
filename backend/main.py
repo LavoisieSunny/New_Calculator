@@ -1,4 +1,5 @@
 import os
+import re
 import sys
 import asyncio
 import logging
@@ -19,8 +20,10 @@ load_dotenv()
 
 from backend.calculator import router as calculator_router, CompensationRequest
 from backend.ocr import router as ocr_router
+from backend.general_chatbot import router as general_chatbot_router
 from backend.vector_db import semantic_search, get_qdrant_client, VECTOR_DB_INITIALIZED
 from backend.evaluator import evaluate_compensation_precedents
+from backend.justification_engine import build_justification
 
 app = FastAPI(
     title="Compensation Calculator & Centralized Qdrant Vector DB",
@@ -78,6 +81,7 @@ class EvaluateRequest(BaseModel):
 
 app.include_router(calculator_router, prefix="/api/calculate", tags=["Calculation"])
 app.include_router(ocr_router, prefix="/api/ocr", tags=["OCR"])
+app.include_router(general_chatbot_router, prefix="/api/general-chat", tags=["General Chatbot (Test)"])
 
 @app.get("/api/health")
 async def health_check():
@@ -291,6 +295,7 @@ def _fallback_extract_award_total(ocr_text):
     return candidates[-1][1]
 
 async def prepare_pdf_chat_prompt(request: PDFChatRequest):
+    justification = None
 
     from backend.vector_db import semantic_search_rag
     import json
@@ -306,11 +311,7 @@ async def prepare_pdf_chat_prompt(request: PDFChatRequest):
     except (TypeError, ValueError):
         calculated_compensation = 0.0
         
-    has_populated_calculator = False
-    if request.calculator_result and calculated_compensation > 0:
-        has_populated_calculator = True
-    elif pf.get("monthly_income") and float(pf.get("monthly_income")) > 0:
-        has_populated_calculator = True
+    has_populated_calculator = calculated_compensation > 0
 
     if has_populated_calculator:
         calculator_instruction_block = (
@@ -328,13 +329,16 @@ async def prepare_pdf_chat_prompt(request: PDFChatRequest):
             "Calculator has not been run with populated fields for this session.\n\n"
         )
         
-    from backend.recalc_intent import run_recalculation
+    from backend.recalc_intent import run_recalculation, run_field_lookup
     if not request.is_justify:
         recalc_response = run_recalculation(
             question_str, request.parsed_fields, request.calculator_result
         )
         if recalc_response is not None:
-            return None, None, [], recalc_response
+            return None, None, [], recalc_response, None
+        lookup_response = run_field_lookup(question_str, request.parsed_fields)
+        if lookup_response is not None:
+            return None, None, [], lookup_response, None
             
     is_summary_q = is_case_summary_query(question_str)
     case_filter = None if request.case_type == "all" else request.case_type
@@ -387,7 +391,9 @@ async def prepare_pdf_chat_prompt(request: PDFChatRequest):
     for idx, res in enumerate(search_results):
         text_block = res.get("text", "").strip()
         filename = res.get("filename", "unknown")
-        context_blocks.append(f"[Context {idx+1} from {filename}]:\n{text_block}")
+        meta = res.get("metadata", {}) or {}
+        page_no = meta.get("page_number", "?")
+        context_blocks.append(f"[Context {idx+1} — {filename}, Page {page_no}]:\n{text_block}")
         
         precedents.append({
             "filename": filename,
@@ -444,6 +450,19 @@ async def prepare_pdf_chat_prompt(request: PDFChatRequest):
                 f"[Current PDF Workstation OCR Text]:\n{ocr_for_llm}"
             )
     if request.parsed_fields:
+        age_source_note = ""
+        if not request.is_justify and request.parsed_fields.get("age_source"):
+            age_source_note = (
+                f" EXCEPTION — AGE OVERRIDE: the 'age' value above "
+                f"({request.parsed_fields.get('age')}) was extracted from "
+                f"{request.parsed_fields['age_source']}, the highest-priority, current-appeal-stage "
+                "source. This is the claimant's authoritative age — use it in ALL answers, including "
+                "case summaries and factual questions, even though the rule above says to answer "
+                "factual questions from the OCR text. If a different age for the same person appears "
+                "elsewhere in the OCR text (e.g. an earlier tribunal order), do NOT report it as the "
+                "claimant's age — mention it only if explicitly asked what an earlier document said, "
+                "and label it clearly as such (e.g. \"the 2025 tribunal order describes her as 12 at that time\")."
+            )
         workstation_blocks.append(
             "[Current PDF Workstation Parsed Fields — CALCULATOR INPUT VALUES ONLY. "
             "These reflect whatever is currently typed into the left-hand form and may "
@@ -452,8 +471,8 @@ async def prepare_pdf_chat_prompt(request: PDFChatRequest):
             "case (e.g. 'what disability percentage does the judgment mention', "
             "'what medical expenses were claimed'), you MUST answer from the OCR text / "
             "retrieved PDF context above, not from this block. Only use this block when "
-            "the question is specifically about the calculator's current inputs or "
-            "outputs.]:\n"
+            "the question is specifically about the calculator's current inputs or outputs."
+            + age_source_note + "]:\n"
             f"{json.dumps(request.parsed_fields, indent=2)}"
         )
     if request.calculator_result:
@@ -474,35 +493,15 @@ async def prepare_pdf_chat_prompt(request: PDFChatRequest):
         case_type_str = str(pf.get("case_type") or cr.get("case_type") or "injury").lower()
         is_death = (case_type_str == "death")
 
-        # ── PRECOMPUTE VERDICT IN PYTHON (never let LLM compare numbers) ──
-        try:
-            tribunal_total = float(pf.get("award_amount") or 0)
-        except (TypeError, ValueError):
-            tribunal_total = 0
-        tribunal_total_source = "workstation field" if tribunal_total > 0 else None
-
-        # If the workstation's cached award_amount is blank (autofill wasn't run /
-        # field cleared), fall back to pulling the figure directly out of the OCR
-        # text so the rest of the precompute (verdict + subtraction-reconciliation
-        # of missing heads) can still run instead of silently degrading.
-        if tribunal_total <= 0 and request.ocr_text:
-            fallback_total = _fallback_extract_award_total(request.ocr_text)
-            if fallback_total:
-                tribunal_total = fallback_total
-                tribunal_total_source = "OCR text (fallback regex — workstation field was blank)"
-
-        try:
-            calc_total = float(
-                cr.get("final_amount") or cr.get("total_compensation") or 0
-            )
-        except (TypeError, ValueError):
-            calc_total = 0
-
-        if tribunal_total == 0 or calc_total == 0:
+        justification = build_justification(request.parsed_fields, request.calculator_result, request.ocr_text)
+        
+        if justification.get("status") == "insufficient_data":
+            tribunal_total = justification.get("tribunal_total") or 0.0
+            calc_total = justification.get("calculator_total") or 0.0
             math_relation = "unknown"
-            missing_side = "the tribunal award total" if tribunal_total == 0 else "the calculator total"
+            tribunal_total_source = None
             precomputed_comparison = (
-                f"{missing_side.capitalize()} could not be determined from either the workstation fields "
+                f"The tribunal award total could not be determined from either the workstation fields "
                 f"or the OCR text, so no quantum comparison (Adequate / Under-compensated / "
                 f"Over-compensated) is possible for this case. "
                 f"HARD RULE: Overall Verdict MUST be written as "
@@ -511,32 +510,38 @@ async def prepare_pdf_chat_prompt(request: PDFChatRequest):
                 f"individual heads above appear to match. If this is a liability appeal, resolve the "
                 f"verdict on liability grounds only and say so explicitly."
             )
-        elif abs(tribunal_total - calc_total) < 1:
-            math_relation = "equal"
-            precomputed_comparison = (
-                f"Tribunal awarded Rs. {tribunal_total:,.0f} which EQUALS "
-                f"the calculator estimate of Rs. {calc_total:,.0f}. "
-                f"If CLAIMANT filed the appeal: verdict is UNDER-COMPENSATED "
-                f"(specific heads omitted in grounds of appeal). "
-                f"If INSURANCE COMPANY filed: verdict is ADEQUATE on quantum "
-                f"(this may be a liability/exoneration appeal — see grounds)."
-            )
-        elif tribunal_total < calc_total:
-            math_relation = "tribunal_lower"
-            diff = calc_total - tribunal_total
-            precomputed_comparison = (
-                f"Tribunal awarded Rs. {tribunal_total:,.0f}, which is "
-                f"Rs. {diff:,.0f} LESS than the calculator estimate of "
-                f"Rs. {calc_total:,.0f}."
-            )
         else:
-            math_relation = "tribunal_higher"
-            diff = tribunal_total - calc_total
-            precomputed_comparison = (
-                f"Tribunal awarded Rs. {tribunal_total:,.0f}, which is "
-                f"Rs. {diff:,.0f} MORE than the calculator estimate of "
-                f"Rs. {calc_total:,.0f}."
-            )
+            tribunal_total = justification.get("tribunal_total") or 0.0
+            calc_total = justification.get("calculator_total") or 0.0
+            math_relation = justification.get("math_relation") or "unknown"
+            tribunal_total_source = justification.get("tribunal_total_source")
+            diff = justification.get("diff") or 0.0
+            
+            if math_relation == "equal":
+                precomputed_comparison = (
+                    f"The tribunal awarded Rs. {tribunal_total:,.0f}, which matches "
+                    f"the calculator's estimated total of Rs. {calc_total:,.0f}. "
+                    f"On quantum, the award is therefore ADEQUATE — the total sum awarded "
+                    f"is neither less than nor more than what the calculator computes as due. "
+                    f"HARD RULE: the Overall Verdict MUST be written as ADEQUATE whenever the "
+                    f"tribunal total equals the calculator total, regardless of who filed the "
+                    f"appeal — never write UNDER-COMPENSATED or OVER-COMPENSATED here. "
+                    f"If the grounds of appeal still raise specific missed heads or a liability "
+                    f"dispute, note those separately under Missed Heads / Liability Grounds "
+                    f"below, without changing the ADEQUATE verdict on overall quantum."
+                )
+            elif math_relation == "tribunal_lower":
+                precomputed_comparison = (
+                    f"Tribunal awarded Rs. {tribunal_total:,.0f}, which is "
+                    f"Rs. {diff:,.0f} LESS than the calculator estimate of "
+                    f"Rs. {calc_total:,.0f}."
+                )
+            else: # tribunal_higher
+                precomputed_comparison = (
+                    f"Tribunal awarded Rs. {tribunal_total:,.0f}, which is "
+                    f"Rs. {abs(diff):,.0f} MORE than the calculator estimate of "
+                    f"Rs. {calc_total:,.0f}."
+                )
         # ─────────────────────────────────────────────────────────────────
 
         # ── BUILD CASE_FACTS_SUMMARY (death vs injury fields) ─────────────
@@ -692,6 +697,10 @@ async def prepare_pdf_chat_prompt(request: PDFChatRequest):
 
             "=== OUTPUT FORMAT ===\n\n"
 
+            "FORMATTING RULE: NEVER use Markdown headers (#, ##, ###, etc.) anywhere in "
+            "your response. Use **bold** (double asterisks) for the section labels shown "
+            "below exactly as written — do not prefix them with '#' characters.\n\n"
+
             "**Who Filed the Appeal:** "
             "[Claimant seeking enhancement / Insurance company seeking reduction/exoneration]\n\n"
 
@@ -700,13 +709,23 @@ async def prepare_pdf_chat_prompt(request: PDFChatRequest):
 
             "**Overall Verdict:** [UNDER-COMPENSATED / ADEQUATE / OVER-COMPENSATED / "
             "LIABILITY DISPUTE (quantum not in dispute) / QUANTUM NOT DETERMINABLE (insufficient data)]\n"
-            "HARD RULE: if the '=== PRECOMPUTED VERDICT ===' block above shows MATH RELATION: unknown, "
+            "HARD RULE 1: if the '=== PRECOMPUTED VERDICT ===' block above shows MATH RELATION: unknown, "
             "you MUST use 'QUANTUM NOT DETERMINABLE (insufficient data)' here — never Adequate, "
             "Under-Compensated, or Over-Compensated, even if some individual heads above happen to match. "
             "A verdict of 'Adequate' is a factual claim that the total awarded is not less than what is "
             "due; you cannot make that claim without knowing both totals.\n"
+            "HARD RULE 2: if MATH RELATION: equal, you MUST use 'ADEQUATE' here — never "
+            "Under-Compensated or Over-Compensated. The tribunal total exactly matching the "
+            "calculator total is, by definition, an adequate award on quantum, irrespective of "
+            "who filed the appeal or what the grounds argue.\n"
+            "HARD RULE 3: if MATH RELATION: tribunal_lower, the Overall Verdict MUST be "
+            "UNDER-COMPENSATED. If MATH RELATION: tribunal_higher, the Overall Verdict MUST be "
+            "OVER-COMPENSATED. The aggregate verdict always follows the MATH RELATION direction "
+            "given above — it is a statement about the TOTAL, not about any single head. Never "
+            "flip the direction because one or two individual heads below look 'Low'; discuss "
+            "those heads in the Head-wise Analysis section instead, without changing this verdict.\n"
             "Reason: [Copy the COMPARISON sentence from PRECOMPUTED VERDICT verbatim. "
-            "Then append any missed heads or liability grounds.]\n\n"
+            "Then append any missed heads or liability grounds, written clearly and professionally.]\n\n"
 
             "**Head-wise Analysis (Awarded Heads):**\n"
             + head_analysis_hint +
@@ -784,22 +803,20 @@ async def prepare_pdf_chat_prompt(request: PDFChatRequest):
         "1. Use ONLY the supplied context (Retrieved Precedents and active Workstation details).\n"
         "2. Do NOT invent or hallucinate legal facts, precedents, or claims metrics.\n"
         "3. If the context does not contain the answer, clearly state that the information is missing.\n\n"
+        "CITATION RULE: Every factual claim you make must end with a page reference in the "
+        "form (Page N), taken exactly from the '[Context N — filename, Page N]' labels above. "
+        "Do not invent a page number if none is shown for that piece of text — in that case, "
+        "write (page not available) instead.\n\n"
         "=== FACTUAL QUESTIONS ABOUT THE DOCUMENT (STRICT RULE) ===\n"
-        "When the user asks what the PDF/document/judgment states, mentions, shows, or contains\n"
-        "(e.g. 'what disability percentage is mentioned', 'what does the judgment say about X',\n"
-        "'what age is given'), you MUST base your answer ONLY on the text under\n"
-        "'[Current PDF Workstation OCR Text]' and the '=== RETRIEVED PRECEDENTS ===' chunks below --\n"
-        "i.e. the actual text extracted from the PDF.\n"
-        "You are FORBIDDEN from answering such questions using the\n"
-        "'[Current PDF Workstation Parsed Fields]' block, even if it contains a number that looks\n"
-        "relevant. That block only reflects whatever is currently typed into the calculator form on\n"
-        "screen -- it may be blank, auto-filled by an imperfect heuristic, or hand-edited by the user.\n"
-        "It is NOT proof that a number appears anywhere in the document, and you must never say\n"
-        "phrases like 'this can be found in the parsed fields section' or 'under the disability field'\n"
-        "-- those phrases describe the calculator form, not the document.\n"
-        "Before stating any number, date, or name as a fact from the document, confirm it literally\n"
-        "appears in the OCR text or retrieved context above. If it does not appear there, respond\n"
-        "exactly: 'This is not explicitly mentioned in the uploaded document.'\n\n"
+        "When the user asks what the PDF/document/judgment states (age, disability %, income, etc.),\n"
+        "you MAY use the 'extracted_age', 'extracted_disability', 'extracted_monthly_income',\n"
+        "'extracted_dependents' values in the Parsed Fields block below — these come directly from\n"
+        "the heuristic parser reading the PDF and are NOT user-edited.\n"
+        "You are FORBIDDEN from using 'age', 'disability', 'monthly_income', 'dependents' (without the\n"
+        "extracted_ prefix) as document facts — those are live calculator form inputs that may have\n"
+        "been hand-edited by the user and are not proof of what the document says.\n"
+        "Still confirm against the OCR text/retrieved context where possible; if extracted_* is empty,\n"
+        "fall back to the OCR text as before.\n\n"
         "=== NEW COMPENSATION DATA MODEL & PRIORITY RULES ===\n"
         "Maintain separate concepts for the following compensation values and NEVER merge, mix, or overwrite them:\n"
         "- awarded_compensation: Amount awarded by the Tribunal/Court (extracted from PDF). E.g. 'Amount Awarded Rs.' indicates this.\n"
@@ -845,13 +862,27 @@ async def prepare_pdf_chat_prompt(request: PDFChatRequest):
     elif is_summary_q:
         system_instruction += f"\n{case_summary_instruction}"
 
+    if not request.is_justify and request.parsed_fields.get("age_source"):
+        system_instruction += (
+            f"\n\nHARD RULE — AGE: The claimant's age is exactly "
+            f"{request.parsed_fields.get('age')}, extracted from "
+            f"{request.parsed_fields['age_source']} (the highest-priority source). "
+            f"You MUST use this exact number every time you state an age anywhere in "
+            f"your response — in bullet points, in narrative prose (e.g. \"a "
+            f"{request.parsed_fields.get('age')}-year-old\"), and in any summary line. "
+            f"Never write a different age number anywhere in the response, even if a "
+            f"different age appears elsewhere in the source document (e.g. an earlier "
+            f"tribunal order) — mention that only explicitly as a separate historical fact, "
+            f"clearly labeled, never as the claimant's current age."
+        )
+
     user_prompt = (
         f"{case_facts_summary}\n"
         f"Context:\n{chunks_combined}\n\n"
         f"Question:\n{question_str}"
     )
     
-    return user_prompt, system_instruction, precedents, None
+    return user_prompt, system_instruction, precedents, None, (justification if request.is_justify else None)
 
 @app.post("/api/chat/pdf")
 async def chat_with_pdf(request: PDFChatRequest):
@@ -860,7 +891,7 @@ async def chat_with_pdf(request: PDFChatRequest):
     and sends the constructed prompt to the configured LLM.
     """
     try:
-        user_prompt, system_instruction, precedents, recalc_response = await prepare_pdf_chat_prompt(request)
+        user_prompt, system_instruction, precedents, recalc_response, justification_data = await prepare_pdf_chat_prompt(request)
         if recalc_response is not None:
             return recalc_response
 
@@ -868,9 +899,23 @@ async def chat_with_pdf(request: PDFChatRequest):
         from backend.llm_client import generate_response
         ai_response = await asyncio.to_thread(generate_response, user_prompt, system_instruction, None, request.history)
         
+        # Cheap post-hoc consistency check against the parser's own extraction — no extra LLM call
+        pf = request.parsed_fields or {}
+        for field, label in [("extracted_age", "age"), ("extracted_disability", "disability"),
+                              ("extracted_monthly_income", "income"), ("extracted_dependents", "dependents")]:
+            expected = pf.get(field)
+            if expected in (None, "", 0):
+                continue
+            m = re.search(rf"{label}\D{{0,15}}(\d[\d,]*)", ai_response, re.IGNORECASE)
+            if m and str(int(float(str(expected)))) not in m.group(1).replace(",", ""):
+                logger.warning(f"[CONSISTENCY-CHECK] LLM said {label}={m.group(1)} but extraction says {expected} — flagging")
+                ai_response += (f"\n\n*(Note: the document parser extracted {label} = {expected}; "
+                                 f"please verify against the original PDF if this differs above.)*")
+        
         return {
             "response": ai_response,
-            "precedents": precedents
+            "precedents": precedents,
+            "justification_data": justification_data
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"LLM Chat failed: {str(e)}")
@@ -883,7 +928,7 @@ async def chat_with_pdf_stream(request: PDFChatRequest):
     """
     import json
     try:
-        user_prompt, system_instruction, precedents, recalc_response = await prepare_pdf_chat_prompt(request)
+        user_prompt, system_instruction, precedents, recalc_response, justification_data = await prepare_pdf_chat_prompt(request)
         
         if recalc_response is not None:
             async def stream_recalc():
@@ -917,11 +962,39 @@ async def chat_with_pdf_stream(request: PDFChatRequest):
         thread.start()
 
         async def event_generator():
+            full_response = ""
             while True:
                 token = await asyncio.to_thread(q.get)
                 if token is None:
                     break
+                full_response += token
                 yield json.dumps({"message": {"content": token}}) + "\n"
+
+            # Cheap post-hoc consistency check against the parser's own extraction — no extra LLM call
+            pf = request.parsed_fields or {}
+            extra_msg = ""
+            for field, label in [("extracted_age", "age"), ("extracted_disability", "disability"),
+                                  ("extracted_monthly_income", "income"), ("extracted_dependents", "dependents")]:
+                expected = pf.get(field)
+                if expected in (None, "", 0):
+                    continue
+                m = re.search(
+                    rf"{label}\D{{0,15}}(\d[\d,]*)|(\d[\d,]*)\s*[-\s]?\s*(?:years?[-\s]?old|वर्षीय|यर्स)",
+                    full_response, re.IGNORECASE
+                )
+                if m:
+                    matched_num = m.group(1) or m.group(2)
+                    if matched_num and str(int(float(str(expected)))) not in matched_num.replace(",", ""):
+                        logger.warning(f"[CONSISTENCY-CHECK] LLM stream said {label}={matched_num} but extraction says {expected} — flagging")
+                        extra_msg += (f"\n\n*(Note: the document parser extracted {label} = {expected}; "
+                                      f"please verify against the original PDF if this differs above.)*")
+            if extra_msg:
+                yield json.dumps({"message": {"content": extra_msg}}) + "\n"
+            DISCLAIMER = (
+                "\n\n---\n*This response was generated through AI-based judicial document "
+                "analysis and may vary — please refer to the original PDF for verification.*"
+            )
+            yield json.dumps({"message": {"content": DISCLAIMER}}) + "\n"
 
         return StreamingResponse(event_generator(), media_type="text/event-stream")
     except Exception as e:

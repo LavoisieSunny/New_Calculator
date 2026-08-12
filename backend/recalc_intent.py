@@ -301,3 +301,39 @@ def run_recalculation(question: str, parsed_fields: Optional[Dict[str, Any]], ca
             "final_amount": new_total,
         },
     }
+
+FIELD_LOOKUP_PATTERNS = {
+    "age": [r"\bhow old\b", r"\bage of\b", r"\bwhat is the age\b", r"\bclaimant'?s age\b"],
+    "disability": [
+        r"\bwhat is the disability\b", r"\bwhat.?s the disability\b",
+        r"\bdisability percentage\b", r"\bdisability %\b",
+        r"\bhow much disability\b",
+    ],
+    "monthly_income": [r"\bmonthly income\b", r"\bhow much.*(?:earn|income|salary)\b"],
+    "dependents": [r"\bhow many dependents\b", r"\bnumber of dependents\b"],
+}
+
+def parse_field_lookup_intent(question: str) -> Optional[str]:
+    lower = (question or "").lower().strip()
+    if any(t in lower for t in RECALC_TRIGGER_WORDS) or re.search(r"\bif\b", lower):
+        return None  # let recalc handle what-ifs
+    for field, patterns in FIELD_LOOKUP_PATTERNS.items():
+        if any(re.search(p, lower) for p in patterns):
+            return field
+    return None
+
+def run_field_lookup(question: str, parsed_fields: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    pf = parsed_fields or {}
+    field = parse_field_lookup_intent(question)
+    if field is None:
+        return None
+    extracted_val = pf.get(f"extracted_{field}")
+    if extracted_val in (None, "", 0):
+        return None  # nothing reliable to answer from — let it fall through to RAG
+    label = field.replace("_", " ")
+    return {
+        "response": f"According to the document, the {label} is **{extracted_val}**"
+                    f"{'%' if field == 'disability' else ''} (as extracted from the PDF).",
+        "precedents": [],
+        "recalculation": None,
+    }

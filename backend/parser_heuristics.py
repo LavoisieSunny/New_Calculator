@@ -224,22 +224,30 @@ FIELD_LABEL_ALIASES = {
         "funeral expenses", "funeral charges", "last rites", "last rituals",
         "funeral rites", "cremation expenses", "burial expenses",
         "amount for last rituals", "amount for funeral", "last ritual expenses",
-        "funeral and burial", "death rituals"
+        "funeral and burial", "death rituals",
+        # Hindi keywords
+        "दाह-संस्कार खर्च", "दाह संस्कार व्यय", "अंतिम संस्कार व्यय", "क्रिया-कर्म व्यय"
     ],
     "consortium": [
         "consortium", "loss of consortium", "loss of cohabitation",
         "amount for cohabitation", "amount for consortium",
         "spousal consortium", "parental consortium", "filial consortium",
-        "loss of love and affection", "cohabitation amount"
+        "loss of love and affection", "cohabitation amount",
+        # Hindi keywords
+        "साहचर्य हानि", "सहचर्य हानि", "संगसाथ की हानि", "साहचर्य क्षति"
     ],
     "loss_of_dependency": [
         "loss of dependency", "amount for dependency", "dependency amount",
         "annual loss of dependency", "loss of financial dependency",
-        "dependency compensation", "amount for dependency"
+        "dependency compensation", "amount for dependency",
+        # Hindi keywords
+        "आश्रितता हानि", "आश्रिता की हानि", "आश्रितता की क्षति"
     ],
     "loss_of_estate": [
         "loss of estate", "amount for loss of estate", "estate loss",
-        "loss of estate amount", "loss of personal estate"
+        "loss of estate amount", "loss of personal estate",
+        # Hindi keywords
+        "संपदा हानि", "संपत्ति हानि", "संपदा की क्षति"
     ],
     "total_compensation": [
         "total compensation awarded", "total compensation awarded by the tribunal",
@@ -1173,7 +1181,9 @@ def classify_page_fallback(page_text, section_name):
         return any(w in text_lower for w in ["grounds of appeal", "grounds", "erred in", "failed to appreciate"])
         
     elif section_name == "facts_section":
-        return any(w in text_lower for w in ["other relevant facts", "relevant facts", "सुसंगत तथ्य", "तथ्य", "case of", "facts of the case"])
+        if any(kw in text_lower for kw in ["अधिनिर्णय", "अवार्ड", "वादप्रश्न", "वादप्रश्न क", "निष्कर्ष", "award passed by", "date of award"]):
+            return False
+        return any(w in text_lower for w in ["other relevant facts", "relevant facts", "सुसंगत तथ्य", "otherrelevantfacts", "relevantfacts"])
         
     elif section_name == "award_operative_section":
         strong_aw_kws = [
@@ -1936,32 +1946,64 @@ def format_suggestions_for_calculator(suggestions):
             if "claimant_relationship_type" not in low_conf_fields:
                 low_conf_fields.append("claimant_relationship_type")
         
+        # Determine ref_date for fallback defaults:
+        from datetime import date, datetime
+        from backend.calculator import get_conventional_heads_enhanced
+        
+        doa_str = get_field_val("date_of_accident", "date_of_accident")
+        ref_date = None
+        if doa_str:
+            for fmt in ("%Y-%m-%d", "%d-%m-%Y"):
+                try:
+                    ref_date = datetime.strptime(doa_str.strip(), fmt).date()
+                    break
+                except ValueError:
+                    continue
+        if not ref_date:
+            ref_date = date.today()
+
         # Consortium
-        if raw_cons not in ["", None, 0.0, 0] and raw_cons != 40000.0:
+        if raw_cons not in ["", None, 0.0, 0]:
             cons_val = raw_cons
         else:
-            cons_val = 40000.0
-            suggestions["confidence_scores"]["consortium"] = {"confidence": 1.0, "reason": "Standard Pranay Sethi baseline default (known constant)"}
-            if "consortium" in low_conf_fields:
-                low_conf_fields.remove("consortium")
+            cons_val = get_conventional_heads_enhanced(40000.0, ref_date)
+            suggestions["confidence_scores"]["consortium"] = {
+                "confidence": 0.5,
+                "reason": f"Not found in document text — computed via Pranay Sethi escalation for {ref_date}."
+            }
                 
         # Funeral expenses
-        if raw_funeral not in ["", None, 0.0, 0] and raw_funeral != 15000.0:
+        if raw_funeral not in ["", None, 0.0, 0]:
             funeral_val = raw_funeral
         else:
-            funeral_val = 15000.0
-            suggestions["confidence_scores"]["funeral_expenses"] = {"confidence": 1.0, "reason": "Standard Pranay Sethi baseline default (known constant)"}
-            if "funeral_expenses" in low_conf_fields:
-                low_conf_fields.remove("funeral_expenses")
+            funeral_val = get_conventional_heads_enhanced(15000.0, ref_date)
+            suggestions["confidence_scores"]["funeral_expenses"] = {
+                "confidence": 0.5,
+                "reason": f"Not found in document text — computed via Pranay Sethi escalation for {ref_date}."
+            }
                 
         # Loss of estate
-        if raw_estate not in ["", None, 0.0, 0] and raw_estate != 15000.0:
+        if raw_estate not in ["", None, 0.0, 0]:
             estate_val = raw_estate
         else:
-            estate_val = 15000.0
-            suggestions["confidence_scores"]["loss_estate"] = {"confidence": 1.0, "reason": "Standard Pranay Sethi baseline default (known constant)"}
-            if "loss_estate" in low_conf_fields:
-                low_conf_fields.remove("loss_estate")
+            estate_val = get_conventional_heads_enhanced(15000.0, ref_date)
+            suggestions["confidence_scores"]["loss_estate"] = {
+                "confidence": 0.5,
+                "reason": f"Not found in document text — computed via Pranay Sethi escalation for {ref_date}."
+            }
+
+        # Auto-extract dependents count from grounds/facts section if not already present with high confidence
+        full_text_val = suggestions.get("full_text") or ""
+        dep_count, dep_conf, dep_reason = extract_dependents_count(full_text_val)
+        if dep_count is not None:
+            raw_dep = suggestions.get("dependents")
+            raw_dep_conf = suggestions.get("confidence_scores", {}).get("dependents", {}).get("confidence", 0.0) if isinstance(suggestions.get("confidence_scores", {}).get("dependents"), dict) else 0.0
+            if not raw_dep or raw_dep_conf < dep_conf:
+                suggestions["dependents"] = dep_count
+                suggestions["confidence_scores"]["dependents"] = {
+                    "confidence": dep_conf,
+                    "reason": dep_reason
+                }
 
     fields = {}
     if case_type == "death":
@@ -1986,6 +2028,7 @@ def format_suggestions_for_calculator(suggestions):
             "consortium": cons_val,
             "funeral_expenses": funeral_val,
             "loss_estate": estate_val,
+            "consortium_claimants": clean_numeric_to_float_or_int(get_field_val("consortium_claimants", "consortium_claimants"), "consortium_claimants"),
         }
     elif case_type == "injury":
         fields = {
@@ -2376,6 +2419,7 @@ def extract_compensation_table_fields(section_content, case_type=None):
         "multiplier": None,
         "funeral_expenses": None,
         "consortium": None,
+        "consortium_claimants": None,
         "total_compensation": None
     }
     
@@ -2397,6 +2441,22 @@ def extract_compensation_table_fields(section_content, case_type=None):
         ]
         if any(kw in line_lower for kw in avoid_kws):
             continue
+
+        # Check for "amount X count = total" pattern (e.g. 48,000X4 = 1,92,000)
+        m_x = re.search(r'([\d,]{4,7})\s*[xX×]\s*(\d{1,2})\)?\s*[\-–]?\s*([\d,]{5,9})', line)
+        if m_x:
+            per_person = parse_indian_rupee_value(m_x.group(1))
+            claimant_count = int(m_x.group(2))
+            total_val = parse_indian_rupee_value(m_x.group(3))
+            
+            is_cons = any(kw in line_lower for kw in ["consortium", "cohabitation", "love", "साहचर्य", "सहचर्य", "संगसाथ"])
+            is_dep = any(kw in line_lower for kw in ["dependency", "loss", "multiplier", "आश्रितता", "आश्रिता"])
+            if is_cons:
+                fields["consortium"] = per_person
+                fields["consortium_claimants"] = claimant_count
+            elif is_dep:
+                fields["multiplier"] = claimant_count
+                fields["annual_loss_dependency"] = total_val
 
         val = extract_last_currency_value(line_lower)
         
@@ -2942,13 +3002,31 @@ def extract_dates_with_context(text):
     return matches
 
 
-def deduce_notional_income(award_amount, age, marital_status, dependents, future_prospect=None, multiplier=None, award_date=None):
+def deduce_notional_income(award_amount, age, marital_status, dependents, future_prospect=None, multiplier=None, award_date=None, occupation=None, full_text=None):
     """
     Algebraically deduces a clean monthly notional income from the award_amount using standard legal formulas.
     Used when explicit monthly income is missing in the judgment text.
     """
     if not award_amount or award_amount <= 0:
         return 5000.0 # standard fallback
+
+    # Early return for non-earning minor cases (precedent: Krishna Gopal)
+    age_val = None
+    if age is not None:
+        age_digit_match = re.search(r'\d+', str(age))
+        if age_digit_match:
+            try:
+                age_val = int(age_digit_match.group(0))
+            except ValueError:
+                pass
+
+    if (not occupation or str(occupation).strip().lower() in ("none", "n/a", "-", "student", "minor")) and age_val is not None and age_val < 18:
+        if full_text:
+            m = re.search(r'\b([\d,]{4,7})\s*[xX×]\s*(\d{1,2})\b', full_text)
+            if m:
+                base_annual = parse_indian_rupee_value(m.group(1))
+                return round(base_annual / 12.0, 2)   # return as monthly, no deduction/prospects applied
+        return 2500.0  # fallback ≈ 30,000/12, the standard Krishna Gopal notional figure
         
     # Standard conventional heads: Consortium (40k base), Funeral (15k base), Estate (15k base) enhanced dynamically
     from datetime import date
@@ -3057,6 +3135,53 @@ def _extract_cause_title_block(top_pages_text):
     return None
 
 
+def extract_dependents_count(full_text):
+    # Primary: structured "(d) Number of dependants..." field in Memo of Appeal
+    m = re.search(
+        r'Number of dependants?\s*(?:and their relationship[^:]*)?:?\s*'
+        r'(\d+)\s*person',
+        full_text, re.IGNORECASE
+    )
+    if m:
+        return int(m.group(1)), 0.9, "Extracted from 'Number of dependants' field in memo"
+
+    # Hindi Primary: "(d) आश्रितों की संख्या..."
+    m_hi = re.search(
+        r'(?:आश्रितों\s*की\s*संख्या|आश्रितों\s*की\s*संख्या\s*एवं\s*संबंध)\s*[:\-;]?\s*(\d+)\s*(?:व्यक्ति|लोग)?',
+        full_text, re.IGNORECASE
+    )
+    if m_hi:
+        return int(m_hi.group(1)), 0.9, "Extracted from 'Number of dependants' field in Hindi memo"
+
+    # Fallback: count relationship words in a listed sentence
+    # e.g. "father, mother, brother and sisters were made as applicant"
+    m2 = re.search(
+        r'((?:father|mother|brother|sister[s]?|wife|husband|son|daughter)'
+        r'(?:\s*,\s*(?:father|mother|brother|sister[s]?|wife|husband|son|daughter))*'
+        r'\s*(?:and|&)?\s*(?:father|mother|brother|sister[s]?|wife|husband|son|daughter)?)'
+        r'\s*(?:were|was)\s*made\s*(?:as\s*)?(?:the\s*)?applicant',
+        full_text, re.IGNORECASE
+    )
+    if m2:
+        words = re.findall(r'father|mother|brother|sister[s]?|wife|husband|son|daughter', m2.group(1), re.IGNORECASE)
+        return len(words), 0.6, "Counted from relationship list in facts/grounds text"
+
+    # Hindi Fallback relationship words listed sentence:
+    # e.g. "पिता, माता, भाई और बहन आवेदक बने" or similar
+    m2_hi = re.search(
+        r'((?:पिता|माता|भाई|बहन[ों]?|पत्नी|पति|पुत्र|पुत्री|बेटे|बेटी|बेटियां)'
+        r'(?:\s*,\s*(?:पिता|माता|भाई|बहन[ों]?|पत्नी|पति|पुत्र|पुत्री|बेटे|बेटी|बेटियां))*'
+        r'\s*(?:और|एवं|व)?\s*(?:पिता|माता|भाई|बहन[ों]?|पत्नी|पति|पुत्र|पुत्री|बेटे|बेटी|बेटियां)?)'
+        r'\s*(?:को\s*)?(?:आवेदक|प्रार्थी)\s*(?:बनाया|बनाया\s*गया|बने)',
+        full_text
+    )
+    if m2_hi:
+        words = re.findall(r'पिता|माता|भाई|बहन|पत्नी|पति|पुत्र|पुत्री|बेटे|बेटी|बेटियां', m2_hi.group(1))
+        return len(words), 0.6, "Counted from Hindi relationship list in facts/grounds text"
+
+    return None, 0.0, None
+
+
 def extract_appeal_memo_fatal_particulars(full_text: str) -> dict:
     """
     ADDITIVE parser for "Memo of Appeal" / "Miscellaneous Appeal U/S 173 MVA"
@@ -3146,6 +3271,32 @@ def extract_appeal_memo_fatal_particulars(full_text: str) -> dict:
             payable_raw = items["f"].split("\n")[0].strip(" :")
             if payable_raw and payable_raw.lower().rstrip(".") != "nil":
                 result["payable_by"] = payable_raw
+
+    # ---- Locate the "In Non-Fatal accident Cases" lettered block (injury cases) ----
+    nonfatal_match = re.search(
+        r'in\s+non[\-\s]?fatal\s+accident\s+cases\s*:?(.*?)'
+        r'(?=details\s+of\s+interest|\(?\s*VI\s*\)?|\Z)',
+        full_text, re.IGNORECASE | re.DOTALL
+    )
+    if nonfatal_match:
+        nf_text = nonfatal_match.group(1)
+        nf_items = {k.lower(): v.strip() for k, v in
+                    re.findall(r'\(([a-fA-F])\)\s*(.*?)(?=\([a-fA-F]\)|\Z)', nf_text, re.DOTALL)}
+
+        if "b" in nf_items:
+            m = re.search(r'(Nil|(?:Rs\.?\s*)?[\d,]+(?:\.\d+)?\s*/?-?)', nf_items["b"], re.IGNORECASE)
+            if m:
+                result["medical_expenses_awarded"] = _amt(m.group(1))
+
+        if "d" in nf_items:
+            m = re.search(r'(Nil|(?:Rs\.?\s*)?[\d,]+(?:\.\d+)?\s*/?-?)', nf_items["d"], re.IGNORECASE)
+            if m:
+                result["general_damages_awarded"] = _amt(m.group(1))
+
+        if "e" in nf_items:
+            m = re.search(r'(Nil|(?:Rs\.?\s*)?[\d,]+(?:\.\d+)?\s*/?-?)', nf_items["e"], re.IGNORECASE)
+            if m and "compensation_awarded" not in result:
+                result["compensation_awarded"] = _amt(m.group(1))
 
     # ---- Top summary / case metadata fields ----
     m = re.search(r'case\s*(?:no\.?|number)\s*[:\-]?\s*([^\n]+)', full_text, re.IGNORECASE)
@@ -3376,41 +3527,52 @@ def parse_extracted_text(text_lines, case_type=None):
             sub_fields.sort(key=lambda x: acc_block_text.find(x[0]))
             block_place = ", ".join([v for l, v in sub_fields])
 
-    # 2. Deceased block
-    deceased_match = re.search(
-        r'\b(?:NAME\s+AND\s+DESCRIPTION\s+OF\s+THE\s+(?:INJURED/)?DECEASED|DECEASED\s+PERSON|DESCRIPTION\s+OF\s+DECEASED)\b.*?(?=\bIN\s+FATAL\s+ACCIDENT\b|\bDETAILS\b|\(\s*[I|V|X|L|C|D|M]+\s*\)|$)',
+    # 2. Deceased/Injured block
+    deceased_matches = list(re.finditer(
+        r'\b(?:NAME\s+AND\s+DESCRIPTION\s+OF\s+THE\s+(?:INJURED/)?DECEASED(?:(?:\s+PERSON)?)?|DECEASED\s+PERSON|DESCRIPTION\s+OF\s+DECEASED|INJURED\s+PERSON|NAME\s+AND\s+DESCRIPTION\s+OF\s+THE\s+INJURED\s+PERSON)\b.*?(?=\bIN\s+FATAL\s+ACCIDENT\b|\bDETAILS\b|\bNAME\s+AND\s+DESCRIPTION\b|\bDECEASED\s+PERSON\b|\bDESCRIPTION\s+OF\s+DECEASED\b|\bINJURED\s+PERSON\b|\(\s*[I|V|X|L|C|D|M|0-9\u0966-\u096f]+\s*\)|$)',
         full_text,
         re.IGNORECASE | re.DOTALL
-    )
-    if deceased_match:
-        dec_block_text = deceased_match.group(0)
+    ))
+
+    best_block = None
+    best_match_start = None
+    for m in deceased_matches:
+        block_text = m.group(0)
+        has_name = re.search(r'\bName\s*[:\-;\u2022]', block_text, re.IGNORECASE)
+        has_age  = re.search(r'\bAge\s*[:\-;\u2022]\s*\d{1,2}\b', block_text, re.IGNORECASE)
+        if has_name and has_age:
+            best_block = block_text   # keep the LAST valid one, not the first
+            best_match_start = m.start()
+
+    if best_block:
+        dec_block_text = best_block
         
-        # Deceased Name
-        name_match = re.search(r'\b(?:1\.?\s*Name)\s*[:\-;\u2022]\s*([^\n]+)', dec_block_text, re.IGNORECASE)
+        # Deceased/Injured Name
+        name_match = re.search(r'\b(?:(?:(?:1|a)\.?\s*|\(\s*[1a]\s*\)\s*)?Name)\s*[:\-;\u2022]\s*([^\n]+)', dec_block_text, re.IGNORECASE)
         if name_match:
             cand_name = clean_legal_name(name_match.group(1).strip())
             if cand_name:
                 block_dec_name = cand_name.title()
             
         # Age
-        age_match = re.search(r'\b(?:2\.?\s*Age)\s*[:\-;\u2022]\s*(\d{1,2})\b', dec_block_text, re.IGNORECASE)
+        age_match = re.search(r'\b(?:(?:(?:2|b)\.?\s*|\(\s*[2b]\s*\)\s*)?Age)\s*[:\-;\u2022]\s*(\d{1,2})\b', dec_block_text, re.IGNORECASE)
         if age_match:
             block_age = int(age_match.group(1))
             
         # Father / Husband Name
-        fh_match = re.search(r'\b(?:3\.?\s*(?:Father|Husband)(?:’|\')?s?\s*Name)\s*[:\-;\u2022]\s*([^\n]+)', dec_block_text, re.IGNORECASE)
+        fh_match = re.search(r'\b(?:(?:(?:3|c)\.?\s*|\(\s*[3c]\s*\)\s*)?(?:Father|Husband)(?:’|\')?s?\s*Name)\s*[:\-;\u2022]\s*([^\n]+)', dec_block_text, re.IGNORECASE)
         if fh_match:
             cand_fh = clean_legal_name(fh_match.group(1).strip())
             if cand_fh:
                 block_father_name = cand_fh.title()
 
         # Occupation
-        occ_match = re.search(r'\b(?:4\.?\s*Occupation)\s*[:\-;\u2022]\s*([^\n]+)', dec_block_text, re.IGNORECASE)
+        occ_match = re.search(r'\b(?:(?:(?:4|d)\.?\s*|\(\s*[4d]\s*\)\s*)?Occupation)\s*[:\-;\u2022]\s*([^\n]+)', dec_block_text, re.IGNORECASE)
         if occ_match:
             block_occupation = occ_match.group(1).strip()
             
         # Claimed Daily Wage
-        earning_match = re.search(r'\b(?:5\.?\s*Earning)\s*[:\-;\u2022]\s*([^\n]+)', dec_block_text, re.IGNORECASE)
+        earning_match = re.search(r'\b(?:(?:(?:5|e)\.?\s*|\(\s*[5e]\s*\)\s*)?Earning)\s*[:\-;\u2022]\s*([^\n]+)', dec_block_text, re.IGNORECASE)
         if earning_match:
             block_earning_daily = earning_match.group(1).strip()
 
@@ -3634,6 +3796,40 @@ def parse_extracted_text(text_lines, case_type=None):
             "raw_captured": deceased_block_match.group(1),
             "final_extracted": deceased_name
         }
+
+    # Safety check: if block_age matches a known claimant age, treat as unresolved
+    known_claimant_ages = set()
+    claimant_search_text = ""
+    if best_match_start is not None:
+        claimant_search_text = full_text[:best_match_start]
+    else:
+        if "claimant_section" in sections:
+            claimant_search_text += sections["claimant_section"] + "\n"
+        if "petition_block" in sections:
+            claimant_search_text += sections["petition_block"] + "\n"
+        if pages:
+            claimant_search_text += "\n".join(p["text"] for p in pages[:6]) + "\n"
+        else:
+            claimant_search_text += full_text[:6000]
+
+    for m in re.finditer(r'\b(?:age|aged|approximately)\s*(?:about|is|was)?\s*[:\-;]?\s*(\d{1,2})\b', claimant_search_text, re.IGNORECASE):
+        known_claimant_ages.add(int(m.group(1)))
+    for m in re.finditer(r'\b(\d{1,2})\s*(?:years|yrs)\b', claimant_search_text, re.IGNORECASE):
+        known_claimant_ages.add(int(m.group(1)))
+
+    if block_age and known_claimant_ages and block_age in known_claimant_ages:
+        # suspicious — likely picked up a claimant instead of the deceased, treat as unresolved
+        if deceased_name and block_dec_name and deceased_name.strip().lower() == block_dec_name.strip().lower():
+            deceased_name = None
+            conf_deceased_name = 0.0
+            sec_deceased_name = "raw_ocr"
+            page_deceased_name = 1
+            method_deceased_name = "Fallback"
+        block_dec_name = None
+        block_age = None
+        block_father_name = None
+        block_occupation = None
+        block_earning_daily = None
 
     # Apply Deceased overrides (Requirement 6)
     if claimant_name and any(kw in claimant_name.lower() for kw in ["late shri", "late smt", "late "]):
@@ -3936,6 +4132,12 @@ def parse_extracted_text(text_lines, case_type=None):
             age_patterns, sections, [("claimant_section", 95), ("facts_section", 85), ("chronological_events_section", 80)], default_val="", type_cast=int,
             field_name="age", debug_info=parser_debug, pages=pages, sections_metadata=sections_metadata, page_importances=page_importances
         )
+        # Guard: facts_section content pulled from a judgment/award narrative (not the appeal memo)
+        # should never supply age — only the applicant's own claim-particulars can.
+        if age and sections.get("facts_section", "") and any(
+            kw in sections.get("facts_section", "").lower() for kw in ["अधिनिर्णय", "अवार्ड", "निष्कर्ष"]
+        ) and sec_age == "facts_section":
+            age, conf_age, sec_age, page_age = "", 0.0, "raw_ocr", 1
         method_age = "Section-Aware Contextual Regex"
 
     # Guard: reject implausible ages (e.g. paragraph numbers matched as age)
@@ -4035,6 +4237,22 @@ def parse_extracted_text(text_lines, case_type=None):
             "raw_captured": deceased_occ_match.group(1),
             "final_extracted": occupation
         }
+
+    # 5.b Address only from claimant/petition section
+    address_patterns = [
+        r'\b(?:address|resident\s+of|r/o|residing\s+at)\s*[:\-]\s*(.*)',
+        r'\br/o\b\s*(.*)',
+        r'\bresident\s+of\b\s*(.*)',
+        r'\baddress\b\s*[:\-]?\s*(.*)',
+    ]
+    address, conf_address, sec_address, page_address = contextual_extract(
+        address_patterns, sections,
+        [("claimant_section", 90), ("facts_section", 85), ("memo_of_appeal_section", 80)],
+        default_val="", type_cast=str, field_name="address",
+        debug_info=parser_debug, pages=pages,
+        sections_metadata=sections_metadata, page_importances=page_importances
+    )
+    method_address = "Section-Aware Contextual Regex"
 
     # 6. Place of accident
     if block_place:
@@ -5363,6 +5581,8 @@ def parse_extracted_text(text_lines, case_type=None):
                 dob_val = datetime.strptime(date_of_birth, "%d-%m-%Y")
                 doa_val = datetime.strptime(date_of_accident, "%d-%m-%Y")
                 age = doa_val.year - dob_val.year
+                if (doa_val.month, doa_val.day) < (dob_val.month, dob_val.day):
+                    age -= 1
                 conf_age = 0.80
                 sec_age = "raw_ocr"
                 page_age = 1
@@ -5423,7 +5643,9 @@ def parse_extracted_text(text_lines, case_type=None):
                 dependents, 
                 future_prospect, 
                 multiplier,
-                award_date=award_date
+                award_date=award_date,
+                occupation=occupation,
+                full_text=full_text
             )
             if monthly_income > 0:
                 conf_monthly_income = 0.80
@@ -5759,9 +5981,14 @@ def parse_extracted_text(text_lines, case_type=None):
     else:
         ai_recovery_needed = True
         
-    consortium_claimants = None
-    conf_consortium_claimants = 0.0
-    method_consortium_claimants = "Default Heuristic"
+    consortium_claimants = comp_fields.get("consortium_claimants")
+    if consortium_claimants:
+        conf_consortium_claimants = 0.95
+        method_consortium_claimants = "Amount X Count Regex Table Extraction"
+    else:
+        consortium_claimants = None
+        conf_consortium_claimants = 0.0
+        method_consortium_claimants = "Default Heuristic"
 
     if ai_recovery_needed:
         ai_recovery_triggered = True
@@ -6016,6 +6243,7 @@ def parse_extracted_text(text_lines, case_type=None):
         "future_type": future_type,
         "award_amount": total_compensation,
         "place_of_accident": place_of_accident,
+        "address": address,
         
         "deceased_name": deceased_name,
         "claimant_name": claimant_name,
@@ -6073,6 +6301,7 @@ def parse_extracted_text(text_lines, case_type=None):
         "anomalies_detected": anomalies_detected,
         "case_classification": case_classification,
         "_debug": parser_debug,
+        "full_text": full_text,
         
         "confidence_scores": {
             "deceased_name": {
@@ -6226,6 +6455,14 @@ def parse_extracted_text(text_lines, case_type=None):
                 "source_section": sec_place_of_accident,
                 "source_page": page_place_of_accident,
                 "extraction_method": method_place_of_accident
+            },
+            "address": {
+                "value": address,
+                "confidence": conf_address,
+                "source": sec_address,
+                "source_section": sec_address,
+                "source_page": page_address,
+                "extraction_method": method_address
             },
             "disability": {
                 "value": disability,
@@ -8786,12 +9023,22 @@ def extract_age_from_text(raw_text: str, claimant_name: str = None, deceased_nam
             min_distance = 999999
             term_idx_in_window = idx - w_start
             
-            for pat in patterns:
+            line_start = raw_text.rfind('\n', 0, idx) + 1
+            line_end = raw_text.find('\n', idx)
+            if line_end == -1:
+                line_end = len(raw_text)
+                
+            proximity_patterns = patterns[:3]
+            for pat in proximity_patterns:
                 for m in re.finditer(pat, window, re.IGNORECASE):
                     val = int(m.group(1))
                     if 1 <= val <= 100:
                         match_center = (m.start() + m.end()) / 2
                         dist = abs(match_center - term_idx_in_window)
+                        # Same-line match bonus
+                        match_global_pos = w_start + m.start()
+                        if line_start <= match_global_pos <= line_end:
+                            dist -= 500
                         if dist < min_distance:
                             min_distance = dist
                             best_val = val
