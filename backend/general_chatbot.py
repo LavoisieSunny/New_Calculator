@@ -44,7 +44,7 @@ router = APIRouter()
 #   DEEPSEEK_API_KEY=sk-...
 DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY", "")
 DEEPSEEK_API_BASE = os.getenv("DEEPSEEK_API_BASE", "http://localhost:11434/v1")
-DEEPSEEK_MODEL = os.getenv("DEEPSEEK_MODEL", "deepseek-r1:14b")
+DEEPSEEK_MODEL = os.getenv("DEEPSEEK_MODEL", "qwen2.5:7b")
 
 # Roughly cap how much document text we forward to the model per request.
 # deepseek-chat has a large context window, but we keep this conservative
