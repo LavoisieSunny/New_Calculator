@@ -394,55 +394,24 @@
                                     </div>
                                 </div>
 
-                                <!-- Consortium Breakdown Button & Collapsible section -->
-                                <div class="form-group full-width" style="margin-top: -10px; margin-bottom: 10px;">
-                                    <button type="button" id="toggle-consortium-breakdown" class="btn btn-secondary btn-sm" style="background: rgba(15, 23, 42, 0.05); border: 1px solid rgba(15, 23, 42, 0.1); color: var(--text-primary); font-size: 0.75rem; padding: 6px 12px; border-radius: var(--radius-sm); cursor: pointer; display: inline-flex; align-items: center; gap: 6px; width: fit-content; transition: background 0.3s ease; font-family: inherit;">
-                                        <i class="fa-solid fa-angles-down toggle-icon" style="transition: transform 0.3s ease;"></i>
-                                        <span>Consortium Breakdown (Satinder Kaur)</span>
-                                    </button>
-                                    <div id="consortium-breakdown-section" style="display: none; margin-top: 10px; padding: 12px; border-radius: var(--radius-sm); border: 1px solid rgba(15, 23, 42, 0.1); background: rgba(15, 23, 42, 0.02); width: 100%;">
-                                        <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 12px; width: 100%;">
-                                            <div class="form-group">
-                                                <label for="conspo">Spousal (Generic)</label>
-                                                <input type="number" id="conspo" name="conspo" placeholder="0">
-                                            </div>
-                                            <div class="form-group">
-                                                <label for="conwif">Wife</label>
-                                                <input type="number" id="conwif" name="conwif" placeholder="0">
-                                            </div>
-                                            <div class="form-group">
-                                                <label for="conhus">Husband</label>
-                                                <input type="number" id="conhus" name="conhus" placeholder="0">
-                                            </div>
-                                            <div class="form-group">
-                                                <label for="conpar">Parental (Generic)</label>
-                                                <input type="number" id="conpar" name="conpar" placeholder="0">
-                                            </div>
-                                            <div class="form-group">
-                                                <label for="conmo">Mother</label>
-                                                <input type="number" id="conmo" name="conmo" placeholder="0">
-                                            </div>
-                                            <div class="form-group">
-                                                <label for="confath">Father</label>
-                                                <input type="number" id="confath" name="confath" placeholder="0">
-                                            </div>
-                                            <div class="form-group">
-                                                <label for="conchil">Child</label>
-                                                <input type="number" id="conchil" name="conchil" placeholder="0">
-                                            </div>
-                                            <div class="form-group" style="border: 1px solid rgba(245, 158, 11, 0.3); padding: 4px 8px; border-radius: 4px; background: rgba(245, 158, 11, 0.02);">
-                                                <label for="conbro" style="color: #d97706; font-weight: bold;"><i class="fa-solid fa-triangle-exclamation"></i> Brother (Contested)</label>
-                                                <input type="number" id="conbro" name="conbro" placeholder="0" style="border-color: rgba(245, 158, 11, 0.3);">
-                                            </div>
-                                            <div class="form-group" style="border: 1px solid rgba(245, 158, 11, 0.3); padding: 4px 8px; border-radius: 4px; background: rgba(245, 158, 11, 0.02);">
-                                                <label for="consis" style="color: #d97706; font-weight: bold;"><i class="fa-solid fa-triangle-exclamation"></i> Sister (Contested)</label>
-                                                <input type="number" id="consis" name="consis" placeholder="0" style="border-color: rgba(245, 158, 11, 0.3);">
-                                            </div>
-                                            <div class="form-group">
-                                                <label for="conlum">Lump Sum (Generic)</label>
-                                                <input type="number" id="conlum" name="conlum" placeholder="0">
-                                            </div>
-                                        </div>
+                                <!-- Consortium Basis Selection -->
+                                <div class="form-group">
+                                    <label for="consortium_mode">Consortium Basis <span class="req">*</span></label>
+                                    <div class="select-wrapper">
+                                        <select id="consortium_mode" name="consortium_mode">
+                                            <option value="flat" selected>Flat (single family sum)</option>
+                                            <option value="satinder_kaur">Per Legal Heir (Satinder Kaur)</option>
+                                        </select>
+                                        <i class="fa-solid fa-chevron-down select-arrow"></i>
+                                    </div>
+                                </div>
+
+                                <!-- Number of Consortium Claimants -->
+                                <div class="form-group">
+                                    <label for="consortium_claimants">Number of Consortium Claimants <span class="req">*</span></label>
+                                    <div class="input-icon-wrapper">
+                                        <i class="fa-solid fa-people-group field-icon"></i>
+                                        <input type="number" id="consortium_claimants" name="consortium_claimants" min="1" value="1" placeholder="e.g. 1">
                                     </div>
                                 </div>
 

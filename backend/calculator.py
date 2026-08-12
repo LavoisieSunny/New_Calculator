@@ -81,6 +81,7 @@ class CompensationRequest(BaseModel):
     loss_estate: Optional[float] = None
 
     consortium_claimants: Optional[int] = None
+    consortium_mode: str = "flat"   # "flat" or "satinder_kaur"
 
     # Consortium Breakdown Subheadings (from PHP claim calculator)
     conlum: float = 0.0
@@ -347,28 +348,24 @@ def calculate_death_compensation(
         logger.warning("No reliable award_date or date_of_accident available. Falling back to today's date.")
         ref_date = date.today()
 
-    consortium_default = get_conventional_heads_enhanced(40000.0, ref_date)
+    consortium_default = get_conventional_heads_enhanced(40000.0, ref_date)   # always auto-escalated, no manual step
     funeral_default = get_conventional_heads_enhanced(15000.0, ref_date)
     loss_estate_default = get_conventional_heads_enhanced(15000.0, ref_date)
+    consortium_per_person = consortium_default   # ignore data.consortium override entirely — fully automated now
 
-    settled_lr_fields = ["conspo", "conwif", "conhus", "conpar", "conmo", "confath", "conchil"]
-    contested_lr_fields = ["conbro", "consis"]
+    consortium_claimants_val = safe_int(data.consortium_claimants, 1)
+    if consortium_claimants_val <= 0:
+        consortium_claimants_val = 1
 
-    settled_count = sum(1 for f in settled_lr_fields if safe_float(getattr(data, f, 0)) > 0)
-    contested_count = sum(1 for f in contested_lr_fields if safe_float(getattr(data, f, 0)) > 0)
+    consortium_mode = (data.consortium_mode or "flat").strip().lower()
+    if consortium_mode in ("satinder_kaur", "per_lr", "per_heir"):
+        consortium = consortium_per_person * consortium_claimants_val
+    else:
+        consortium = consortium_per_person   # flat — one sum regardless of claimant count
 
-    consortium_per_person = safe_float(data.consortium, consortium_default) if data.consortium is not None else consortium_default
-
-    # Fall back to the auto-extracted total claimant count if no relationship breakdown was provided
-    if settled_count == 0 and contested_count == 0:
-        consortium_claimants_val = safe_int(data.consortium_claimants)
-        if consortium_claimants_val <= 0:
-            consortium_claimants_val = 1
-        settled_count = consortium_claimants_val   # treat as settled by default — no warning fires
-
-    consortium_settled = consortium_per_person * settled_count
-    consortium_contested = consortium_per_person * contested_count
-    consortium = consortium_settled + consortium_contested
+    consortium_settled = consortium
+    consortium_contested = 0.0
+    contested_count = 0
 
     funeral_expenses = safe_float(data.funeral_expenses, funeral_default) if data.funeral_expenses is not None else funeral_default
     loss_estate = safe_float(data.loss_estate, loss_estate_default) if data.loss_estate is not None else loss_estate_default

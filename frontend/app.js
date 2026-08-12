@@ -3129,7 +3129,8 @@ This cannot be undone.`)) return;
             consortium: document.getElementById("consortium")?.value ? Number(document.getElementById("consortium").value) : null,
             funeral_expenses: document.getElementById("funeral-expenses")?.value ? Number(document.getElementById("funeral-expenses").value) : null,
             loss_estate: document.getElementById("loss-estate")?.value ? Number(document.getElementById("loss-estate").value) : null,
-            consortium_claimants: lastExtractedFields.consortium_claimants !== undefined ? Number(lastExtractedFields.consortium_claimants) : null,
+            consortium_claimants: document.getElementById("consortium_claimants")?.value ? Number(document.getElementById("consortium_claimants").value) : 1,
+            consortium_mode: document.getElementById("consortium_mode")?.value || "flat",
 
             // Consortium sub-heads read from form
             conlum: Number(document.getElementById("conlum")?.value || 0),
@@ -3293,26 +3294,21 @@ This cannot be undone.`)) return;
             const consortiumDefault = getConventionalHeadsEnhanced(40000.0, refDateStr);
             const funeralDefault = getConventionalHeadsEnhanced(15000.0, refDateStr);
             const lossEstateDefault = getConventionalHeadsEnhanced(15000.0, refDateStr);
+            const consortiumPerPerson = consortiumDefault; // ignore data.consortium override entirely
 
-            const settledLrFields = ["conspo", "conwif", "conhus", "conpar", "conmo", "confath", "conchil"];
-            const contestedLrFields = ["conbro", "consis"];
-
-            let settledCount = settledLrFields.filter(f => Number(data[f] || 0) > 0).length;
-            let contestedCount = contestedLrFields.filter(f => Number(data[f] || 0) > 0).length;
-
-            const consortiumPerPerson = getVal(data.consortium, consortiumDefault);
-
-            if (settledCount === 0 && contestedCount === 0) {
-                let claimants = Number(data.consortium_claimants);
-                if (isNaN(claimants) || claimants <= 0) {
-                    claimants = 1;
-                }
-                settledCount = claimants; // treat as settled by default — no warning fires
+            let consortiumClaimantsVal = Number(data.consortium_claimants);
+            if (isNaN(consortiumClaimantsVal) || consortiumClaimantsVal <= 0) {
+                consortiumClaimantsVal = 1;
             }
 
-            let consortiumSettled = consortiumPerPerson * settledCount;
-            let consortiumContested = consortiumPerPerson * contestedCount;
-            let consortium = consortiumSettled + consortiumContested;
+            const consortiumMode = (data.consortium_mode || "flat").trim().toLowerCase();
+            let consortium = consortiumPerPerson;
+            if (consortiumMode === "satinder_kaur" || consortiumMode === "per_lr" || consortiumMode === "per_heir") {
+                consortium = consortiumPerPerson * consortiumClaimantsVal;
+            }
+
+            let consortiumSettled = consortium;
+            let consortiumContested = 0;
 
             if (consortium_breakdown_total > 0) {
                 consortium = 0;
@@ -5438,19 +5434,6 @@ This cannot be undone.`)) return;
         });
 
         annotationCanvas.addEventListener("touchend", () => { isDrawing = false; });
-    }
-
-    const toggleBreakdownBtn = document.getElementById("toggle-consortium-breakdown");
-    const breakdownSection = document.getElementById("consortium-breakdown-section");
-    if (toggleBreakdownBtn && breakdownSection) {
-        toggleBreakdownBtn.addEventListener("click", () => {
-            const isHidden = breakdownSection.style.display === "none";
-            breakdownSection.style.display = isHidden ? "block" : "none";
-            const icon = toggleBreakdownBtn.querySelector(".toggle-icon");
-            if (icon) {
-                icon.style.transform = isHidden ? "rotate(180deg)" : "rotate(0deg)";
-            }
-        });
     }
 
 });
