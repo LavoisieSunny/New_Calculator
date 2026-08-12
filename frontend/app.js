@@ -2327,6 +2327,12 @@ This cannot be undone.`)) return;
                         claimantsEl.dispatchEvent(new Event("input"));
                         claimantsEl.dispatchEvent(new Event("change"));
                     }
+                    const modeEl = document.getElementById("consortium_mode");
+                    if (modeEl && Number(val) > 1) {
+                        modeEl.value = "satinder_kaur";
+                        modeEl.dispatchEvent(new Event("input"));
+                        modeEl.dispatchEvent(new Event("change"));
+                    }
                 }
             }
             el.dispatchEvent(new Event("input"));
@@ -3161,6 +3167,7 @@ This cannot be undone.`)) return;
             case_type: caseType,
             age: Number(ageInput.value || 0),
             monthly_income: Number(monthlyIncomeInput.value || 0),
+            date_of_accident: document.getElementById("date-of-accident")?.value || null,
 
             dependents: Number(dependentsInput.value || 0),
             marital_status: maritalStatusSelect.value || "married",
