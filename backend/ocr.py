@@ -2746,6 +2746,7 @@ def run_background_pdf_indexing(file_id: str, temp_path: str, filename: str):
         from backend.vector_db import index_document
         success = index_document(filename, text_lines, suggestions)
 
+        suggestions["full_text"] = full_text
         from backend.parser_heuristics import format_suggestions_for_calculator
         formatted = format_suggestions_for_calculator(suggestions)
 
@@ -2945,6 +2946,7 @@ async def process_single_file(
                         full_text=full_text
                     )
 
+            suggestions["full_text"] = full_text
             from backend.parser_heuristics import format_suggestions_for_calculator
             formatted_suggestions = format_suggestions_for_calculator(suggestions)
 
@@ -3407,6 +3409,7 @@ async def ai_recover_fields(request: AIRecoverRequest):
                 else:
                     recovered_data["confidence_scores"][field] = {"confidence": 0.85, "reason": "Merged from heuristics parser"}
 
+        recovered_data["full_text"] = full_text
         from backend.parser_heuristics import format_suggestions_for_calculator, detect_document_sections_with_fallback, classify_enhancement_or_reduction, segment_text_lines_into_pages
         formatted = format_suggestions_for_calculator(recovered_data)
 
