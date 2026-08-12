@@ -1969,10 +1969,8 @@ def format_suggestions_for_calculator(suggestions):
             cons_val = get_conventional_heads_enhanced(40000.0, ref_date)
             suggestions["confidence_scores"]["consortium"] = {
                 "confidence": 0.5,
-                "reason": f"Not found in document text — estimated from award/accident date ({ref_date}) per Pranay Sethi escalation. Verify manually."
+                "reason": f"Not found in document text — computed via Pranay Sethi escalation for {ref_date}."
             }
-            if "consortium" not in low_conf_fields:
-                low_conf_fields.append("consortium")
                 
         # Funeral expenses
         if raw_funeral not in ["", None, 0.0, 0]:
@@ -1981,10 +1979,8 @@ def format_suggestions_for_calculator(suggestions):
             funeral_val = get_conventional_heads_enhanced(15000.0, ref_date)
             suggestions["confidence_scores"]["funeral_expenses"] = {
                 "confidence": 0.5,
-                "reason": f"Not found in document text — estimated from award/accident date ({ref_date}) per Pranay Sethi escalation. Verify manually."
+                "reason": f"Not found in document text — computed via Pranay Sethi escalation for {ref_date}."
             }
-            if "funeral_expenses" not in low_conf_fields:
-                low_conf_fields.append("funeral_expenses")
                 
         # Loss of estate
         if raw_estate not in ["", None, 0.0, 0]:
@@ -1993,10 +1989,8 @@ def format_suggestions_for_calculator(suggestions):
             estate_val = get_conventional_heads_enhanced(15000.0, ref_date)
             suggestions["confidence_scores"]["loss_estate"] = {
                 "confidence": 0.5,
-                "reason": f"Not found in document text — estimated from award/accident date ({ref_date}) per Pranay Sethi escalation. Verify manually."
+                "reason": f"Not found in document text — computed via Pranay Sethi escalation for {ref_date}."
             }
-            if "loss_estate" not in low_conf_fields:
-                low_conf_fields.append("loss_estate")
 
     fields = {}
     if case_type == "death":

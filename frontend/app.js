@@ -2226,8 +2226,13 @@ This cannot be undone.`)) return;
             if (parent) {
                 const existingReason = parent.querySelector(".custom-empty-reason");
                 if (existingReason) existingReason.remove();
+                const existingWarning = parent.querySelector(".verification-warning");
+                if (existingWarning) existingWarning.remove();
+                const existingNote = parent.querySelector(".estimated-note");
+                if (existingNote) existingNote.remove();
             }
             el.classList.remove("not-stated-input");
+            el.classList.remove("low-confidence-input");
 
             if (!isAllowed) {
                 // Reset/clear value if not allowed to avoid carrying over stale data
@@ -2262,22 +2267,49 @@ This cannot be undone.`)) return;
             const conf = lastExtractedConfidences[cacheKey];
             const threshold = parseFloat(localStorage.getItem("autofill_confidence_threshold") || "0.75");
             if (conf !== undefined && conf !== null && conf < threshold) {
-                el.value = "";
-                el.classList.add("low-confidence-input");
-                
-                const parent = el.closest(".form-group");
-                if (parent && !parent.querySelector(".verification-warning")) {
-                    const warning = document.createElement("span");
-                    warning.className = "verification-warning";
-                    warning.style.color = "#f59e0b";
-                    warning.style.fontSize = "0.75rem";
-                    warning.style.fontWeight = "600";
-                    warning.style.marginTop = "4px";
-                    warning.style.display = "block";
-                    warning.innerHTML = `<i class="fa-solid fa-circle-info"></i> Low confidence (${Math.round(conf * 100)}%) — left blank for manual entry`;
-                    parent.appendChild(warning);
+                const reason = lastExtractedReasons[cacheKey] || "";
+                if (reason.includes("computed via")) {
+                    // Keep the number visible
+                    if (inputId === "date-of-birth" || inputId === "date-of-accident") {
+                        const htmlDate = toHtmlDateValue(val);
+                        if (htmlDate) el.value = htmlDate;
+                    } else {
+                        el.value = val;
+                    }
+                    el.dispatchEvent(new Event("input"));
+                    el.dispatchEvent(new Event("change"));
+
+                    // Show small, non-blocking note: "Estimated — not found in document text"
+                    const parent = el.closest(".form-group");
+                    if (parent && !parent.querySelector(".estimated-note")) {
+                        const note = document.createElement("span");
+                        note.className = "estimated-note";
+                        note.style.color = "#64748b"; // muted slate color
+                        note.style.fontSize = "0.7rem";
+                        note.style.fontStyle = "italic";
+                        note.style.marginTop = "2px";
+                        note.style.display = "block";
+                        note.innerHTML = `<i class="fa-solid fa-circle-info"></i> Estimated — not found in document text`;
+                        parent.appendChild(note);
+                    }
+                } else {
+                    el.value = "";
+                    el.classList.add("low-confidence-input");
+                    
+                    const parent = el.closest(".form-group");
+                    if (parent && !parent.querySelector(".verification-warning")) {
+                        const warning = document.createElement("span");
+                        warning.className = "verification-warning";
+                        warning.style.color = "#f59e0b";
+                        warning.style.fontSize = "0.75rem";
+                        warning.style.fontWeight = "600";
+                        warning.style.marginTop = "4px";
+                        warning.style.display = "block";
+                        warning.innerHTML = `<i class="fa-solid fa-circle-info"></i> Low confidence (${Math.round(conf * 100)}%) — left blank for manual entry`;
+                        parent.appendChild(warning);
+                    }
+                    return;
                 }
-                return;
             }
 
             // Direct Auto-fill only when confidence is high (>= threshold)
