@@ -363,10 +363,6 @@ def calculate_death_compensation(
     else:
         consortium = consortium_per_person   # flat — one sum regardless of claimant count
 
-    consortium_settled = consortium
-    consortium_contested = 0.0
-    contested_count = 0
-
     funeral_expenses = safe_float(data.funeral_expenses, funeral_default) if data.funeral_expenses is not None else funeral_default
     loss_estate = safe_float(data.loss_estate, loss_estate_default) if data.loss_estate is not None else loss_estate_default
 
@@ -422,13 +418,6 @@ def calculate_death_compensation(
         "multiplier": multiplier,
         "loss_of_dependency": safe_round(loss_of_dependency_float),
         "consortium": consortium,
-        "consortium_settled": safe_round(consortium_settled),
-        "consortium_contested": safe_round(consortium_contested) if contested_count > 0 else None,
-        "consortium_contested_note": (
-            f"Includes ₹{safe_round(consortium_contested)} for sibling consortium — "
-            "not firmly settled under Satinder Kaur (2021); tribunals may reduce or disallow this on appeal."
-            if contested_count > 0 else None
-        ),
         "funeral_expenses": funeral_expenses,
         "loss_estate": loss_estate,
         "medical_expenses": medical_expenses,

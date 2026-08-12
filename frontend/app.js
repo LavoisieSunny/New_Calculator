@@ -3312,8 +3312,6 @@ This cannot be undone.`)) return;
 
             if (consortium_breakdown_total > 0) {
                 consortium = 0;
-                consortiumSettled = conlum + conspo + conpar + conchil + conwif + conmo + confath + conhus;
-                consortiumContested = conbro + consis;
             }
             const funeral_expenses = getVal(data.funeral_expenses, funeralDefault);
             const loss_estate = getVal(data.loss_estate, lossEstateDefault);
@@ -3335,11 +3333,6 @@ This cannot be undone.`)) return;
                 dependency_income: Math.round(dependencyIncome),
                 loss_of_dependency: Math.round(lossOfDependency),
                 consortium: consortium,
-                consortium_settled: Math.round(consortiumSettled),
-                consortium_contested: consortiumContested > 0 ? Math.round(consortiumContested) : null,
-                consortium_contested_note: consortiumContested > 0 ? 
-                    `Includes ₹${Math.round(consortiumContested)} for sibling consortium — not firmly settled under Satinder Kaur (2021); tribunals may reduce or disallow this on appeal.` : 
-                    null,
                 funeral_expenses: funeral_expenses,
                 loss_estate: loss_estate,
                 medical_expenses: medical_expenses,
@@ -3682,12 +3675,6 @@ This cannot be undone.`)) return;
                     <span>Consortium</span>
                     <strong>${formatCurrency(res.consortium)}</strong>
                 </div>
-                ${res.consortium_contested_note ? `
-                <div class="note-box alert-warning-glass" style="margin: 4px 0 8px 0; padding: 8px 12px; border-radius: var(--radius-sm); font-size: 0.75rem; border: 1px solid rgba(245, 158, 11, 0.2); background: rgba(245, 158, 11, 0.05); color: #f59e0b; display: flex; align-items: flex-start; gap: 8px; text-align: left;">
-                    <i class="fa-solid fa-triangle-exclamation" style="margin-top: 2px;"></i>
-                    <span>${res.consortium_contested_note}</span>
-                </div>
-                ` : ''}
                 <div style="display: flex; justify-content: space-between; padding: 6px 0; border-bottom: 1px solid var(--border-glass);">
                     <span>Funeral Expenses</span>
                     <strong>${formatCurrency(res.funeral_expenses)}</strong>
