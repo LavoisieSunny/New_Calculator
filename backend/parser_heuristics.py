@@ -3536,12 +3536,18 @@ def parse_extracted_text(text_lines, case_type=None):
 
     best_block = None
     best_match_start = None
+    best_score = -1
     for m in deceased_matches:
         block_text = m.group(0)
         has_name = re.search(r'\bName\s*[:\-;\u2022]', block_text, re.IGNORECASE)
         has_age  = re.search(r'\bAge\s*[:\-;\u2022]\s*\d{1,2}\b', block_text, re.IGNORECASE)
-        if has_name and has_age:
-            best_block = block_text   # keep the LAST valid one, not the first
+        has_father = re.search(r"\b(?:Father|Husband)(?:’|')?s?\s*Name\s*[:\-;\u2022]", block_text, re.IGNORECASE)
+        has_occ    = re.search(r'\bOccupation\s*[:\-;\u2022]', block_text, re.IGNORECASE)
+
+        score = sum([bool(has_name), bool(has_age), bool(has_father), bool(has_occ)])
+        if has_name and has_age and score > best_score:
+            best_block = block_text
+            best_score = score
             best_match_start = m.start()
 
     if best_block:
@@ -4830,7 +4836,10 @@ def parse_extracted_text(text_lines, case_type=None):
             page_consortium = find_exact_page(int(consortium), sec_meta.get("start_page", 1), sec_meta.get("end_page", 1), pages)
             method_consortium = "Respectively Sentence Extraction"
         else:
-            cons_patterns = [r'consortium\s*(?:of|is|was|to|@)?\s*(?:rs\.?|inr|rupees)?\s*([\d,]{4,7})\b']
+            cons_kws = FIELD_LABEL_ALIASES.get("consortium", ["consortium"])
+            cons_patterns = [
+                r'(?:' + '|'.join(re.escape(k) for k in cons_kws) + r')[^\d₹]{0,80}(?:₹|Rs\.?|rupees|inr)?\s*([\d,]{4,9})(?:/-)?\b'
+            ]
             consortium, conf_consortium, sec_consortium, page_consortium = contextual_extract(
                 cons_patterns, sections, [("compensation_section", 95), ("award_copy_section", 90)], default_val=48400.0 if case_type == "death" else 0.0, type_cast=float,
                 field_name="consortium", debug_info=parser_debug, pages=pages, sections_metadata=sections_metadata, page_importances=page_importances
@@ -4861,7 +4870,10 @@ def parse_extracted_text(text_lines, case_type=None):
             page_funeral_expenses = find_exact_page(int(funeral_expenses), sec_meta.get("start_page", 1), sec_meta.get("end_page", 1), pages)
             method_funeral_expenses = "Respectively Sentence Extraction"
         else:
-            fun_patterns = [r'funeral\s*(?:expenses?|rites?|rituals?)?\s*(?:of|is|was|to|@)?\s*(?:rs\.?|inr|rupees)?\s*([\d,]{4,7})\b']
+            fun_kws = FIELD_LABEL_ALIASES.get("funeral_expenses", ["funeral"])
+            fun_patterns = [
+                r'(?:' + '|'.join(re.escape(k) for k in fun_kws) + r')[^\d₹]{0,80}(?:₹|Rs\.?|rupees|inr)?\s*([\d,]{4,9})(?:/-)?\b'
+            ]
             funeral_expenses, conf_funeral_expenses, sec_funeral_expenses, page_funeral_expenses = contextual_extract(
                 fun_patterns, sections, [("compensation_section", 95), ("award_copy_section", 90)], default_val=18150.0 if case_type == "death" else 0.0, type_cast=float,
                 field_name="funeral_expenses", debug_info=parser_debug, pages=pages, sections_metadata=sections_metadata, page_importances=page_importances
@@ -4921,7 +4933,10 @@ def parse_extracted_text(text_lines, case_type=None):
         page_estate_loss = find_exact_page(int(estate_loss), sec_meta.get("start_page", 1), sec_meta.get("end_page", 1), pages)
         method_estate_loss = "Respectively Sentence Extraction"
     else:
-        est_patterns = [r'(?:loss\s+of\s+)?estate\s*(?:of|is|was|to|@)?\s*(?:rs\.?|inr|rupees)?\s*([\d,]{4,7})\b']
+        est_kws = FIELD_LABEL_ALIASES.get("loss_of_estate", ["estate"])
+        est_patterns = [
+            r'(?:' + '|'.join(re.escape(k) for k in est_kws) + r')[^\d₹]{0,80}(?:₹|Rs\.?|rupees|inr)?\s*([\d,]{4,9})(?:/-)?\b'
+        ]
         estate_loss, conf_estate_loss, sec_estate_loss, page_estate_loss = contextual_extract(
             est_patterns, sections, [("compensation_section", 95), ("award_copy_section", 90)], default_val=18150.0 if case_type == "death" else 0.0, type_cast=float,
             field_name="estate_loss", debug_info=parser_debug, pages=pages, sections_metadata=sections_metadata, page_importances=page_importances
