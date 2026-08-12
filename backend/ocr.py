@@ -2989,6 +2989,15 @@ async def process_single_file(
             if case_session_id:
                 supporting_docs = build_supporting_docs_bundle(case_session_id)
 
+            from backend.llm_client import summarize_grounds_and_relief
+            summary_res = await asyncio.to_thread(
+                summarize_grounds_and_relief,
+                sections_dict,
+                heuristic_signal,
+                detected_case_type
+            )
+            formatted_suggestions["grounds_relief_summary"] = summary_res
+
             # Index document into Qdrant in background so Chat Assistant works for this file
             try:
                 from backend.vector_db import index_document
@@ -3007,7 +3016,7 @@ async def process_single_file(
                 os.unlink(temp_path)
                 temp_path = None
 
-            yield f"data: {json.dumps({'status': 'done', 'progress': 100, 'success': True, 'filename': file.filename, 'ocr_status': 'loaded', 'fallback_source': fallback_source, 'suggestions': formatted_suggestions, 'case_type': detected_case_type, 'track': active_track, 'raw_text': text_lines, 'ocr_debug': ocr_debug})}\n\n"
+            yield f"data: {json.dumps({'status': 'done', 'progress': 100, 'success': True, 'filename': file.filename, 'ocr_status': 'loaded', 'fallback_source': fallback_source, 'suggestions': formatted_suggestions, 'case_type': detected_case_type, 'track': active_track, 'raw_text': text_lines, 'ocr_debug': ocr_debug, 'grounds_relief_summary': summary_res})}\n\n"
 
 
 
@@ -3398,13 +3407,27 @@ async def ai_recover_fields(request: AIRecoverRequest):
                 else:
                     recovered_data["confidence_scores"][field] = {"confidence": 0.85, "reason": "Merged from heuristics parser"}
 
-        from backend.parser_heuristics import format_suggestions_for_calculator
+        from backend.parser_heuristics import format_suggestions_for_calculator, detect_document_sections_with_fallback, classify_enhancement_or_reduction, segment_text_lines_into_pages
         formatted = format_suggestions_for_calculator(recovered_data)
+
+        # Generate or attach grounds & relief summary so autofill preserves it
+        pages_for_sections = segment_text_lines_into_pages(request.raw_text)
+        sections_meta = detect_document_sections_with_fallback(full_text, pages_for_sections)
+        sections_dict = {k: v["content"] for k, v in sections_meta.items()}
+        sections_dict["raw_ocr"] = full_text
+        heuristic_signal = heuristics_data.get("case_classification") or classify_enhancement_or_reduction(sections_dict)
+        case_tp = recovered_data.get("case_type") or "death"
+
+        from backend.llm_client import summarize_grounds_and_relief
+        summary_res = await asyncio.to_thread(summarize_grounds_and_relief, sections_dict, heuristic_signal, case_tp)
+        formatted["grounds_relief_summary"] = summary_res
+        recovered_data["grounds_relief_summary"] = summary_res
 
         return {
             "success": True,
             "suggestions": formatted,
-            "raw_recovered": recovered_data
+            "raw_recovered": recovered_data,
+            "grounds_relief_summary": summary_res
         }
 
     except HTTPException:
