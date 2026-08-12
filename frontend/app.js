@@ -3129,6 +3129,7 @@ This cannot be undone.`)) return;
             consortium: document.getElementById("consortium")?.value ? Number(document.getElementById("consortium").value) : null,
             funeral_expenses: document.getElementById("funeral-expenses")?.value ? Number(document.getElementById("funeral-expenses").value) : null,
             loss_estate: document.getElementById("loss-estate")?.value ? Number(document.getElementById("loss-estate").value) : null,
+            consortium_claimants: lastExtractedFields.consortium_claimants !== undefined ? Number(lastExtractedFields.consortium_claimants) : null,
 
             // Consortium sub-heads read from form
             conlum: Number(document.getElementById("conlum")?.value || 0),
@@ -3278,7 +3279,7 @@ This cannot be undone.`)) return;
                     yearsElapsed -= 1;
                 }
                 const periods = Math.floor(yearsElapsed / 3);
-                return Math.round(baseAmount * (1.0 + 0.10 * periods) * 100) / 100;
+                return Math.round(baseAmount * (1.10 ** periods) * 100) / 100;
             }
 
             function getVal(val, defaultVal) {
@@ -3293,15 +3294,30 @@ This cannot be undone.`)) return;
             const funeralDefault = getConventionalHeadsEnhanced(15000.0, refDateStr);
             const lossEstateDefault = getConventionalHeadsEnhanced(15000.0, refDateStr);
 
-            let claimants = Number(data.consortium_claimants);
-            if (isNaN(claimants) || claimants <= 0) {
-                claimants = 1;
-            }
+            const settledLrFields = ["conspo", "conwif", "conhus", "conpar", "conmo", "confath", "conchil"];
+            const contestedLrFields = ["conbro", "consis"];
+
+            let settledCount = settledLrFields.filter(f => Number(data[f] || 0) > 0).length;
+            let contestedCount = contestedLrFields.filter(f => Number(data[f] || 0) > 0).length;
+
             const consortiumPerPerson = getVal(data.consortium, consortiumDefault);
-            let consortium = consortiumPerPerson * claimants;
+
+            if (settledCount === 0 && contestedCount === 0) {
+                let claimants = Number(data.consortium_claimants);
+                if (isNaN(claimants) || claimants <= 0) {
+                    claimants = 1;
+                }
+                settledCount = claimants; // treat as settled by default — no warning fires
+            }
+
+            let consortiumSettled = consortiumPerPerson * settledCount;
+            let consortiumContested = consortiumPerPerson * contestedCount;
+            let consortium = consortiumSettled + consortiumContested;
 
             if (consortium_breakdown_total > 0) {
                 consortium = 0;
+                consortiumSettled = conlum + conspo + conpar + conchil + conwif + conmo + confath + conhus;
+                consortiumContested = conbro + consis;
             }
             const funeral_expenses = getVal(data.funeral_expenses, funeralDefault);
             const loss_estate = getVal(data.loss_estate, lossEstateDefault);
@@ -3323,6 +3339,11 @@ This cannot be undone.`)) return;
                 dependency_income: Math.round(dependencyIncome),
                 loss_of_dependency: Math.round(lossOfDependency),
                 consortium: consortium,
+                consortium_settled: Math.round(consortiumSettled),
+                consortium_contested: consortiumContested > 0 ? Math.round(consortiumContested) : null,
+                consortium_contested_note: consortiumContested > 0 ? 
+                    `Includes ₹${Math.round(consortiumContested)} for sibling consortium — not firmly settled under Satinder Kaur (2021); tribunals may reduce or disallow this on appeal.` : 
+                    null,
                 funeral_expenses: funeral_expenses,
                 loss_estate: loss_estate,
                 medical_expenses: medical_expenses,
@@ -3665,6 +3686,12 @@ This cannot be undone.`)) return;
                     <span>Consortium</span>
                     <strong>${formatCurrency(res.consortium)}</strong>
                 </div>
+                ${res.consortium_contested_note ? `
+                <div class="note-box alert-warning-glass" style="margin: 4px 0 8px 0; padding: 8px 12px; border-radius: var(--radius-sm); font-size: 0.75rem; border: 1px solid rgba(245, 158, 11, 0.2); background: rgba(245, 158, 11, 0.05); color: #f59e0b; display: flex; align-items: flex-start; gap: 8px; text-align: left;">
+                    <i class="fa-solid fa-triangle-exclamation" style="margin-top: 2px;"></i>
+                    <span>${res.consortium_contested_note}</span>
+                </div>
+                ` : ''}
                 <div style="display: flex; justify-content: space-between; padding: 6px 0; border-bottom: 1px solid var(--border-glass);">
                     <span>Funeral Expenses</span>
                     <strong>${formatCurrency(res.funeral_expenses)}</strong>
@@ -5411,6 +5438,19 @@ This cannot be undone.`)) return;
         });
 
         annotationCanvas.addEventListener("touchend", () => { isDrawing = false; });
+    }
+
+    const toggleBreakdownBtn = document.getElementById("toggle-consortium-breakdown");
+    const breakdownSection = document.getElementById("consortium-breakdown-section");
+    if (toggleBreakdownBtn && breakdownSection) {
+        toggleBreakdownBtn.addEventListener("click", () => {
+            const isHidden = breakdownSection.style.display === "none";
+            breakdownSection.style.display = isHidden ? "block" : "none";
+            const icon = toggleBreakdownBtn.querySelector(".toggle-icon");
+            if (icon) {
+                icon.style.transform = isHidden ? "rotate(180deg)" : "rotate(0deg)";
+            }
+        });
     }
 
 });

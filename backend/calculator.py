@@ -14,7 +14,7 @@ def get_conventional_heads_enhanced(base_amount: float, reference_date: date, an
     if (reference_date.month, reference_date.day) < (anchor_date.month, anchor_date.day):
         years_elapsed -= 1
     periods = years_elapsed // 3
-    return float(round(base_amount * (1.0 + 0.10 * periods), 2))
+    return float(round(base_amount * (1.10 ** periods), 2))
 
 # ======================================================
 # SAFE NUMERIC PARSING HELPERS (Task 4)
@@ -351,12 +351,25 @@ def calculate_death_compensation(
     funeral_default = get_conventional_heads_enhanced(15000.0, ref_date)
     loss_estate_default = get_conventional_heads_enhanced(15000.0, ref_date)
 
-    consortium_claimants_val = safe_int(data.consortium_claimants)
-    if consortium_claimants_val <= 0:
-        consortium_claimants_val = 1
+    settled_lr_fields = ["conspo", "conwif", "conhus", "conpar", "conmo", "confath", "conchil"]
+    contested_lr_fields = ["conbro", "consis"]
+
+    settled_count = sum(1 for f in settled_lr_fields if safe_float(getattr(data, f, 0)) > 0)
+    contested_count = sum(1 for f in contested_lr_fields if safe_float(getattr(data, f, 0)) > 0)
 
     consortium_per_person = safe_float(data.consortium, consortium_default) if data.consortium is not None else consortium_default
-    consortium = consortium_per_person * consortium_claimants_val
+
+    # Fall back to the auto-extracted total claimant count if no relationship breakdown was provided
+    if settled_count == 0 and contested_count == 0:
+        consortium_claimants_val = safe_int(data.consortium_claimants)
+        if consortium_claimants_val <= 0:
+            consortium_claimants_val = 1
+        settled_count = consortium_claimants_val   # treat as settled by default — no warning fires
+
+    consortium_settled = consortium_per_person * settled_count
+    consortium_contested = consortium_per_person * contested_count
+    consortium = consortium_settled + consortium_contested
+
     funeral_expenses = safe_float(data.funeral_expenses, funeral_default) if data.funeral_expenses is not None else funeral_default
     loss_estate = safe_float(data.loss_estate, loss_estate_default) if data.loss_estate is not None else loss_estate_default
 
@@ -383,6 +396,8 @@ def calculate_death_compensation(
     # the breakdown replaces/overrides the generic consortium amount.
     if consortium_breakdown_total > 0.0:
         consortium = 0.0
+        consortium_settled = conlum + conspo + conpar + conchil + conwif + conmo + confath + conhus
+        consortium_contested = conbro + consis
 
     medical_expenses = safe_float(data.medical_expenses, 0.0)
 
@@ -410,6 +425,13 @@ def calculate_death_compensation(
         "multiplier": multiplier,
         "loss_of_dependency": safe_round(loss_of_dependency_float),
         "consortium": consortium,
+        "consortium_settled": safe_round(consortium_settled),
+        "consortium_contested": safe_round(consortium_contested) if contested_count > 0 else None,
+        "consortium_contested_note": (
+            f"Includes ₹{safe_round(consortium_contested)} for sibling consortium — "
+            "not firmly settled under Satinder Kaur (2021); tribunals may reduce or disallow this on appeal."
+            if contested_count > 0 else None
+        ),
         "funeral_expenses": funeral_expenses,
         "loss_estate": loss_estate,
         "medical_expenses": medical_expenses,

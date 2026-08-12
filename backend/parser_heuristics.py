@@ -224,22 +224,30 @@ FIELD_LABEL_ALIASES = {
         "funeral expenses", "funeral charges", "last rites", "last rituals",
         "funeral rites", "cremation expenses", "burial expenses",
         "amount for last rituals", "amount for funeral", "last ritual expenses",
-        "funeral and burial", "death rituals"
+        "funeral and burial", "death rituals",
+        # Hindi keywords
+        "दाह-संस्कार खर्च", "दाह संस्कार व्यय", "अंतिम संस्कार व्यय", "क्रिया-कर्म व्यय"
     ],
     "consortium": [
         "consortium", "loss of consortium", "loss of cohabitation",
         "amount for cohabitation", "amount for consortium",
         "spousal consortium", "parental consortium", "filial consortium",
-        "loss of love and affection", "cohabitation amount"
+        "loss of love and affection", "cohabitation amount",
+        # Hindi keywords
+        "साहचर्य हानि", "सहचर्य हानि", "संगसाथ की हानि", "साहचर्य क्षति"
     ],
     "loss_of_dependency": [
         "loss of dependency", "amount for dependency", "dependency amount",
         "annual loss of dependency", "loss of financial dependency",
-        "dependency compensation", "amount for dependency"
+        "dependency compensation", "amount for dependency",
+        # Hindi keywords
+        "आश्रितता हानि", "आश्रिता की हानि", "आश्रितता की क्षति"
     ],
     "loss_of_estate": [
         "loss of estate", "amount for loss of estate", "estate loss",
-        "loss of estate amount", "loss of personal estate"
+        "loss of estate amount", "loss of personal estate",
+        # Hindi keywords
+        "संपदा हानि", "संपत्ति हानि", "संपदा की क्षति"
     ],
     "total_compensation": [
         "total compensation awarded", "total compensation awarded by the tribunal",
@@ -1938,32 +1946,57 @@ def format_suggestions_for_calculator(suggestions):
             if "claimant_relationship_type" not in low_conf_fields:
                 low_conf_fields.append("claimant_relationship_type")
         
+        # Determine ref_date for fallback defaults:
+        from datetime import date, datetime
+        from backend.calculator import get_conventional_heads_enhanced
+        
+        doa_str = get_field_val("date_of_accident", "date_of_accident")
+        ref_date = None
+        if doa_str:
+            for fmt in ("%Y-%m-%d", "%d-%m-%Y"):
+                try:
+                    ref_date = datetime.strptime(doa_str.strip(), fmt).date()
+                    break
+                except ValueError:
+                    continue
+        if not ref_date:
+            ref_date = date.today()
+
         # Consortium
-        if raw_cons not in ["", None, 0.0, 0] and raw_cons != 40000.0:
+        if raw_cons not in ["", None, 0.0, 0]:
             cons_val = raw_cons
         else:
-            cons_val = 40000.0
-            suggestions["confidence_scores"]["consortium"] = {"confidence": 1.0, "reason": "Standard Pranay Sethi baseline default (known constant)"}
-            if "consortium" in low_conf_fields:
-                low_conf_fields.remove("consortium")
+            cons_val = get_conventional_heads_enhanced(40000.0, ref_date)
+            suggestions["confidence_scores"]["consortium"] = {
+                "confidence": 0.5,
+                "reason": f"Not found in document text — estimated from award/accident date ({ref_date}) per Pranay Sethi escalation. Verify manually."
+            }
+            if "consortium" not in low_conf_fields:
+                low_conf_fields.append("consortium")
                 
         # Funeral expenses
-        if raw_funeral not in ["", None, 0.0, 0] and raw_funeral != 15000.0:
+        if raw_funeral not in ["", None, 0.0, 0]:
             funeral_val = raw_funeral
         else:
-            funeral_val = 15000.0
-            suggestions["confidence_scores"]["funeral_expenses"] = {"confidence": 1.0, "reason": "Standard Pranay Sethi baseline default (known constant)"}
-            if "funeral_expenses" in low_conf_fields:
-                low_conf_fields.remove("funeral_expenses")
+            funeral_val = get_conventional_heads_enhanced(15000.0, ref_date)
+            suggestions["confidence_scores"]["funeral_expenses"] = {
+                "confidence": 0.5,
+                "reason": f"Not found in document text — estimated from award/accident date ({ref_date}) per Pranay Sethi escalation. Verify manually."
+            }
+            if "funeral_expenses" not in low_conf_fields:
+                low_conf_fields.append("funeral_expenses")
                 
         # Loss of estate
-        if raw_estate not in ["", None, 0.0, 0] and raw_estate != 15000.0:
+        if raw_estate not in ["", None, 0.0, 0]:
             estate_val = raw_estate
         else:
-            estate_val = 15000.0
-            suggestions["confidence_scores"]["loss_estate"] = {"confidence": 1.0, "reason": "Standard Pranay Sethi baseline default (known constant)"}
-            if "loss_estate" in low_conf_fields:
-                low_conf_fields.remove("loss_estate")
+            estate_val = get_conventional_heads_enhanced(15000.0, ref_date)
+            suggestions["confidence_scores"]["loss_estate"] = {
+                "confidence": 0.5,
+                "reason": f"Not found in document text — estimated from award/accident date ({ref_date}) per Pranay Sethi escalation. Verify manually."
+            }
+            if "loss_estate" not in low_conf_fields:
+                low_conf_fields.append("loss_estate")
 
     fields = {}
     if case_type == "death":
@@ -1988,6 +2021,7 @@ def format_suggestions_for_calculator(suggestions):
             "consortium": cons_val,
             "funeral_expenses": funeral_val,
             "loss_estate": estate_val,
+            "consortium_claimants": clean_numeric_to_float_or_int(get_field_val("consortium_claimants", "consortium_claimants"), "consortium_claimants"),
         }
     elif case_type == "injury":
         fields = {
@@ -2378,6 +2412,7 @@ def extract_compensation_table_fields(section_content, case_type=None):
         "multiplier": None,
         "funeral_expenses": None,
         "consortium": None,
+        "consortium_claimants": None,
         "total_compensation": None
     }
     
@@ -2399,6 +2434,22 @@ def extract_compensation_table_fields(section_content, case_type=None):
         ]
         if any(kw in line_lower for kw in avoid_kws):
             continue
+
+        # Check for "amount X count = total" pattern (e.g. 48,000X4 = 1,92,000)
+        m_x = re.search(r'([\d,]{4,7})\s*[xX×]\s*(\d{1,2})\)?\s*[\-–]?\s*([\d,]{5,9})', line)
+        if m_x:
+            per_person = parse_indian_rupee_value(m_x.group(1))
+            claimant_count = int(m_x.group(2))
+            total_val = parse_indian_rupee_value(m_x.group(3))
+            
+            is_cons = any(kw in line_lower for kw in ["consortium", "cohabitation", "love", "साहचर्य", "सहचर्य", "संगसाथ"])
+            is_dep = any(kw in line_lower for kw in ["dependency", "loss", "multiplier", "आश्रितता", "आश्रिता"])
+            if is_cons:
+                fields["consortium"] = per_person
+                fields["consortium_claimants"] = claimant_count
+            elif is_dep:
+                fields["multiplier"] = claimant_count
+                fields["annual_loss_dependency"] = total_val
 
         val = extract_last_currency_value(line_lower)
         
@@ -5876,9 +5927,14 @@ def parse_extracted_text(text_lines, case_type=None):
     else:
         ai_recovery_needed = True
         
-    consortium_claimants = None
-    conf_consortium_claimants = 0.0
-    method_consortium_claimants = "Default Heuristic"
+    consortium_claimants = comp_fields.get("consortium_claimants")
+    if consortium_claimants:
+        conf_consortium_claimants = 0.95
+        method_consortium_claimants = "Amount X Count Regex Table Extraction"
+    else:
+        consortium_claimants = None
+        conf_consortium_claimants = 0.0
+        method_consortium_claimants = "Default Heuristic"
 
     if ai_recovery_needed:
         ai_recovery_triggered = True
