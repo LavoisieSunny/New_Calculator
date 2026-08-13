@@ -3846,27 +3846,57 @@ def parse_extracted_text(text_lines, case_type=None):
         method_claimant_name = "Deceased Override Check"
 
     # 3. Father / Husband Name
-    if block_father_name:
+    father_patterns = [
+        r'(?:father|husband)\s*(?:[\'’]?s\s*)?name\s*[:\-]\s*(.*)',
+        r'(?:father|husband)\s*[/\\]\s*(?:husband|father)\s*(?:name|[\'’]?s\s*name)?\s*[:\-]\s*(.*)',
+        r'\bs[\./\s\\]*o\b\s*(?:shri|late\s+shri|late)?\s*(.*)',
+        r'\bd[\./\s\\]*o\b\s*(?:shri|smt|kumari|late)?\s*(.*)',
+        r'\bw[\./\s\\]*o\b\s*(?:shri|late\s+shri|late)?\s*(.*)',
+        r'\bh[\./\s\\]*o\b\s*(?:shri|late\s+shri|late)?\s*(.*)',
+        r'\bc[\./\s\\]*o\b\s*(?:shri|smt)?\s*(.*)',
+        r'\bson\s+of\b\s*(?:shri|late)?\s*(.*)',
+        r'\bdaughter\s+of\b\s*(?:shri|smt|late)?\s*(.*)',
+        r'\bwife\s+of\b\s*(?:shri|late)?\s*(.*)',
+        r'\bhusband\s+of\b\s*(?:shri|late)?\s*(.*)',
+        r'\bcare\s+of\b\s*(?:shri|smt|late)?\s*(.*)',
+    ]
+
+    local_dec_block_text = None
+    if 'dec_block_text' in locals() and dec_block_text:
+        local_dec_block_text = dec_block_text
+    elif best_block:
+        local_dec_block_text = best_block
+
+    block_father_cand = None
+    if local_dec_block_text:
+        fh_match = re.search(r'\b(?:(?:(?:3|c)\.?\s*|\(\s*[3c]\s*\)\s*)?(?:Father|Husband)(?:’|\')?s?\s*Name)\s*[:\-;\u2022]\s*([^\n]+)', local_dec_block_text, re.IGNORECASE)
+        if fh_match:
+            cand_fh = clean_legal_name(fh_match.group(1).strip())
+            if cand_fh:
+                block_father_cand = cand_fh.title()
+        
+        if not block_father_cand:
+            for pat in father_patterns:
+                m = re.search(pat, local_dec_block_text, re.IGNORECASE)
+                if m:
+                    cand_fh = clean_legal_name(m.group(1).strip())
+                    if cand_fh:
+                        block_father_cand = cand_fh.title()
+                        break
+
+    if block_father_cand:
+        father_name = block_father_cand
+        conf_father_name = 0.99
+        sec_father_name = "particulars_block"
+        page_father_name = 1
+        method_father_name = "High Court Particulars Block"
+    elif block_father_name:
         father_name = block_father_name
         conf_father_name = 0.99
         sec_father_name = "particulars_block"
         page_father_name = 1
         method_father_name = "High Court Particulars Block"
     else:
-        father_patterns = [
-            r'(?:father|husband)\s*(?:[\'’]?s\s*)?name\s*[:\-]\s*(.*)',
-            r'(?:father|husband)\s*[/\\]\s*(?:husband|father)\s*(?:name|[\'’]?s\s*name)?\s*[:\-]\s*(.*)',
-            r'\bs[\./\s\\]*o\b\s*(?:shri|late\s+shri|late)?\s*(.*)',
-            r'\bd[\./\s\\]*o\b\s*(?:shri|smt|kumari|late)?\s*(.*)',
-            r'\bw[\./\s\\]*o\b\s*(?:shri|late\s+shri|late)?\s*(.*)',
-            r'\bh[\./\s\\]*o\b\s*(?:shri|late\s+shri|late)?\s*(.*)',
-            r'\bc[\./\s\\]*o\b\s*(?:shri|smt)?\s*(.*)',
-            r'\bson\s+of\b\s*(?:shri|late)?\s*(.*)',
-            r'\bdaughter\s+of\b\s*(?:shri|smt|late)?\s*(.*)',
-            r'\bwife\s+of\b\s*(?:shri|late)?\s*(.*)',
-            r'\bhusband\s+of\b\s*(?:shri|late)?\s*(.*)',
-            r'\bcare\s+of\b\s*(?:shri|smt|late)?\s*(.*)',
-        ]
         father_name, conf_father_name, sec_father_name, page_father_name = contextual_extract(
             father_patterns, sections, [("claimant_section", 90), ("facts_section", 85), ("memo_of_appeal_section", 80)], type_cast=str,
             field_name="father_name", debug_info=parser_debug, pages=pages, sections_metadata=sections_metadata, page_importances=page_importances

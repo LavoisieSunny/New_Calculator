@@ -125,7 +125,8 @@ def resolve_case_data(parsed_fields: dict | None, ocr_text: str | None, case_typ
             suggestions = parse_extracted_text(ocr_text.split("\n"), case_type=case_type_hint)
             suggestions["full_text"] = ocr_text
             formatted = format_suggestions_for_calculator(suggestions)
-            logger.info(f"[resolve_case_data] full_text length={len(ocr_text)}, dependents extracted={formatted.get('fields', {}).get('dependents')}")
+            deps_val = formatted.get('fields', {}).get('dependents') or formatted.get('dependents')
+            logger.info(f"[resolve_case_data] dependents extracted={deps_val}")
             reparsed_case_type = formatted.get("case_type")
             reparsed_fields = formatted.get("fields", {}) or {}
             reparsed_award = formatted.get("total_compensation")

@@ -3707,6 +3707,18 @@ This cannot be undone.`)) return;
                     <strong>${res.deduction_percentage}% (-${formatCurrency(res.deduction_amount)})</strong>
                 </div>
                 <div style="display: flex; justify-content: space-between; padding: 6px 0; border-bottom: 1px solid var(--border-glass);">
+                    <span>Marital Status</span>
+                    <strong>${document.getElementById("marital-status")?.value || "N/A"}</strong>
+                </div>
+                <div style="display: flex; justify-content: space-between; padding: 6px 0; border-bottom: 1px solid var(--border-glass);">
+                    <span>Number of Dependents</span>
+                    <strong>${document.getElementById("dependents")?.value || "N/A"}</strong>
+                </div>
+                <div style="display: flex; justify-content: space-between; padding: 6px 0; border-bottom: 1px solid var(--border-glass);">
+                    <span>Deduction Fraction</span>
+                    <strong>${res.deduction_label || "N/A"}</strong>
+                </div>
+                <div style="display: flex; justify-content: space-between; padding: 6px 0; border-bottom: 1px solid var(--border-glass);">
                     <span>Dependency Income</span>
                     <strong>${formatCurrency(res.dependency_income)}</strong>
                 </div>
@@ -3721,6 +3733,14 @@ This cannot be undone.`)) return;
                 <div style="display: flex; justify-content: space-between; padding: 6px 0; border-bottom: 1px solid var(--border-glass);">
                     <span>Consortium</span>
                     <strong>${formatCurrency(res.consortium)}</strong>
+                </div>
+                <div style="display: flex; justify-content: space-between; padding: 6px 0; border-bottom: 1px solid var(--border-glass);">
+                    <span>Consortium Basis</span>
+                    <strong>${document.getElementById("consortium_mode")?.value === "satinder_kaur" ? "Per Legal Heir (Satinder Kaur)" : "Flat"}</strong>
+                </div>
+                <div style="display: flex; justify-content: space-between; padding: 6px 0; border-bottom: 1px solid var(--border-glass);">
+                    <span>Consortium Claimants</span>
+                    <strong>${document.getElementById("consortium_claimants")?.value || "N/A"}</strong>
                 </div>
                 <div style="display: flex; justify-content: space-between; padding: 6px 0; border-bottom: 1px solid var(--border-glass);">
                     <span>Funeral Expenses</span>
