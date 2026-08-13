@@ -243,6 +243,12 @@ _LEGAL_QUALITY_KEYWORDS = [
     "deceased", "injured", "monthly", "insurance", "motor", "claim"
 ]
 
+_LEGAL_QUALITY_KEYWORDS_HI = [
+    "अधिकरण", "आवेदक", "अनावेदक", "दुर्घटना", "क्षतिपूर्ति",
+    "विकलांगता", "आय", "अवार्ड", "न्यायालय", "मृतक", "घायल",
+    "मासिक", "बीमा", "मोटर", "दावा", "प्रतिकर"
+]
+
 # Devanagari unicode range
 _DEVANAGARI_RE = re.compile(r'[\u0900-\u097F]')
 
@@ -1227,7 +1233,9 @@ def score_ocr_page_quality(text_lines: list) -> float:
         return 0.0
     line_score = min(len(real) / 10.0, 1.0)
     full = " ".join(real).lower()
-    kw_hits = sum(1 for kw in _LEGAL_QUALITY_KEYWORDS if kw in full)
+    is_devanagari_page = bool(_DEVANAGARI_RE.search(full))
+    keywords = _LEGAL_QUALITY_KEYWORDS_HI if is_devanagari_page else _LEGAL_QUALITY_KEYWORDS
+    kw_hits = sum(1 for kw in keywords if kw in full)
     kw_score = min(kw_hits / 5.0, 1.0)
     words = full.split()
     if words:
