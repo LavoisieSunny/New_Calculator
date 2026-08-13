@@ -203,6 +203,7 @@ def test_handwriting_escalation_in_initial_pages():
         with patch("backend.ocr.preprocess_for_vision", return_value=mock_img), \
              patch("backend.ocr.image_to_base64", return_value="mock_b64"), \
              patch("backend.ocr._vision_is_paused", return_value=False), \
+             patch("backend.ocr.OCR_HANDWRITING_CHECK_PAGES", 3), \
              patch("backend.ocr.OCR_ENABLE_VISION_ESCALATION", True):
 
             # page_idx=0 (< OCR_HANDWRITING_CHECK_PAGES=3): should force vision

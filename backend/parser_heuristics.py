@@ -3768,7 +3768,12 @@ def parse_extracted_text(text_lines, case_type=None):
             r'\b((?-i:[A-Z][a-z]+(?:\s+[A-Z][a-z]+)*))[ \t]*(?:\(deceased\)|deceased)\b',
             r'\b(?:deceased)[ \t]+((?-i:[A-Z][a-z]+(?:\s+[A-Z][a-z]+)*))\b',
             r'\bdeath[ \t]+of[ \t]+(?:shri|smt|late)?[ \t]*((?-i:[A-Z][a-z]+(?:\s+[A-Z][a-z]+)*))\b',
-            r'\b((?-i:[A-Z][a-z]+(?:\s+[A-Z][a-z]+)*))[ \t]*(?:died|expired)\b'
+            r'\b((?-i:[A-Z][a-z]+(?:\s+[A-Z][a-z]+)*))[ \t]*(?:died|expired)\b',
+            # Hindi patterns
+            r'मृतक\s*(?:का\s+नाम)?\s*[:\-]\s*(.*)',
+            r'स्व\.\s*(.*)',
+            r'स्वर्गीय\s*(.*)',
+            r'दिवंगत\s*(.*)'
         ]
         deceased_name, conf_deceased_name, sec_deceased_name, page_deceased_name = contextual_extract(
             dec_patterns, sections, [("claimant_section", 90), ("facts_section", 85), ("memo_of_appeal_section", 80)], type_cast=str,
@@ -3859,6 +3864,14 @@ def parse_extracted_text(text_lines, case_type=None):
         r'\bwife\s+of\b\s*(?:shri|late)?\s*(.*)',
         r'\bhusband\s+of\b\s*(?:shri|late)?\s*(.*)',
         r'\bcare\s+of\b\s*(?:shri|smt|late)?\s*(.*)',
+        # Hindi patterns
+        r'पिता\s*(?:का\s+नाम)?\s*[:\-]\s*(.*)',
+        r'पति\s*(?:का\s+नाम)?\s*[:\-]\s*(.*)',
+        r'आत्मज\s*(?:श्री)?\s*(.*)',
+        r'पुत्र\s*(?:श्री)?\s*(.*)',
+        r'पत्नी\s*(?:श्री)?\s*(.*)',
+        r'पिता\s+श्री\s*(.*)',
+        r'पति\s+श्री\s*(.*)'
     ]
 
     local_dec_block_text = None
@@ -4086,6 +4099,10 @@ def parse_extracted_text(text_lines, case_type=None):
                 r'\bdeceased\s+was\s+aged\s*(?:about)?\s*(\d{1,2})\b',
                 r'\bdeceased\s+aged\s*(?:about)?\s*(\d{1,2})\b',
                 r'\bage\s+at\s+the?\s*time\s+of\s+(?:the\s+)?accident\s*[:\-]?\s*(\d{1,2})\b',
+                # Hindi patterns
+                r'\b(?:मृतक|दिवंगत)\b.*?\b(?:आयु|उम्र)\s*(?:लगभग)?\s*[:\-;]?\s*(\d{1,2})\b',
+                r'\b(?:आयु|उम्र)\s+मृतक\s*(?:लगभग)?\s*[:\-]?\s*(\d{1,2})\b',
+                r'\bमृतक\s+(?:की\s+)?(?:आयु|उम्र)\s*(?:लगभग)?\s*[:\-]?\s*(\d{1,2})\b'
             ]
             age, conf_age, sec_age, page_age = contextual_extract(
                 death_age_patterns, sections, [("chronological_events_section", 90), ("facts_section", 85), ("compensation_section", 80), ("award_copy_section", 70)], default_val="", type_cast=int,
@@ -4117,7 +4134,10 @@ def parse_extracted_text(text_lines, case_type=None):
                     
                     for pat in [
                         r'\b(?:age|aged)\s*(?:about|is|was)?\s*[:\-;]?\s*(\d{1,2})\b',
-                        r'\b(\d{1,2})\s*(?:years|yrs)\b'
+                        r'\b(\d{1,2})\s*(?:years|yrs)\b',
+                        # Hindi proximity patterns
+                        r'\b(?:आयु|उम्र)\s*(?:लगभग)?\s*[:\-;]?\s*(\d{1,2})\b',
+                        r'\b(\d{1,2})\s*(?:वर्ष|साल)\b'
                     ]:
                         m = re.search(pat, window, re.IGNORECASE)
                         if m:
@@ -4157,6 +4177,10 @@ def parse_extracted_text(text_lines, case_type=None):
             r'(?:is|was)\s+(\d{1,2})\s+years\s+(?:of\s+age|old)\b',
             r'\bage\s*[:\-]?\s*(\d{1,2})\b',
             r'\baged\s+(\d{1,2})\b',
+            # Hindi patterns
+            r'\b(?:मृतक|घायल|आवेदक|याची)\s+(?:की\s+)?(?:आयु|उम्र)\s*(?:लगभग)?\s*[:\-]?\s*(\d{1,2})\b',
+            r'\b(?:आयु|उम्र)\s*(?:लगभग)?\s*[:\-]\s*(\d{1,2})\b',
+            r'\b(\d{1,2})\s*(?:वर्ष|साल)\b'
         ]
         age, conf_age, sec_age, page_age = contextual_extract(
             age_patterns, sections, [("claimant_section", 95), ("facts_section", 85), ("chronological_events_section", 80)], default_val="", type_cast=int,
@@ -4582,7 +4606,9 @@ def parse_extracted_text(text_lines, case_type=None):
 
         annual_patterns = [
             r'\b(?:annual|yearly)\s+income(?:\s+of\s+(?:the\s+)?(?:deceased|victim|appellant|petitioner|claimant)?(?:\s+[\w\.\-]+){0,3})?(?:\s*\([^)]*\))?\s*[^a-zA-Z\d\r\n]*(?:[\r\n]+[^a-zA-Z\d\r\n]*)?(?:rs\.?|inr|rupees?|हैं|₹|[a-zA-Z])?\s*([\d,\.\s]+lakhs?|[\d,\.\s]+lacs?|(?:\d[\d,\.\s]*\d|\d))\b',
-            r'\bincome(?:\s+of\s+(?:the\s+)?(?:deceased|victim|appellant|petitioner|claimant)?(?:\s+[\w\.\-]+){0,3})?\s*\(\s*(?:annual|yearly)\s*\)\s*[^a-zA-Z\d\r\n]*(?:[\r\n]+[^a-zA-Z\d\r\n]*)?(?:rs\.?|inr|rupees?|हैं|₹|[a-zA-Z])?\s*([\d,\.\s]+lakhs?|[\d,\.\s]+lacs?|(?:\d[\d,\.\s]*\d|\d))\b'
+            r'\bincome(?:\s+of\s+(?:the\s+)?(?:deceased|victim|appellant|petitioner|claimant)?(?:\s+[\w\.\-]+){0,3})?\s*\(\s*(?:annual|yearly)\s*\)\s*[^a-zA-Z\d\r\n]*(?:[\r\n]+[^a-zA-Z\d\r\n]*)?(?:rs\.?|inr|rupees?|हैं|₹|[a-zA-Z])?\s*([\d,\.\s]+lakhs?|[\d,\.\s]+lacs?|(?:\d[\d,\.\s]*\d|\d))\b',
+            # Hindi patterns
+            r'\b(?:वार्षिक|सालाना)\s+आय\s*(?:लगभग)?\s*[:\-]?\s*(?:रु\.?|रूपये)?\s*([\d,\.\s]+)\b'
         ]
         
         income_patterns = [
@@ -4592,7 +4618,10 @@ def parse_extracted_text(text_lines, case_type=None):
             r'income\s+is\s+assessed\s+at\s+rs\.?\s*([\d,\.]+)\b',
             r'assessed\s+(?:the\s+)?monthly\s+income\s+(?:of\s+the\s+deceased\s+)?at\s*(?:rs\.?|inr)?\s*([\d,\.]+)\b',
             r'monthly\s+income\s+of\s+the\s+deceased\s+(?:is|was)\s*(?:assessed|taken|fixed|determined)\s*(?:at|as)?\s*(?:rs\.?|inr)?\s*([\d,\.]+)\b',
-            r'\b(?:rs\.?|inr|rupees?|हैं|₹|[a-zA-Z])?\s*(\d[\d,\.\s]*\d|\d)\s*p\.m\.\b'
+            r'\b(?:rs\.?|inr|rupees?|हैं|₹|[a-zA-Z])?\s*(\d[\d,\.\s]*\d|\d)\s*p\.m\.\b',
+            # Hindi patterns
+            r'\b(?:मासिक\s+आय|वेतन|कमाई)\s*(?:लगभग)?\s*[:\-]\s*(?:रु\.?|रूपये)?\s*([\d,\.\s]+)\b',
+            r'\b(?:मासिक\s+आय|वेतन|कमाई)\s+(?:रूपये\s+)?([\d,\.]+)\s*(?:रूपये)?\s*(?:प्रति\s*माह|प्रति\s*महीना|\/-\s*माह)'
         ]
 
         non_grounds_sections = [

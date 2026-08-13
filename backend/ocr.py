@@ -1478,7 +1478,7 @@ def ocr_page_with_vision(
     if track == "high_court" and paddle_available:
         if fitz_text and len(fitz_text.strip()) > 10:
             dev_ratio = _devanagari_ratio(fitz_text)
-            if dev_ratio >= 0.15:
+            if dev_ratio >= 0.05:
                 page_lang = "hi"
                 _tlog(f"Page {page_num}: Detected Hindi language via sparse digital text (deva_ratio={dev_ratio:.2f})")
             else:
@@ -1809,7 +1809,7 @@ def detect_page_language_from_probe(pil_img, page_num: int = 1) -> str:
                     full_path, page_num=page_num, lang="hi"
                 )
                 ratio_hi2 = _devanagari_ratio(" ".join(lines_hi2))
-                if ratio_hi2 >= 0.15 and conf_hi2 > 0.3:
+                if ratio_hi2 >= 0.05 and conf_hi2 > 0.3:
                     _tlog(f"Page {page_num}: full-page retry found Hindi (deva_ratio={ratio_hi2:.2f})")
                     return "hi"
             finally:
@@ -1819,7 +1819,7 @@ def detect_page_language_from_probe(pil_img, page_num: int = 1) -> str:
                     except Exception:
                         pass
 
-        chosen = "hi" if (ratio_hi >= 0.15 and conf_hi > 0.4) else "en"
+        chosen = "hi" if (ratio_hi >= 0.05 and conf_hi > 0.4) else "en"
         _tlog(
             f"Page {page_num} lang probe: EN_conf={conf_en:.2f} (lines={len(lines_en)}), "
             f"HI_conf={conf_hi:.2f} (lines={len(lines_hi)}, deva_ratio={ratio_hi:.2f}). "
