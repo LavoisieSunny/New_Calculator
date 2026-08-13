@@ -13,6 +13,11 @@ logger = logging.getLogger("VectorDB")
 # Centralized collection name for all legal precedents
 COLLECTION_NAME = "legal_documents"
 
+# Bump this any time parser_heuristics.py, ocr.py extraction logic, or
+# justification_engine.py field-resolution logic changes in a way that
+# should invalidate previously-cached documents and force a fresh reparse.
+PARSER_VERSION = "2026-08-13-dependents-fix"   # change this string whenever extraction logic changes
+
 # Qdrant server connection URL (configured to run on server port 7204)
 QDRANT_URL = os.getenv("QDRANT_URL", "http://localhost:7204")
 
@@ -380,7 +385,7 @@ def index_document(filename: str, text_lines: list, suggestions: dict = None, ca
         
     # Calculate file MD5 hash of raw OCR text for duplicate protection
     full_raw_text = "\n".join(text_lines)
-    file_hash = hashlib.md5(full_raw_text.encode("utf-8")).hexdigest()
+    file_hash = hashlib.md5((full_raw_text + PARSER_VERSION).encode("utf-8")).hexdigest()
     
     # Check for duplicate indexing
     try:
