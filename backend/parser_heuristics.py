@@ -1901,6 +1901,10 @@ def format_suggestions_for_calculator(suggestions):
 
     claimant_name = suggestions.get("claimant_name") or ""
     rel_type = suggestions.get("claimant_relationship_type") or suggestions.get("claimant_relationship_to_deceased") or ""
+    if isinstance(rel_type, list):
+        rel_type = ", ".join(str(item) for item in rel_type)
+    else:
+        rel_type = str(rel_type)
     
     valid_relation_keywords = [
         "mother", "father", "wife", "widow", "husband", "son", "daughter",
