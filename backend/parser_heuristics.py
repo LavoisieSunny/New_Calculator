@@ -3345,6 +3345,15 @@ def parse_extracted_text(text_lines, case_type=None):
     section priority rules, entity contamination filters, page importance/citation suppression,
     chronological parsing, compensation table extraction, and detailed confidence tracking.
     """
+    # Normalize PDF kerning artifacts: source PDFs in this pipeline sometimes
+    # drop the space between "THE" and the following capitalized word
+    # (e.g. "THEACCIDENT", "ACCIDENTCASES"). This runs once, upstream of every
+    # downstream regex, instead of patching each heading pattern individually.
+    text_lines = [
+        re.sub(r'\b(THE|OF|AND)([A-Z]{3,})\b', r'\1 \2', l)
+        for l in text_lines
+    ]
+
     print("[PARSE DEBUG] First 60 lines of raw text:")
     for i, line in enumerate(text_lines[:60]):
         try:
@@ -4998,7 +5007,7 @@ def parse_extracted_text(text_lines, case_type=None):
     # 10a. FIR Number
     _fir_patterns = [
         r'\b(?:fir|f\s*\.\s*i\s*\.\s*r\s*\.?)\s*(?:no\.?|number|#)\s*[:\-]?\s*([\w/\-]+(?:/\d{4})?)',
-        r'\b(?:fir|f\s*\.\s*i\s*\.\s*r\s*\.?)\s*(?:no\.?|number|#)?\s*[:\-]?\s*([\w/\-]+(?:\s+of\s+\d{4})?)',
+        r'\b(?:fir|f\s*\.\s*i\s*\.\s*r\s*\.?)\b\s*(?:no\.?|number|#)?\s*[:\-]?\s*([\w/\-]+(?:\s+of\s+\d{4})?)',
         r'\bcrime\s*(?:no\.?|number)\s*[:\-]?\s*([\w/\-]+(?:/\d{4})?)',
         r'\b(?:crime|cr)\s*(?:case\s*)?(?:no\.?|number)\s*[:\-]?\s*([\w/\-]+(?:\s+of\s+\d{4})?)',
         r'\bcr\.?\s*(?:no\.?|case\s*no\.?)\s*[:\-]?\s*([\w/\-]+)',
@@ -5065,7 +5074,7 @@ def parse_extracted_text(text_lines, case_type=None):
 
     # 10d. Insurance Company
     _known_insurers = [
-        "national insurance", "oriental insurance", "new india assurance",
+        "national insurance", "oriental insurance", "new india assurance", "new india insurance",
         "united india insurance", "bajaj allianz", "hdfc ergo", "icici lombard",
         "reliance general", "tata aig", "cholamandalam", "future generali",
         "iffco tokio", "universal sompo", "royal sundaram", "magma hdi",
@@ -5092,6 +5101,7 @@ def parse_extracted_text(text_lines, case_type=None):
         _ins_patterns = [
             r'(?:insurance\s+company|insurer)\s*[:\-]\s*([A-Za-z][A-Za-z\s\.\,&]+?(?:ltd\.?|limited|corporation|co\.?|company))(?:\.|,|\n|$)',
             r'(?:respondent|opposite\s+party)\s*(?:no\.?\s*\d+)?\s*[:\-]\s*([A-Za-z][A-Za-z\s\.\,&]*?insurance(?:\s+(?:co(?:mpany)?|ltd|limited|corp|corporation))?)\b',
+            r'\d+\.\s*(?:Manager,?\s*)?(?:The\s+)?([A-Za-z][A-Za-z\s\.\,&]*?Insurance[A-Za-z\s\.\,&]*?(?:Co\.?|Ltd\.?|Limited|Corporation|Company))\b',
         ]
         for _pat in _ins_patterns:
             _ins_m = re.search(_pat, full_text, re.IGNORECASE)
