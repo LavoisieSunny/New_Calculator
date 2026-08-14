@@ -804,28 +804,28 @@ document.addEventListener("DOMContentLoaded", () => {
     }
 
     function updateDependentsVisibility() {
-        // Number of Dependents only applies to a Married deceased in a death case.
-        // Bachelor/Single never asks for it (deduction is always fixed at 1/2).
+        // Number of Dependents is required for BOTH married and bachelor
+        // death cases now — the bachelor-deduction recommendation also
+        // depends on how many dependents/claimants were entered.
         const caseType = caseTypeSelect ? caseTypeSelect.value : "";
-        const status = maritalStatusSelect ? maritalStatusSelect.value : "married";
-        const isMarriedDeath = caseType === "death" && status === "married";
+        const isDeath = caseType === "death";
 
         const group = document.getElementById("dependents-group");
-        if (group) group.style.display = isMarriedDeath ? "" : "none";
+        if (group) group.style.display = isDeath ? "" : "none";
 
         const labelDeps = document.getElementById("label-dependents");
         if (labelDeps) {
-            labelDeps.innerHTML = isMarriedDeath
+            labelDeps.innerHTML = isDeath
                 ? "Number of Dependents <span class=\"req\">*</span>"
                 : "Number of Dependents";
         }
 
         if (dependentsInput) {
-            if (isMarriedDeath) {
+            if (isDeath) {
                 dependentsInput.setAttribute("required", "required");
             } else {
                 dependentsInput.removeAttribute("required");
-                dependentsInput.value = "";  // not applicable, don't carry over stale values
+                dependentsInput.value = "";
             }
         }
     }
