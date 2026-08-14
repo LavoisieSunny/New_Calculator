@@ -427,7 +427,7 @@ def get_ocr_instance(lang: str = None):
             t0 = time.time()
             rec_model_name = None
             if lang == "hi":
-                rec_model_name = "devanagari_PP-OCRv5_server_rec"   # was: mobile_rec — resolves conjuncts (क्ष, र्, ू) that mobile drops
+                rec_model_name = "devanagari_PP-OCRv5_mobile_rec"   # confirmed: only Devanagari model that exists in paddlex 3.5.2
             elif lang == "en":
                 rec_model_name = "en_PP-OCRv5_mobile_rec"
 
@@ -471,7 +471,7 @@ def get_supporting_ocr_instance(lang: str = None):
             t0 = time.time()
             rec_model_name = None
             if lang == "hi":
-                rec_model_name = "devanagari_PP-OCRv5_server_rec"   # was: mobile_rec
+                rec_model_name = "devanagari_PP-OCRv5_mobile_rec"   # confirmed: only Devanagari model that exists in paddlex 3.5.2
             elif lang == "en":
                 rec_model_name = "en_PP-OCRv5_mobile_rec"
 
