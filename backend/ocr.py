@@ -401,13 +401,24 @@ def get_ocr_instance(lang: str = None):
                 raise ImportError("paddleocr is not installed or failed to import at startup.")
             _tlog(f"Loading PaddleOCR singleton (PP-OCRv5, lang={lang})...")
             t0 = time.time()
+            rec_model_name = None
+            if lang == "hi":
+                rec_model_name = "devanagari_PP-OCRv5_mobile_rec"
+            elif lang == "en":
+                rec_model_name = "en_PP-OCRv5_mobile_rec"
+
             _PADDLE_INSTANCES[lang] = _init_paddle_engine(
                 PaddleOCR,
                 lang=lang,
-                enable_mkldnn=False,
+                text_recognition_model_name=rec_model_name,
+                text_det_unclip_ratio=2.0,
+                text_det_thresh=0.25,
+                text_det_box_thresh=0.5,
+                text_det_limit_side_len=960,
+                use_textline_orientation=False,
                 use_doc_orientation_classify=False,
                 use_doc_unwarping=False,
-                use_textline_orientation=True,
+                enable_mkldnn=False,
             )
             _tlog(f"PaddleOCR singleton ({lang}) ready in {time.time() - t0:.1f}s.")
             import paddle
@@ -433,13 +444,24 @@ def get_supporting_ocr_instance(lang: str = None):
                 raise ImportError("paddleocr is not installed or failed to import at startup.")
             _tlog(f"Loading Supporting PaddleOCR singleton (PP-OCRv5, lang={lang})...")
             t0 = time.time()
+            rec_model_name = None
+            if lang == "hi":
+                rec_model_name = "devanagari_PP-OCRv5_mobile_rec"
+            elif lang == "en":
+                rec_model_name = "en_PP-OCRv5_mobile_rec"
+
             _SUPPORTING_PADDLE_INSTANCES[lang] = _init_paddle_engine(
                 PaddleOCR,
                 lang=lang,
-                enable_mkldnn=False,
+                text_recognition_model_name=rec_model_name,
+                text_det_unclip_ratio=2.0,
+                text_det_thresh=0.25,
+                text_det_box_thresh=0.5,
+                text_det_limit_side_len=960,
+                use_textline_orientation=False,
                 use_doc_orientation_classify=False,
                 use_doc_unwarping=False,
-                use_textline_orientation=True,
+                enable_mkldnn=False,
             )
             _tlog(f"Supporting PaddleOCR singleton ({lang}) ready in {time.time() - t0:.1f}s.")
     return _SUPPORTING_PADDLE_INSTANCES[lang]

@@ -374,15 +374,22 @@
                                     </div>
                                 </div>
 
-                                <!-- Deduction percentage for personal expenses of deceased (Read-only) -->
-                                <div class="visually-hidden-calc-field" style="display: none !important;">
-                                    <div class="form-group highlighted-group">
-                                        <label for="death-deduction">Deduction % <span class="req">*</span></label>
-                                        <div class="input-icon-wrapper disabled">
-                                            <i class="fa-solid fa-percent field-icon"></i>
-                                            <input type="number" id="death-deduction" name="deduction_percentage" readonly placeholder="Auto-calculated">
-                                        </div>
+                                <!-- Deduction ratio for personal/living expenses of deceased.
+                                     Auto-computed (and, once wired to OCR, auto-filled from the
+                                     parsed claimant relationships) but always user-editable. -->
+                                <div class="form-group highlighted-group full-width">
+                                    <label for="death-deduction">Deduction (Personal &amp; Living Expenses) <span class="req">*</span></label>
+                                    <div class="select-wrapper">
+                                        <select id="death-deduction" name="deduction_override">
+                                            <option value="auto" selected>Auto (recommended)</option>
+                                            <option value="1/2">1/2 (50%)</option>
+                                            <option value="1/3">1/3 (33.33%)</option>
+                                            <option value="1/4">1/4 (25%)</option>
+                                            <option value="1/5">1/5 (20%)</option>
+                                        </select>
+                                        <i class="fa-solid fa-chevron-down select-arrow"></i>
                                     </div>
+                                    <p id="death-deduction-reason" class="hint-text"></p>
                                 </div>
 
                                 <!-- Loss of Consortium Group (Nested) -->

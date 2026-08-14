@@ -830,28 +830,51 @@ document.addEventListener("DOMContentLoaded", () => {
         }
     }
 
-    function getDeductionRatio(dependents, status) {
-        // Mirrors backend/calculator.py get_deduction()
+    function getDeductionRatioWithReason(dependents, status) {
+        // Mirrors backend/calculator.py get_deduction().
+        // TODO(OCR hook): once /parse extracts a structured claimant list
+        // (relation + age + earning status per claimant) for the "death"
+        // case, swap this bachelor branch for the relationship-driven
+        // engine (father/mother/sibling dependency presumptions) instead
+        // of the raw dependents count.
         const stat = String(status || "married").trim().toLowerCase();
         const isBachelor = stat === "single" || stat === "bachelor" || stat === "b" || stat === "unmarried" || stat === "s";
         const deps = parseInt(dependents) || 0;
 
         if (isBachelor) {
             if (deps <= 1) {
-                return 0.50;
+                return {
+                    ratio: 0.50,
+                    label: "1/2",
+                    reason: "Deceased was unmarried (bachelor). Default presumption: 50% deducted towards personal & living expenses."
+                };
             } else {
-                return 1 / 3;
+                return {
+                    ratio: 1 / 3,
+                    label: "1/3",
+                    reason: `Deceased was unmarried (bachelor) with ${deps} dependents entered — 1/3 deducted (2/3 treated as family contribution). Verify against actual evidence of a large dependent family.`
+                };
             }
         } else {
             if (deps <= 3) {
-                return 1 / 3;
+                return { ratio: 1 / 3, label: "1/3", reason: `Family size ${deps + 1} (2-3 members) — 1/3 deducted per Sarla Verma.` };
             } else if (deps <= 6) {
-                return 0.25;
+                return { ratio: 0.25, label: "1/4", reason: `Family size ${deps + 1} (4-6 members) — 1/4 deducted per Sarla Verma.` };
             } else {
-                return 0.20;
+                return { ratio: 0.20, label: "1/5", reason: `Family size ${deps + 1} (7+ members) — 1/5 deducted per Sarla Verma.` };
             }
         }
     }
+
+    // Backward-compatible ratio-only accessor used elsewhere.
+    function getDeductionRatio(dependents, status) {
+        return getDeductionRatioWithReason(dependents, status).ratio;
+    }
+
+    // Tracks whether the user has manually touched the deduction dropdown,
+    // so auto-recalculation (on age/dependents/marital-status change)
+    // doesn't silently clobber a deliberate manual override.
+    let deductionManuallyOverridden = false;
 
     function updateLiveCalculations() {
         const age = parseInt(ageInput.value);
@@ -884,13 +907,21 @@ document.addEventListener("DOMContentLoaded", () => {
 
                 const deps = parseInt(dependentsInput.value) || 0;
                 const status = maritalStatusSelect.value || "married";
-                const deductionRatio = getDeductionRatio(deps, status);
-                const deductionsPercent = Math.round(deductionRatio * 100);
+                const deductionInfo = getDeductionRatioWithReason(deps, status);
+                const deductionsPercent = Math.round(deductionInfo.ratio * 100);
                 if (liveDeductions) liveDeductions.textContent = `${deductionsPercent}%`;
                 if (liveDeductionsBar) liveDeductionsBar.style.width = `${deductionsPercent}%`;
 
-                const deathDeductInput = document.getElementById("death-deduction");
-                if (deathDeductInput) deathDeductInput.value = deductionsPercent;
+                const deathDeductSelect = document.getElementById("death-deduction");
+                const deathDeductReason = document.getElementById("death-deduction-reason");
+                if (deathDeductSelect && !deductionManuallyOverridden) {
+                    deathDeductSelect.value = "auto";
+                }
+                if (deathDeductReason) {
+                    deathDeductReason.textContent = deductionManuallyOverridden
+                        ? `Manually set to ${deathDeductSelect ? deathDeductSelect.value : ""} — overrides the recommended value (${deductionInfo.label}, ${deductionInfo.reason})`
+                        : `Auto: ${deductionInfo.label} (${deductionsPercent}%) — ${deductionInfo.reason}`;
+                }
 
                 // Populate dynamic dashboard helper elements only (no monetary figures)
                 if (document.getElementById("live-calc-multiplier")) {
@@ -953,12 +984,31 @@ document.addEventListener("DOMContentLoaded", () => {
         const funInput = document.getElementById("funeral-expenses");
         const estInput = document.getElementById("loss-estate");
         const futureProspectInput = document.getElementById("future-prospect");
+        const deathDeductSelect = document.getElementById("death-deduction");
 
         if (consInput) consInput.addEventListener("input", updateLiveCalculations);
         if (funInput) funInput.addEventListener("input", updateLiveCalculations);
         if (estInput) estInput.addEventListener("input", updateLiveCalculations);
         if (futureProspectInput) futureProspectInput.addEventListener("input", updateLiveCalculations);
+
+        if (deathDeductSelect) {
+            deathDeductSelect.addEventListener("change", () => {
+                deductionManuallyOverridden = deathDeductSelect.value !== "auto";
+                updateLiveCalculations();
+            });
+        }
     }, 50);
+
+    // Re-run the auto suggestion (and clear a stale manual override) whenever
+    // the inputs that actually drive the recommendation change.
+    [dependentsInput, maritalStatusSelect, ageInput].forEach((el) => {
+        if (!el) return;
+        el.addEventListener("change", () => {
+            deductionManuallyOverridden = false;
+            const sel = document.getElementById("death-deduction");
+            if (sel) sel.value = "auto";
+        });
+    });
 
     // ==========================================================================
     // SINGLE PDF WORKSPACE DRAG & DROP + UPLOAD
@@ -2984,6 +3034,7 @@ This cannot be undone.`)) return;
                     monthly_income: parseFloat(monthlyIncomeInput.value) || 0,
                     dependents: parseInt(dependentsInput.value) || 0,
                     marital_status: maritalStatusSelect.value || "married",
+                    deduction_override: document.getElementById("death-deduction")?.value || "auto",
                     future_type: parseInt(futureTypeSelect?.value || 2),
                     future_prospect: (() => { const fp = document.getElementById("future-prospect"); const v = fp ? fp.value : null; return (v !== null && v !== "" && v !== "0") ? parseFloat(v) : null; })(),
                     consortium: document.getElementById("consortium")?.value ? parseFloat(document.getElementById("consortium").value) : null,
@@ -3171,6 +3222,7 @@ This cannot be undone.`)) return;
 
             dependents: Number(dependentsInput.value || 0),
             marital_status: maritalStatusSelect.value || "married",
+            deduction_override: document.getElementById("death-deduction")?.value || "auto",
             future_type: Number(futureTypeSelect?.value || 2),
             future_prospect: (() => { const fp = document.getElementById("future-prospect"); const v = fp ? fp.value : null; return (v !== null && v !== "" && v !== "0") ? Number(v) : null; })(),
             consortium: document.getElementById("consortium")?.value ? Number(document.getElementById("consortium").value) : null,
@@ -3716,8 +3768,12 @@ This cannot be undone.`)) return;
                 </div>
                 <div style="display: flex; justify-content: space-between; padding: 6px 0; border-bottom: 1px solid var(--border-glass);">
                     <span>Deduction Fraction</span>
-                    <strong>${res.deduction_label || "N/A"}</strong>
+                    <strong>${res.deduction_label || "N/A"}${res.deduction_is_override ? " (manual override)" : ""}</strong>
                 </div>
+                ${res.deduction_reason ? `
+                <div style="padding: 6px 0; border-bottom: 1px solid var(--border-glass); font-size: 0.8rem; color: var(--text-secondary, #94a3b8);">
+                    <i class="fa-solid fa-circle-info"></i> ${res.deduction_reason}
+                </div>` : ""}
                 <div style="display: flex; justify-content: space-between; padding: 6px 0; border-bottom: 1px solid var(--border-glass);">
                     <span>Dependency Income</span>
                     <strong>${formatCurrency(res.dependency_income)}</strong>

@@ -70,6 +70,11 @@ class CompensationRequest(BaseModel):
 
     marital_status: str = "married"
 
+    # Manual override for the personal/living-expenses deduction ratio.
+    # Values sent by the frontend dropdown: "auto", "1/2", "1/3", "1/4", "1/5".
+    # "auto" (or None/empty) means: use the computed ratio from get_deduction().
+    deduction_override: Optional[str] = None
+
     future_type: int = 2
 
     future_prospect: Optional[float] = None
@@ -144,6 +149,8 @@ class CompensationRequest(BaseModel):
                 elif k == "future_prospect":
                     cleaned[k] = None
                 elif k == "consortium_claimants":
+                    cleaned[k] = None
+                elif k == "deduction_override":
                     cleaned[k] = None
                 elif k in ["monthly_income", "consortium", "funeral_expenses", "loss_estate", "disability"]:
                     if k in ["consortium", "funeral_expenses", "loss_estate"]:
@@ -253,12 +260,24 @@ def get_future_prospect(age: int, future_type: int):
 # DEDUCTION
 # ======================================================
 
+# Label <-> ratio mapping for the manual-override dropdown.
+DEDUCTION_LABEL_TO_RATIO = {
+    "1/2": 0.50,
+    "1/3": 1 / 3,
+    "1/4": 0.25,
+    "1/5": 0.20,
+}
+
+
 def get_deduction(
     dependents: int,
     marital_status: str
 ):
     """
     Deduction towards personal & living expenses (Sarla Verma / Pranay Sethi table).
+
+    Returns (ratio: float, reason: str) so the frontend can show *why* a
+    particular fraction was picked, and the user can override it manually.
 
     Business rule (matches the corrected PHP calculator):
       - Bachelor/Single: the UI never asks for "Number of Dependents" at all.
@@ -268,6 +287,10 @@ def get_deduction(
           - 2 to 3 family members (dependents <= 2) -> 1/3
           - 4 to 6 family members (dependents <= 5) -> 1/4 (0.25)
           - 7 or more family members (dependents >= 6) -> 1/5 (0.20)
+
+    NOTE: This is the current, coarse dependents-count heuristic. It is the
+    placeholder to be replaced by the OCR/relationship-driven engine once
+    claimant-level relation/age/earning data is available from parsing.
     """
     if not marital_status:
         marital_status = "married"
@@ -279,17 +302,43 @@ def get_deduction(
 
     if is_bachelor:
         if dependents <= 1:
-            return 0.50
+            return 0.50, (
+                "Deceased was unmarried (bachelor). Default presumption under "
+                "Sarla Verma / settled MACT practice: 50% is deducted towards "
+                "personal & living expenses, since a bachelor is assumed to "
+                "spend more on himself and no evidence of a large dependent "
+                "family was indicated by the entered dependents count."
+            )
         else:
-            return 1 / 3
+            return 1 / 3, (
+                f"Deceased was unmarried (bachelor) with {dependents} dependents "
+                "entered. Since more than 1 dependent was indicated, 1/3 is "
+                "deducted (i.e. 2/3 is treated as contribution to the family) "
+                "on the assumption of a larger dependent family. Verify this "
+                "against actual evidence — courts only apply 2/3 contribution "
+                "where the family is shown to be genuinely large and dependent "
+                "(e.g. widowed parent + several young non-earning siblings)."
+            )
     else:
         # Married
         if dependents <= 3:
-            return 1 / 3
+            return 1 / 3, (
+                f"Deceased was married with a family size of {dependents + 1} "
+                "(including deceased). Under Sarla Verma, families of 2-3 "
+                "members attract a 1/3 deduction towards personal expenses."
+            )
         elif dependents <= 6:
-            return 0.25
+            return 0.25, (
+                f"Deceased was married with a family size of {dependents + 1} "
+                "(including deceased). Under Sarla Verma, families of 4-6 "
+                "members attract a 1/4 deduction towards personal expenses."
+            )
         else:
-            return 0.20
+            return 0.20, (
+                f"Deceased was married with a family size of {dependents + 1} "
+                "(including deceased). Under Sarla Verma, families of 7 or "
+                "more members attract a 1/5 deduction towards personal expenses."
+            )
 
 
 # ======================================================
@@ -316,7 +365,22 @@ def calculate_death_compensation(
     enhanced_monthly_income_float = monthly_income + future_prospect_amount_float
     annual_income_float = enhanced_monthly_income_float * 12.0
 
-    deduction_ratio = get_deduction(dependents, marital_status)
+    # ------------------------------------------------------------
+    # Deduction ratio: auto-computed unless the user manually
+    # overrode it via the frontend dropdown (data.deduction_override).
+    # ------------------------------------------------------------
+    override_label = (data.deduction_override or "").strip().lower()
+    if override_label and override_label != "auto" and override_label in DEDUCTION_LABEL_TO_RATIO:
+        deduction_ratio = DEDUCTION_LABEL_TO_RATIO[override_label]
+        deduction_reason = (
+            f"Manually set by user to {override_label} — overrides the "
+            "auto-computed value."
+        )
+        deduction_is_override = True
+    else:
+        deduction_ratio, deduction_reason = get_deduction(dependents, marital_status)
+        deduction_is_override = False
+
     # Express as a readable fraction label matching PHP output (1/2, 1/3, 1/4, 1/5)
     _frac_map = {0.50: "1/2", round(1/3, 10): "1/3", 0.25: "1/4", 0.20: "1/5"}
     deduction_label = _frac_map.get(round(deduction_ratio, 10), str(round(deduction_ratio, 4)))
@@ -413,6 +477,8 @@ def calculate_death_compensation(
         "future_income": safe_round(annual_income_float),
         "deduction_percentage": deduction_percentage,
         "deduction_label": deduction_label,
+        "deduction_reason": deduction_reason,
+        "deduction_is_override": deduction_is_override,
         "deduction_amount": safe_round(deduction_amount_float),
         "dependency_income": safe_round(dependency_income_float),
         "multiplier": multiplier,
