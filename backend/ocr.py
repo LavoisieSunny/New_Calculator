@@ -52,6 +52,30 @@ def _tlog(msg: str):
 router = APIRouter()
 
 # ======================================================
+# TEXT NORMALIZATION — applied to every extracted document
+# ======================================================
+
+_DEVA_DIGIT_MAP = str.maketrans("०१२३४५६७८९", "0123456789")
+
+def normalize_ocr_text(text: str) -> str:
+    """
+    General cleanup applied to every OCR'd document (not document-specific).
+    1) Devanagari digits (०-९) that leak into an otherwise-Latin token
+       (case numbers, vehicle registrations, amounts, dates) get converted
+       to Latin digits. Pure-Devanagari numbers in ordinary prose are left as-is.
+    2) The rupee symbol ₹ is frequently misread as the Devanagari letter ऱ
+       when it sits immediately before a digit/comma amount — restore it.
+    """
+    def _fix_token(m):
+        token = m.group(0)
+        if re.search(r'[०-९]', token) and re.search(r'[A-Za-z0-9]', token):
+            return token.translate(_DEVA_DIGIT_MAP)
+        return token
+    text = re.sub(r'\S+', _fix_token, text)
+    text = re.sub(r'ऱ(?=\s*[\d,]+/?-?)', '₹', text)
+    return text
+
+# ======================================================
 # CONFIGURATION — all tunable via environment variables
 # ======================================================
 
@@ -403,7 +427,7 @@ def get_ocr_instance(lang: str = None):
             t0 = time.time()
             rec_model_name = None
             if lang == "hi":
-                rec_model_name = "devanagari_PP-OCRv5_mobile_rec"
+                rec_model_name = "devanagari_PP-OCRv5_server_rec"   # was: mobile_rec — resolves conjuncts (क्ष, र्, ू) that mobile drops
             elif lang == "en":
                 rec_model_name = "en_PP-OCRv5_mobile_rec"
 
@@ -411,6 +435,7 @@ def get_ocr_instance(lang: str = None):
                 PaddleOCR,
                 lang=lang,
                 text_recognition_model_name=rec_model_name,
+                text_recognition_batch_size=16,   # NEW — batches line-crop recognition within a page
                 text_det_unclip_ratio=2.0,
                 text_det_thresh=0.25,
                 text_det_box_thresh=0.5,
@@ -446,7 +471,7 @@ def get_supporting_ocr_instance(lang: str = None):
             t0 = time.time()
             rec_model_name = None
             if lang == "hi":
-                rec_model_name = "devanagari_PP-OCRv5_mobile_rec"
+                rec_model_name = "devanagari_PP-OCRv5_server_rec"   # was: mobile_rec
             elif lang == "en":
                 rec_model_name = "en_PP-OCRv5_mobile_rec"
 
@@ -454,6 +479,7 @@ def get_supporting_ocr_instance(lang: str = None):
                 PaddleOCR,
                 lang=lang,
                 text_recognition_model_name=rec_model_name,
+                text_recognition_batch_size=16,   # NEW
                 text_det_unclip_ratio=2.0,
                 text_det_thresh=0.25,
                 text_det_box_thresh=0.5,
@@ -2733,7 +2759,7 @@ def run_background_pdf_indexing(file_id: str, temp_path: str, filename: str):
         BATCH_QUEUE[file_id]["progress"] = 90
 
         # Call classify_case_type_by_ocr_text immediately after OCR completes, BEFORE field-extraction/autofill step runs.
-        full_text = "\n".join(text_lines)
+        full_text = normalize_ocr_text("\n".join(text_lines))
         from backend.llm_client import classify_case_type_by_ocr_text
         detected_case_type = classify_case_type_by_ocr_text(full_text)
 
@@ -2936,7 +2962,7 @@ async def process_single_file(
             # no lower-court/Hindi routing); default to the existing English
             # parser for anything that skipped track detection.
             # Call classify_case_type_by_ocr_text immediately after OCR completes, BEFORE field-extraction/autofill step runs.
-            full_text = "\n".join(text_lines)
+            full_text = normalize_ocr_text("\n".join(text_lines))
             from backend.llm_client import classify_case_type_by_ocr_text
             detected_case_type = classify_case_type_by_ocr_text(full_text)
 
@@ -3374,7 +3400,7 @@ class AIRecoverRequest(BaseModel):
 async def ai_recover_fields(request: AIRecoverRequest):
     try:
         from backend.llm_client import ai_data_recovery
-        full_text = "\n".join(request.raw_text)
+        full_text = normalize_ocr_text("\n".join(request.raw_text))
         track = request.track
         if track not in ("high_court", "lower_court"):
             from backend.track_detection import _devanagari_ratio
@@ -3525,7 +3551,7 @@ async def refresh_judicial_summary(request: RefreshJudicialSummaryRequest):
     bypass the cache and regenerate.
     """
     try:
-        full_text = "\n".join(request.raw_text)
+        full_text = normalize_ocr_text("\n".join(request.raw_text))
         track = request.track
         if not track:
             from backend.track_detection import _devanagari_ratio
