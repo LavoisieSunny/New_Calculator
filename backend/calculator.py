@@ -415,7 +415,7 @@ def calculate_death_compensation(
     consortium_default = get_conventional_heads_enhanced(40000.0, ref_date)   # always auto-escalated, no manual step
     funeral_default = get_conventional_heads_enhanced(15000.0, ref_date)
     loss_estate_default = get_conventional_heads_enhanced(15000.0, ref_date)
-    consortium_per_person = consortium_default   # ignore data.consortium override entirely — fully automated now
+    consortium_per_person = safe_float(data.consortium, consortium_default) if data.consortium is not None else consortium_default
 
     consortium_claimants_val = safe_int(data.consortium_claimants, 1)
     if consortium_claimants_val <= 0:

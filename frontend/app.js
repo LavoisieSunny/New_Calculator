@@ -3397,7 +3397,7 @@ This cannot be undone.`)) return;
             const consortiumDefault = getConventionalHeadsEnhanced(40000.0, refDateStr);
             const funeralDefault = getConventionalHeadsEnhanced(15000.0, refDateStr);
             const lossEstateDefault = getConventionalHeadsEnhanced(15000.0, refDateStr);
-            const consortiumPerPerson = consortiumDefault; // ignore data.consortium override entirely
+            const consortiumPerPerson = getVal(data.consortium, consortiumDefault);
 
             let consortiumClaimantsVal = Number(data.consortium_claimants);
             if (isNaN(consortiumClaimantsVal) || consortiumClaimantsVal <= 0) {
