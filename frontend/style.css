@@ -622,6 +622,52 @@ select:focus {
     border-radius: var(--radius-sm);
 }
 
+/* Deduction (Personal & Living Expenses) recommendation styling */
+.deduction-reason {
+    font-size: 0.78rem;
+    line-height: 1.5;
+    margin: 6px 0 0;
+    padding: 9px 11px;
+    border-radius: var(--radius-sm);
+    border-left: 3px solid transparent;
+    font-weight: 500;
+}
+
+.deduction-reason--auto {
+    color: #1d4ed8;
+    background: rgba(37, 99, 235, 0.07);
+    border-left-color: #2563eb;
+}
+
+.deduction-reason--override {
+    color: #b45309;
+    background: rgba(217, 119, 6, 0.09);
+    border-left-color: #d97706;
+}
+
+.deduction-reason-badge {
+    display: inline-block;
+    font-size: 0.66rem;
+    font-weight: 700;
+    letter-spacing: 0.5px;
+    text-transform: uppercase;
+    padding: 2px 7px;
+    border-radius: 999px;
+    margin-right: 7px;
+    vertical-align: middle;
+    white-space: nowrap;
+}
+
+.deduction-reason--auto .deduction-reason-badge {
+    background: #2563eb;
+    color: #ffffff;
+}
+
+.deduction-reason--override .deduction-reason-badge {
+    background: #d97706;
+    color: #ffffff;
+}
+
 /* Fallback Layer 7 — Human Verification UI warnings */
 .low-confidence-input input,
 .low-confidence-input select,
