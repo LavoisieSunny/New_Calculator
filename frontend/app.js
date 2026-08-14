@@ -918,9 +918,13 @@ document.addEventListener("DOMContentLoaded", () => {
                     deathDeductSelect.value = "auto";
                 }
                 if (deathDeductReason) {
-                    deathDeductReason.textContent = deductionManuallyOverridden
-                        ? `Manually set to ${deathDeductSelect ? deathDeductSelect.value : ""} — overrides the recommended value (${deductionInfo.label}, ${deductionInfo.reason})`
-                        : `Auto: ${deductionInfo.label} (${deductionsPercent}%) — ${deductionInfo.reason}`;
+                    if (deductionManuallyOverridden) {
+                        deathDeductReason.className = "hint-text deduction-reason deduction-reason--override";
+                        deathDeductReason.innerHTML = `<span class="deduction-reason-badge">Manual</span>Set to ${deathDeductSelect ? deathDeductSelect.value : ""} — overrides the recommended value (${deductionInfo.label}, ${deductionInfo.reason})`;
+                    } else {
+                        deathDeductReason.className = "hint-text deduction-reason deduction-reason--auto";
+                        deathDeductReason.innerHTML = `<span class="deduction-reason-badge">Recommended</span>${deductionInfo.label} (${deductionsPercent}%) — ${deductionInfo.reason}`;
+                    }
                 }
 
                 // Populate dynamic dashboard helper elements only (no monetary figures)
@@ -3771,8 +3775,8 @@ This cannot be undone.`)) return;
                     <strong>${res.deduction_label || "N/A"}${res.deduction_is_override ? " (manual override)" : ""}</strong>
                 </div>
                 ${res.deduction_reason ? `
-                <div style="padding: 6px 0; border-bottom: 1px solid var(--border-glass); font-size: 0.8rem; color: var(--text-secondary, #94a3b8);">
-                    <i class="fa-solid fa-circle-info"></i> ${res.deduction_reason}
+                <div class="deduction-reason ${res.deduction_is_override ? "deduction-reason--override" : "deduction-reason--auto"}" style="margin: 4px 0 6px;">
+                    <span class="deduction-reason-badge">${res.deduction_is_override ? "Manual" : "Recommended"}</span>${res.deduction_reason}
                 </div>` : ""}
                 <div style="display: flex; justify-content: space-between; padding: 6px 0; border-bottom: 1px solid var(--border-glass);">
                     <span>Dependency Income</span>
