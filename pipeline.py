@@ -30,7 +30,7 @@ class SmartOCRPipeline:
         }
         
         # Step 2: Quality Gate check — Escalate to OCR if sparse or garbled digital text layer is detected
-        if is_extracted_text_sparse(text_lines):
+        if is_extracted_text_sparse(text_lines, file_path=pdf_path):
             print("Selectable text is sparse or garbled. Running stabilized multi-engine OCR fallback...")
             text_lines, ocr_debug = perform_ocr_on_scanned_pdf(pdf_path, scan_all_pages=True)
             fallback_source = ocr_debug.get("ocr_engine_used", "OCR_Engine")

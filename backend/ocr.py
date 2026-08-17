@@ -1177,7 +1177,7 @@ def extract_alternate_pdf_text(file_path: str) -> list:
     return lines
 
 
-def is_extracted_text_sparse(text_lines: list) -> bool:
+def is_extracted_text_sparse(text_lines: list, file_path: str = None) -> bool:
     """Returns True if digital text extraction failed or produced garbage."""
     actual = [l for l in text_lines if not l.strip().startswith("--- PAGE")]
     if len(actual) < 15:
@@ -1267,6 +1267,40 @@ def is_extracted_text_sparse(text_lines: list) -> bool:
     if bad_pages_count > 0:
         logger.info(f"Digital text layer has {bad_pages_count} custom-encoded font pages out of {total_pages_with_text}. Triggering OCR.")
         return True
+
+    if file_path:
+        try:
+            page_char_counts = {
+                page_num: len(" ".join(page_lines))
+                for page_num, page_lines in pages.items()
+            }
+            reader = PdfReader(file_path)
+            image_sparse_pages = 0
+            for idx, pdf_page in enumerate(reader.pages):
+                page_num = idx + 1
+                try:
+                    has_image = len(pdf_page.images) > 0
+                except Exception:
+                    has_image = False
+                if not has_image:
+                    continue
+                char_count = page_char_counts.get(page_num, 0)
+                if char_count < 40:
+                    logger.info(
+                        f"Page {page_num} contains an embedded image but the digital "
+                        f"text layer returned only {char_count} chars for it -- likely "
+                        f"lost/untranscribed text (e.g. Hindi missed by a prior OCR "
+                        f"pass). Triggering OCR."
+                    )
+                    image_sparse_pages += 1
+            if image_sparse_pages > 0:
+                logger.info(
+                    f"Digital text layer has {image_sparse_pages} scanned page(s) with "
+                    f"near-empty text out of {len(reader.pages)}. Triggering OCR."
+                )
+                return True
+        except Exception as e:
+            logger.warning(f"Image-based sparse-page check failed for {file_path}: {e}")
 
     return False
 
@@ -2735,7 +2769,7 @@ def run_background_pdf_indexing(file_id: str, temp_path: str, filename: str):
                                       total_ocr_time=time.time() - start_time)
         ocr_debug["track"] = locals().get("track_info", {"track": locals().get("track", "high_court")})
 
-        if is_extracted_text_sparse(text_lines):
+        if is_extracted_text_sparse(text_lines, file_path=temp_path):
             logger.info(f"Sparse digital text for {filename}. Running hybrid OCR (PaddleOCR + vision).")
             def report_progress(p):
                 BATCH_QUEUE[file_id]["progress"] = p
@@ -2747,7 +2781,7 @@ def run_background_pdf_indexing(file_id: str, temp_path: str, filename: str):
             fallback_source = OCR_HYBRID_LABEL
             ocr_debug["track"] = locals().get("track_info", {"track": locals().get("track", "high_court")})
 
-        if is_extracted_text_sparse(text_lines):
+        if is_extracted_text_sparse(text_lines, file_path=temp_path):
             alt_lines = extract_alternate_pdf_text(temp_path)
             if len(alt_lines) > len(text_lines):
                 text_lines = alt_lines
@@ -2898,7 +2932,7 @@ async def process_single_file(
                 }
                 _tlog(f"[TRACK] {file.filename}: majority={track}, pages={len(track_per_page)}")
 
-                if is_extracted_text_sparse(text_lines):
+                if is_extracted_text_sparse(text_lines, file_path=temp_path):
                     page_event_queue = _queue.Queue()
 
                     def _page_cb(page_info):
@@ -2939,7 +2973,7 @@ async def process_single_file(
                     fallback_source = OCR_HYBRID_LABEL
                     ocr_debug["track"] = locals().get("track_info", {"track": locals().get("track", "high_court")})
 
-                if track == "high_court" and is_extracted_text_sparse(text_lines):
+                if track == "high_court" and is_extracted_text_sparse(text_lines, file_path=temp_path):
                     yield f"data: {json.dumps({'status': 'checking_alternate', 'progress': 65, 'message': 'Sparse text — trying alternate extraction...'})}\n\n"
                     await asyncio.sleep(0.01)
                     alt_lines = await asyncio.to_thread(extract_alternate_pdf_text, temp_path)
