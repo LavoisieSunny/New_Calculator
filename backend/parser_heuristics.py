@@ -38,7 +38,9 @@ HEADING_KEYWORDS = {
     "claimant_section": [
         "legal representatives", "parties to the", "cause title", "party details",
         "details of claimants", "details of petitioners", "claimant details",
-        "petitioner details", "memo of parties", "name and description of the injured person"
+        "petitioner details", "memo of parties", "name and description of the injured person",
+        "name and description of the deceased", "name and description of the deceased person",
+        "description of the deceased", "particulars of deceased"
     ],
     "accident_section": [
         "manner of accident", "details of accident", "occurrence of accident", "date of accident",
@@ -4915,7 +4917,10 @@ def parse_extracted_text(text_lines, case_type=None):
             page_consortium = find_exact_page(int(consortium), sec_meta.get("start_page", 1), sec_meta.get("end_page", 1), pages)
             method_consortium = "Respectively Sentence Extraction"
         else:
-            cons_patterns = [r'consortium\s*(?:of|is|was|to|@)?\s*(?:rs\.?|inr|rupees)?\s*([\d,]{4,7})\b']
+            cons_patterns = [
+                r'consortium\s*(?:of|is|was|to|@|towards|under\s+the\s+head|on\s+account\s+of)?\s*[:\-]?\s*(?:rs\.?|inr|rupees)?\s*([\d,]{4,7})\b',
+                r'(?:loss\s+of\s+)?consortium\b[^₹\d\n]{0,40}?(?:rs\.?|inr|rupees|₹)?\s*[:\-]?\s*([\d,]{4,7})\b'
+            ]
             consortium, conf_consortium, sec_consortium, page_consortium = contextual_extract(
                 cons_patterns, sections, [("compensation_section", 95), ("award_copy_section", 90)], default_val=48400.0 if case_type == "death" else 0.0, type_cast=float,
                 field_name="consortium", debug_info=parser_debug, pages=pages, sections_metadata=sections_metadata, page_importances=page_importances
@@ -4946,7 +4951,9 @@ def parse_extracted_text(text_lines, case_type=None):
             page_funeral_expenses = find_exact_page(int(funeral_expenses), sec_meta.get("start_page", 1), sec_meta.get("end_page", 1), pages)
             method_funeral_expenses = "Respectively Sentence Extraction"
         else:
-            fun_patterns = [r'funeral\s*(?:expenses?|rites?|rituals?)?\s*(?:of|is|was|to|@)?\s*(?:rs\.?|inr|rupees)?\s*([\d,]{4,7})\b']
+            fun_patterns = [
+                r'funeral\s*(?:expenses?|rites?|rituals?)?\s*(?:of|is|was|to|@|towards|under\s+the\s+head|on\s+account\s+of)?\s*[:\-]?\s*(?:rs\.?|inr|rupees)?\s*([\d,]{4,7})\b'
+            ]
             funeral_expenses, conf_funeral_expenses, sec_funeral_expenses, page_funeral_expenses = contextual_extract(
                 fun_patterns, sections, [("compensation_section", 95), ("award_copy_section", 90)], default_val=18150.0 if case_type == "death" else 0.0, type_cast=float,
                 field_name="funeral_expenses", debug_info=parser_debug, pages=pages, sections_metadata=sections_metadata, page_importances=page_importances
@@ -5006,7 +5013,9 @@ def parse_extracted_text(text_lines, case_type=None):
         page_estate_loss = find_exact_page(int(estate_loss), sec_meta.get("start_page", 1), sec_meta.get("end_page", 1), pages)
         method_estate_loss = "Respectively Sentence Extraction"
     else:
-        est_patterns = [r'(?:loss\s+of\s+)?estate\s*(?:of|is|was|to|@)?\s*(?:rs\.?|inr|rupees)?\s*([\d,]{4,7})\b']
+        est_patterns = [
+            r'(?:loss\s+of\s+)?estate\s*(?:of|is|was|to|@|towards|under\s+the\s+head|on\s+account\s+of)?\s*[:\-]?\s*(?:rs\.?|inr|rupees)?\s*([\d,]{4,7})\b'
+        ]
         estate_loss, conf_estate_loss, sec_estate_loss, page_estate_loss = contextual_extract(
             est_patterns, sections, [("compensation_section", 95), ("award_copy_section", 90)], default_val=18150.0 if case_type == "death" else 0.0, type_cast=float,
             field_name="estate_loss", debug_info=parser_debug, pages=pages, sections_metadata=sections_metadata, page_importances=page_importances
