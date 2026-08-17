@@ -2609,10 +2609,23 @@ This cannot be undone.`)) return;
             }
         });
 
-        // Ensure canonical "name" key is populated from specific name keys
-        if (fields.injured_name) lastExtractedFields["name"] = fields.injured_name;
-        if (fields.deceased_name) lastExtractedFields["name"] = fields.deceased_name;
-        if (fields.claimant_name) lastExtractedFields["name"] = fields.claimant_name;
+        const nameCandidateOrder = suggestionsCaseType === "injury"
+            ? ["injured_name", "claimant_name", "deceased_name"]
+            : ["deceased_name", "injured_name", "claimant_name"];
+        for (const candidateKey of nameCandidateOrder) {
+            if (fields[candidateKey]) {
+                lastExtractedFields["name"] = fields[candidateKey];
+                lastExtractedFields["name_source_field"] = candidateKey;
+                const candidateConf = (suggestions.confidence_scores && suggestions.confidence_scores[candidateKey])
+                    || (fields.confidence_scores && fields.confidence_scores[candidateKey]);
+                if (candidateConf) {
+                    const cVal = candidateConf.confidence !== undefined ? candidateConf.confidence : candidateConf;
+                    lastExtractedConfidences["name"] = typeof cVal === "number" ? cVal : parseFloat(cVal);
+                    if (candidateConf.reason) lastExtractedReasons["name"] = candidateConf.reason;
+                }
+                break;
+            }
+        }
 
         // Merge raw recovered details if LLM is executed (Part 5 offline store)
         if (rawRecovered) {
