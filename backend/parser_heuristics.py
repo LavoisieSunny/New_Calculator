@@ -2635,7 +2635,7 @@ CLAIM_LANGUAGE_KEYWORDS = [
 ]
 
 
-def contextual_extract(patterns, sections, priority_list, type_cast=str, default_val=None, field_name=None, debug_info=None, pages=None, sections_metadata=None, page_importances=None):
+def contextual_extract(patterns, sections, priority_list, type_cast=str, default_val=None, field_name=None, debug_info=None, pages=None, sections_metadata=None, page_importances=None, subject_name=None):
     """
     Upgraded Contextual Entity Extraction with dynamic section priority and page-importance tracking.
     """
@@ -2695,6 +2695,18 @@ def contextual_extract(patterns, sections, priority_list, type_cast=str, default
                         "decided by", "advocate", "counsel", "bench", "hon'ble", "honble",
                     ]):
                         continue
+                    if field_name == "father_name" and subject_name:
+                        # "S/o|D/o|W/o Late Shri X" names whoever's name sits
+                        # right before the marker on this line -- e.g. "Vishnudev
+                        # Singh S/o Late Shri Motilal Singh" names Vishnudev's OWN
+                        # father (the deceased's grandfather), not the deceased's
+                        # father. Only accept the match if that preceding name is
+                        # the deceased's own name, or there's no other named
+                        # person there at all (e.g. a plain "Father's Name:" label).
+                        pre_line = text[line_start:m.start()].strip()
+                        name_m = re.search(r'([A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,3})\s*$', pre_line)
+                        if name_m and name_m.group(1).strip().lower() != subject_name.strip().lower():
+                            continue
                 matched_source = m.group(0)
                 raw_val = m.group(1).strip()
                 
@@ -3925,7 +3937,8 @@ def parse_extracted_text(text_lines, case_type=None):
     else:
         father_name, conf_father_name, sec_father_name, page_father_name = contextual_extract(
             father_patterns, sections, [("claimant_section", 90), ("facts_section", 85), ("memo_of_appeal_section", 80)], type_cast=str,
-            field_name="father_name", debug_info=parser_debug, pages=pages, sections_metadata=sections_metadata, page_importances=page_importances
+            field_name="father_name", debug_info=parser_debug, pages=pages, sections_metadata=sections_metadata, page_importances=page_importances,
+            subject_name=deceased_name
         )
         method_father_name = "Section-Aware Contextual Regex"
         if father_name: father_name = father_name.title()
