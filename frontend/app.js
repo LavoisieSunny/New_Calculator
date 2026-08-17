@@ -830,7 +830,7 @@ document.addEventListener("DOMContentLoaded", () => {
         }
     }
 
-    function getDeductionRatioWithReason(dependents, status) {
+    function getDeductionRatioWithReason(dependents, status, age = null) {
         // Mirrors backend/calculator.py get_deduction().
         // TODO(OCR hook): once /parse extracts a structured claimant list
         // (relation + age + earning status per claimant) for the "death"
@@ -840,6 +840,15 @@ document.addEventListener("DOMContentLoaded", () => {
         const stat = String(status || "married").trim().toLowerCase();
         const isBachelor = stat === "single" || stat === "bachelor" || stat === "b" || stat === "unmarried" || stat === "s";
         const deps = parseInt(dependents) || 0;
+        const deceasedAge = age !== null ? parseInt(age) : (parseInt(ageInput?.value) || null);
+
+        if (deceasedAge !== null && !isNaN(deceasedAge) && deceasedAge < 18) {
+            return {
+                ratio: 0.0,
+                label: "0",
+                reason: "Deceased was a minor (under 18 years of age). Under settled MACT precedents (e.g. Kishan Gopal), no deduction towards personal & living expenses is applied for minor deaths."
+            };
+        }
 
         if (isBachelor) {
             if (deps <= 1) {
@@ -867,8 +876,8 @@ document.addEventListener("DOMContentLoaded", () => {
     }
 
     // Backward-compatible ratio-only accessor used elsewhere.
-    function getDeductionRatio(dependents, status) {
-        return getDeductionRatioWithReason(dependents, status).ratio;
+    function getDeductionRatio(dependents, status, age = null) {
+        return getDeductionRatioWithReason(dependents, status, age).ratio;
     }
 
     // Tracks whether the user has manually touched the deduction dropdown,
@@ -907,13 +916,22 @@ document.addEventListener("DOMContentLoaded", () => {
 
                 const deps = parseInt(dependentsInput.value) || 0;
                 const status = maritalStatusSelect.value || "married";
-                const deductionInfo = getDeductionRatioWithReason(deps, status);
-                const deductionsPercent = Math.round(deductionInfo.ratio * 100);
-                if (liveDeductions) liveDeductions.textContent = `${deductionsPercent}%`;
-                if (liveDeductionsBar) liveDeductionsBar.style.width = `${deductionsPercent}%`;
+                const deductionInfo = getDeductionRatioWithReason(deps, status, age);
 
                 const deathDeductSelect = document.getElementById("death-deduction");
                 const deathDeductReason = document.getElementById("death-deduction-reason");
+
+                let ratio = deductionInfo.ratio;
+                if (deductionManuallyOverridden && deathDeductSelect) {
+                    const ratioMap = {"0": 0.0, "1/2": 0.50, "1/3": 1 / 3, "1/4": 0.25, "1/5": 0.20};
+                    if (ratioMap[deathDeductSelect.value] !== undefined) {
+                        ratio = ratioMap[deathDeductSelect.value];
+                    }
+                }
+                const deductionsPercent = Math.round(ratio * 100);
+                if (liveDeductions) liveDeductions.textContent = `${deductionsPercent}%`;
+                if (liveDeductionsBar) liveDeductionsBar.style.width = `${deductionsPercent}%`;
+
                 if (deathDeductSelect && !deductionManuallyOverridden) {
                     deathDeductSelect.value = "auto";
                 }
@@ -3351,7 +3369,14 @@ This cannot be undone.`)) return;
             const futureProspectAmount = monthly * futureProspect / 100;
             const enhancedMonthlyIncome = monthly + futureProspectAmount;
             const annualIncome = enhancedMonthlyIncome * 12;
-            const deductionRatio = getDeductionRatio(data.dependents, data.marital_status);
+            let deductionRatio;
+            const overrideLabel = (data.deduction_override || "auto").trim().toLowerCase();
+            const ratioMap = {"0": 0.0, "1/2": 0.50, "1/3": 1 / 3, "1/4": 0.25, "1/5": 0.20};
+            if (overrideLabel && overrideLabel !== "auto" && ratioMap[overrideLabel] !== undefined) {
+                deductionRatio = ratioMap[overrideLabel];
+            } else {
+                deductionRatio = getDeductionRatio(data.dependents, data.marital_status, age);
+            }
             const deductionPercent = Math.round(deductionRatio * 100);
             const deductionAmount = annualIncome * deductionRatio;
             const dependencyIncome = annualIncome - deductionAmount;

@@ -262,6 +262,7 @@ def get_future_prospect(age: int, future_type: int):
 
 # Label <-> ratio mapping for the manual-override dropdown.
 DEDUCTION_LABEL_TO_RATIO = {
+    "0": 0.0,
     "1/2": 0.50,
     "1/3": 1 / 3,
     "1/4": 0.25,
@@ -378,11 +379,19 @@ def calculate_death_compensation(
         )
         deduction_is_override = True
     else:
-        deduction_ratio, deduction_reason = get_deduction(dependents, marital_status)
+        if age is not None and age < 18:
+            deduction_ratio = 0.0
+            deduction_reason = (
+                "Deceased was a minor (under 18 years of age). Under settled MACT "
+                "precedents (e.g. Kishan Gopal), no deduction towards personal "
+                "& living expenses is applied for minor deaths."
+            )
+        else:
+            deduction_ratio, deduction_reason = get_deduction(dependents, marital_status)
         deduction_is_override = False
 
     # Express as a readable fraction label matching PHP output (1/2, 1/3, 1/4, 1/5)
-    _frac_map = {0.50: "1/2", round(1/3, 10): "1/3", 0.25: "1/4", 0.20: "1/5"}
+    _frac_map = {0.50: "1/2", round(1/3, 10): "1/3", 0.25: "1/4", 0.20: "1/5", 0.0: "0"}
     deduction_label = _frac_map.get(round(deduction_ratio, 10), str(round(deduction_ratio, 4)))
     deduction_percentage = round(deduction_ratio * 100)
     
