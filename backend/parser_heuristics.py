@@ -3494,6 +3494,7 @@ def parse_extracted_text(text_lines, case_type=None):
     block_father_name = None
     block_occupation = None
     block_earning_daily = None
+    block_address = None
 
     # 1. Accident block
     accident_match = re.search(
@@ -3575,7 +3576,14 @@ def parse_extracted_text(text_lines, case_type=None):
         dec_block_text = best_block
         
         # Deceased/Injured Name
-        name_match = re.search(r'\b(?:(?:(?:1|a)\.?\s*|\(\s*[1a]\s*\)\s*)?Name)\s*[:\-;\u2022]\s*([^\n]+)', dec_block_text, re.IGNORECASE)
+        name_match = None
+        for _line in dec_block_text.split("\n"):
+            if re.search(r'\b(?:father|husband|guardian)\b', _line, re.IGNORECASE):
+                continue  # never treat a relative's "Name:" line as the person's own name
+            _m = re.search(r'\b(?:(?:(?:1|a)\.?\s*|\(\s*[1a]\s*\)\s*)?Name)\s*[:\-;\u2022]\s*([^\n]+)', _line, re.IGNORECASE)
+            if _m:
+                name_match = _m
+                break
         if name_match:
             cand_name = clean_legal_name(name_match.group(1).strip())
             if cand_name:
@@ -3597,6 +3605,15 @@ def parse_extracted_text(text_lines, case_type=None):
         occ_match = re.search(r'\b(?:(?:(?:4|d)\.?\s*|\(\s*[4d]\s*\)\s*)?Occupation)\s*[:\-;\u2022]\s*([^\n]+)', dec_block_text, re.IGNORECASE)
         if occ_match:
             block_occupation = occ_match.group(1).strip()
+            
+        # Address / Residence (commonly item 5)
+        addr_match = re.search(
+            r'\b(?:(?:(?:5|e)\.?\s*|\(\s*[5e]\s*\)\s*)?(?:Address|Residence|R\s*/\s*o)\b)\s*[:\-;\u2022]?\s*'
+            r'([^\n]+(?:\n(?!\s*\d+[\.\)]|\(\s*[IVXLCDM]+\s*\))[^\n]+)*)',
+            dec_block_text, re.IGNORECASE
+        )
+        if addr_match:
+            block_address = " ".join(addr_match.group(1).split())
             
         # Claimed Daily Wage
         earning_match = re.search(r'\b(?:(?:(?:5|e)\.?\s*|\(\s*[5e]\s*\)\s*)?Earning)\s*[:\-;\u2022]\s*([^\n]+)', dec_block_text, re.IGNORECASE)
@@ -3791,7 +3808,6 @@ def parse_extracted_text(text_lines, case_type=None):
             r'^(?:\d+[\.\)\-][ \t]*)?\bdeceased\b[ \t]*(?:name)?[ \t]*[:\-][ \t]*(.*)',
             r'\b(?:name\s+of\s+)deceased\b[ \t]*[:\-][ \t]*(.*)',
             r'^(?:\d+[\.\)\-][ \t]*)?\bdeath\s+of\s+(.*)',
-            r'\blate\b[ \t]*(?:shri|smt)?[ \t]*(.*)',
             r'\b((?-i:[A-Z][a-z]+(?:\s+[A-Z][a-z]+)*))[ \t]*(?:\(deceased\)|deceased)\b',
             r'\b(?:deceased)[ \t]+((?-i:[A-Z][a-z]+(?:\s+[A-Z][a-z]+)*))\b',
             r'\bdeath[ \t]+of[ \t]+(?:shri|smt|late)?[ \t]*((?-i:[A-Z][a-z]+(?:\s+[A-Z][a-z]+)*))\b',
@@ -3800,7 +3816,11 @@ def parse_extracted_text(text_lines, case_type=None):
             r'मृतक\s*(?:का\s+नाम)?\s*[:\-]\s*(.*)',
             r'स्व\.\s*(.*)',
             r'स्वर्गीय\s*(.*)',
-            r'दिवंगत\s*(.*)'
+            r'दिवंगत\s*(.*)',
+            # Generic "Late Shri/Smt X" catch-all — kept LAST, and skipped on
+            # father's/husband's/guardian's name lines so an honorific for an
+            # unrelated relative doesn't get mistaken for the deceased.
+            r'(?<!father\'s )(?<!husband\'s )(?<!guardian\'s )\blate\b[ \t]*(?:shri|smt)?[ \t]*(.*)',
         ]
         deceased_name, conf_deceased_name, sec_deceased_name, page_deceased_name = contextual_extract(
             dec_patterns, sections, [("claimant_section", 90), ("facts_section", 85), ("memo_of_appeal_section", 80)], type_cast=str,
@@ -3810,11 +3830,21 @@ def parse_extracted_text(text_lines, case_type=None):
         if deceased_name: deceased_name = deceased_name.title()
 
     # Deceased Block Extraction (Page 8 - High Court Factual Details)
-    deceased_block_match = re.search(
-        r'\b(?:deceased\s+person|description\s+of\s+deceased|name\s+and\s+description\s+of\s+the\s+deceased)\b.*?\b(?:name)\s*[|\s]*[:\-;\u2022][|\s]*([A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,3})',
-        full_text,
-        re.IGNORECASE | re.DOTALL
-    )
+    # Only runs as a fallback when the primary particulars-block parser above
+    # (block_dec_name) found nothing — otherwise it could clobber a correct
+    # value with a wrong one picked up elsewhere in the full text.
+    deceased_block_match = None
+    if not block_dec_name:
+        deceased_block_match = re.search(
+            r'\b(?:deceased\s+person|description\s+of\s+deceased|name\s+and\s+description\s+of\s+the\s+deceased)\b'
+            r'.*?'
+            r'(?:^|\n)\s*1[\.\)\-]?\s*'
+            r'(?![^\n]*(?:father|husband|guardian))'
+            r'name\s*[|\s]*[:\-;\u2022]?[|\s]*'
+            r'([A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,3})',
+            full_text,
+            re.IGNORECASE | re.DOTALL | re.MULTILINE
+        )
     if deceased_block_match:
         deceased_name = deceased_block_match.group(1).strip().title()
         conf_deceased_name = 0.99
@@ -3862,6 +3892,7 @@ def parse_extracted_text(text_lines, case_type=None):
         block_father_name = None
         block_occupation = None
         block_earning_daily = None
+        block_address = None
 
     # Apply Deceased overrides (Requirement 6)
     if claimant_name and any(kw in claimant_name.lower() for kw in ["late shri", "late smt", "late "]):
@@ -4321,20 +4352,27 @@ def parse_extracted_text(text_lines, case_type=None):
         }
 
     # 5.b Address only from claimant/petition section
-    address_patterns = [
-        r'\b(?:address|resident\s+of|r/o|residing\s+at)\s*[:\-]\s*(.*)',
-        r'\br/o\b\s*(.*)',
-        r'\bresident\s+of\b\s*(.*)',
-        r'\baddress\b\s*[:\-]?\s*(.*)',
-    ]
-    address, conf_address, sec_address, page_address = contextual_extract(
-        address_patterns, sections,
-        [("claimant_section", 90), ("facts_section", 85), ("memo_of_appeal_section", 80)],
-        default_val="", type_cast=str, field_name="address",
-        debug_info=parser_debug, pages=pages,
-        sections_metadata=sections_metadata, page_importances=page_importances
-    )
-    method_address = "Section-Aware Contextual Regex"
+    if block_address:
+        address = block_address
+        conf_address = 0.99
+        sec_address = "particulars_block"
+        page_address = 1
+        method_address = "High Court Particulars Block"
+    else:
+        address_patterns = [
+            r'\b(?:address|resident\s+of|r/o|residing\s+at)\s*[:\-]\s*(.*)',
+            r'\br/o\b\s*(.*)',
+            r'\bresident\s+of\b\s*(.*)',
+            r'\baddress\b\s*[:\-]?\s*(.*)',
+        ]
+        address, conf_address, sec_address, page_address = contextual_extract(
+            address_patterns, sections,
+            [("claimant_section", 90), ("facts_section", 85), ("memo_of_appeal_section", 80)],
+            default_val="", type_cast=str, field_name="address",
+            debug_info=parser_debug, pages=pages,
+            sections_metadata=sections_metadata, page_importances=page_importances
+        )
+        method_address = "Section-Aware Contextual Regex"
 
     # 6. Place of accident
     if block_place:
