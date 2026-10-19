@@ -2,15 +2,17 @@
 .venv/
 venv/
 ENV/
+env/
 
 # Environment variables / secrets — copy .env.example to .env locally
 .env
 
-# Python caching
+# Python caching & test caches
 __pycache__/
 **/__pycache__/
 *.py[cod]
 *$py.class
+.pytest_cache/
 
 # IDE & Editor configs
 .vscode/
@@ -21,23 +23,35 @@ __pycache__/
 *.sln
 *.swp
 
-# Testing artifacts
+# Testing & scratch artifacts
 test_scan.png
 debug_*.png
+temp_*.png
+temp_*.jpg
+brain/
+.agents/
+*.log
 
 # Qodo testing configs
 .qodo/
 
-# Local databases
+# Local databases & model caches
 qdrant_db/
 **/qdrant_db/
+paddle_models/
 
 # Exclude test files and directories from Git
 test_*.py
 tests/
 
-# Ungitignored PII case files
+# Case files and OCR text dumps
 ma3078_raw_text.txt
 ma_10076_ocr_lines.txt
 ma_20_ocr_lines.txt
+*_ocr_lines.txt
+*_raw_text.txt
+extracted_raw_text.txt
 
+# Dynamic user uploads (keep directory with .gitkeep)
+frontend/uploads/*
+!frontend/uploads/.gitkeep
