@@ -2756,15 +2756,7 @@ This cannot be undone.`)) return;
             }
         }
 
-        // Auto trigger automatic recalculation after autofill is completed (Task 18)
-        if (autoCalculate) {
-            setTimeout(() => {
-                console.log("AUTO RECALCULATING in background after OCR autofill...");
-                if (compensationForm) {
-                    compensationForm.dispatchEvent(new CustomEvent("submit", { detail: { userInitiated: false } }));
-                }
-            }, 500);
-        }
+        // Workstation inputs are populated cleanly. User reviews values and clicks Calculate manually.
     }
 
     // ==========================================================================
@@ -4568,7 +4560,8 @@ This cannot be undone.`)) return;
     const calculateBtn = document.getElementById("calculate-btn");
     if (calculateBtn) {
         calculateBtn.addEventListener("click", (e) => {
-            compensationForm.dispatchEvent(new CustomEvent("submit", { detail: { userInitiated: true } }));
+            e.preventDefault();
+            compensationForm.dispatchEvent(new Event("submit", { cancelable: true }));
         });
     }
 

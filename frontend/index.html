@@ -116,7 +116,7 @@
                             <p class="panel-subtitle">Select Injury or Death case type. Fields marked with red asterisk (<span class="req">*</span>) are mandatory.</p>
                         </div>
                         
-                        <form id="compensation-form" class="compensation-form">
+                        <form id="compensation-form" class="compensation-form" onsubmit="event.preventDefault(); return false;">
                             <!-- Case Type Selector
                                  Triggers display toggle for Injury or Death custom forms below. -->
                             <div class="form-group selector-group">
@@ -582,7 +582,7 @@
                             <!-- Buttons -->
                             <div class="form-actions hidden-section" id="form-actions-bar">
                                 <button type="button" id="reset-btn" class="btn btn-secondary"><i class="fa-solid fa-rotate-right"></i> Reset</button>
-                                <button type="submit" id="calculate-btn" class="btn btn-primary"><i class="fa-solid fa-calculator"></i> Calculate</button>
+                                <button type="button" id="calculate-btn" class="btn btn-primary"><i class="fa-solid fa-calculator"></i> Calculate</button>
                             </div>
                         </form>
 
