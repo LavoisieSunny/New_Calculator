@@ -4,10 +4,12 @@ services:
     container_name: compensation-calc-app
     ports:
       - "7202:7203"
+    env_file:
+      - .env
     environment:
       - COMP_CALC_PORT=7203
       - COMP_CALC_HOST=0.0.0.0
-      - COMP_CALC_DEBUG=True
+      - COMP_CALC_DEBUG=False
       - QDRANT_URL=http://qdrant:7204
       - LLM_API_ENDPOINT=http://host.docker.internal:11434
     extra_hosts:

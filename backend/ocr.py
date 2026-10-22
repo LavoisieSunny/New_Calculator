@@ -3081,13 +3081,33 @@ async def process_single_file(
             if case_session_id:
                 supporting_docs = build_supporting_docs_bundle(case_session_id)
 
-            from backend.llm_client import summarize_grounds_and_relief
-            summary_res = await asyncio.to_thread(
-                summarize_grounds_and_relief,
-                sections_dict,
-                heuristic_signal,
-                detected_case_type
-            )
+            from backend.llm_client import summarize_grounds_and_relief, _synthesize_human_summary_points
+            summary_res = None
+            try:
+                summary_res = await asyncio.wait_for(
+                    asyncio.to_thread(
+                        summarize_grounds_and_relief,
+                        sections_dict,
+                        heuristic_signal,
+                        detected_case_type
+                    ),
+                    timeout=5.0
+                )
+            except Exception as sum_err:
+                logger.warning(f"Grounds/relief summary skipped or timed out: {sum_err}")
+                g_pts_raw = heuristic_signal.get("grounds_points", []) if heuristic_signal else []
+                r_pts_raw = heuristic_signal.get("relief_points", []) if heuristic_signal else []
+                verdict = heuristic_signal.get("verdict", "not_determinable") if heuristic_signal else "not_determinable"
+                cleaned_grounds = _synthesize_human_summary_points(g_pts_raw, is_relief=False, verdict=verdict)
+                cleaned_relief = _synthesize_human_summary_points(r_pts_raw, is_relief=True, verdict=verdict)
+                summary_res = {
+                    "case_overview": f"Appeal analysis ({detected_case_type or 'General'}).",
+                    "appeal_direction": verdict,
+                    "grounds_of_appeal": cleaned_grounds,
+                    "relief_sought": cleaned_relief,
+                    "key_figures_cited": [],
+                    "summary_source": "heuristic_fallback"
+                }
             formatted_suggestions["grounds_relief_summary"] = summary_res
 
             # Index document into Qdrant in background so Chat Assistant works for this file
@@ -3511,8 +3531,28 @@ async def ai_recover_fields(request: AIRecoverRequest):
         heuristic_signal = heuristics_data.get("case_classification") or classify_enhancement_or_reduction(sections_dict)
         case_tp = recovered_data.get("case_type") or "death"
 
-        from backend.llm_client import summarize_grounds_and_relief
-        summary_res = await asyncio.to_thread(summarize_grounds_and_relief, sections_dict, heuristic_signal, case_tp)
+        from backend.llm_client import summarize_grounds_and_relief, _synthesize_human_summary_points
+        summary_res = None
+        try:
+            summary_res = await asyncio.wait_for(
+                asyncio.to_thread(summarize_grounds_and_relief, sections_dict, heuristic_signal, case_tp),
+                timeout=5.0
+            )
+        except Exception as sum_err:
+            logger.warning(f"AI recovery grounds summary fallback: {sum_err}")
+            g_pts_raw = heuristic_signal.get("grounds_points", []) if heuristic_signal else []
+            r_pts_raw = heuristic_signal.get("relief_points", []) if heuristic_signal else []
+            verdict = heuristic_signal.get("verdict", "not_determinable") if heuristic_signal else "not_determinable"
+            cleaned_grounds = _synthesize_human_summary_points(g_pts_raw, is_relief=False, verdict=verdict)
+            cleaned_relief = _synthesize_human_summary_points(r_pts_raw, is_relief=True, verdict=verdict)
+            summary_res = {
+                "case_overview": f"Appeal analysis ({case_tp or 'General'}).",
+                "appeal_direction": verdict,
+                "grounds_of_appeal": cleaned_grounds,
+                "relief_sought": cleaned_relief,
+                "key_figures_cited": [],
+                "summary_source": "heuristic_fallback"
+            }
         formatted["grounds_relief_summary"] = summary_res
         recovered_data["grounds_relief_summary"] = summary_res
 

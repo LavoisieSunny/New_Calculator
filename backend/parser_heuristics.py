@@ -3371,10 +3371,13 @@ def parse_extracted_text(text_lines, case_type=None):
     print("[PARSE DEBUG] First 60 lines of raw text:")
     for i, line in enumerate(text_lines[:60]):
         try:
-            print(f"  Line {i+1:>2}: {line.strip()}")
-        except UnicodeEncodeError:
-            safe_line = line.strip().encode('ascii', errors='replace').decode('ascii')
-            print(f"  Line {i+1:>2}: {safe_line}")
+            print(f"  Line {i+1:>2}: {str(line).strip()}")
+        except Exception:
+            try:
+                safe_line = str(line).strip().encode('ascii', errors='replace').decode('ascii')
+                print(f"  Line {i+1:>2}: {safe_line}")
+            except Exception:
+                pass
 
     full_text = "\n".join(text_lines)
     if case_type is None:
