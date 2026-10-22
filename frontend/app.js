@@ -3193,7 +3193,7 @@ This cannot be undone.`)) return;
     // ==========================================================================
     compensationForm.addEventListener("submit", async (e) => {
         e.preventDefault();
-        const isUserAction = e.isTrusted || (e.detail && e.detail.userInitiated !== false);
+        const isUserAction = e.isTrusted || (e.detail ? e.detail.userInitiated !== false : true);
         console.log("CALCULATE TRIGGERED", { isUserAction });
 
         const caseType = caseTypeSelect.value;
@@ -4561,7 +4561,7 @@ This cannot be undone.`)) return;
     if (calculateBtn) {
         calculateBtn.addEventListener("click", (e) => {
             e.preventDefault();
-            compensationForm.dispatchEvent(new Event("submit", { cancelable: true }));
+            compensationForm.dispatchEvent(new CustomEvent("submit", { detail: { userInitiated: true }, cancelable: true }));
         });
     }
 

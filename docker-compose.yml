@@ -17,6 +17,9 @@ services:
     depends_on:
       - qdrant
     volumes:
+      - ./backend:/app/backend
+      - ./frontend:/app/frontend
+      - ./run.py:/app/run.py
       - ./paddle_models/paddlex:/root/.paddlex
       - ./paddle_models/paddleocr:/root/.paddleocr
     restart: unless-stopped
