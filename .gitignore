@@ -43,6 +43,7 @@ paddle_models/
 # Exclude test files and directories from Git
 test_*.py
 tests/
+scripts/
 
 # Case files and OCR text dumps
 ma3078_raw_text.txt

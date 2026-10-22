@@ -1477,7 +1477,7 @@ document.addEventListener("DOMContentLoaded", () => {
                                     // High Court appeals (any case type) and lower-court death cases
                                     // (which do follow a reliable structured particulars block) are
                                     // safe to auto-fill and auto-calculate.
-                                    showToast(`Case PDF analyzed! Auto-filling workstation and running the calculator... (AI-generated — please verify)`, "success");
+                                    showToast(`Case PDF analyzed! Workstation fields auto-filled. (AI-generated — please verify)`, "success");
                                     let autofillSucceeded = false;
                                     window.autofillReadyPromise = (async () => {
                                         if (currentOcrRawText && currentOcrRawText.length > 0) {
@@ -2759,9 +2759,9 @@ This cannot be undone.`)) return;
         // Auto trigger automatic recalculation after autofill is completed (Task 18)
         if (autoCalculate) {
             setTimeout(() => {
-                console.log("AUTO RECALCULATING after OCR autofill...");
+                console.log("AUTO RECALCULATING in background after OCR autofill...");
                 if (compensationForm) {
-                    compensationForm.dispatchEvent(new Event("submit"));
+                    compensationForm.dispatchEvent(new CustomEvent("submit", { detail: { userInitiated: false } }));
                 }
             }, 500);
         }
@@ -3201,11 +3201,14 @@ This cannot be undone.`)) return;
     // ==========================================================================
     compensationForm.addEventListener("submit", async (e) => {
         e.preventDefault();
-        console.log("CALCULATE CLICKED");
+        const isUserAction = e.isTrusted || (e.detail && e.detail.userInitiated !== false);
+        console.log("CALCULATE TRIGGERED", { isUserAction });
 
         const caseType = caseTypeSelect.value;
         if (!caseType) {
-            showToast("Please select a case type first!", "warning");
+            if (isUserAction) {
+                showToast("Please select a case type first!", "warning");
+            }
             return;
         }
 
@@ -3214,7 +3217,7 @@ This cannot be undone.`)) return;
             grp.classList.remove("has-error");
         });
 
-        if (!compensationForm.reportValidity()) {
+        if (isUserAction && !compensationForm.reportValidity()) {
             const invalidFields = compensationForm.querySelectorAll("input:invalid, select:invalid");
             invalidFields.forEach(field => {
                 const grp = field.closest(".form-group");
@@ -3245,7 +3248,7 @@ This cannot be undone.`)) return;
 
         // Before submitting, check if age is missing
         const ageVal = parseInt(ageInput.value);
-        if (!ageVal || ageVal <= 0) {
+        if (isUserAction && (!ageVal || ageVal <= 0)) {
             showToast("⚠️ Age not set — calculation will use default age 30. Upload a PDF or enter DOB + accident date.", "warning");
         }
 
@@ -3320,15 +3323,19 @@ This cannot be undone.`)) return;
             updateMonetaryOutputs(breakdown);
 
             renderResultsDashboard(breakdown, payload);
-            openModal();
-            showToast("Compensation calculated successfully via FastAPI server!", "success");
+            if (isUserAction) {
+                openModal();
+                showToast("Compensation calculated successfully via FastAPI server!", "success");
+            }
 
             // Enable Evaluator button
             if (triggerEvalBtn) triggerEvalBtn.disabled = false;
 
         } catch (error) {
             console.error("Server-side calculation failed:", error);
-            showToast(`Backend computation failed: ${error.message}. Running local mathematical fallback engine.`, "warning");
+            if (isUserAction) {
+                showToast(`Backend computation failed: ${error.message}. Running local mathematical fallback engine.`, "warning");
+            }
 
             const localResults = calculateCompensationLocally(payload);
 
@@ -3339,7 +3346,9 @@ This cannot be undone.`)) return;
             updateMonetaryOutputs(localResults);
 
             renderResultsDashboard(localResults, payload);
-            openModal();
+            if (isUserAction) {
+                openModal();
+            }
             if (triggerEvalBtn) triggerEvalBtn.disabled = false;
         }
     });
@@ -4559,7 +4568,7 @@ This cannot be undone.`)) return;
     const calculateBtn = document.getElementById("calculate-btn");
     if (calculateBtn) {
         calculateBtn.addEventListener("click", (e) => {
-            compensationForm.dispatchEvent(new Event("submit"));
+            compensationForm.dispatchEvent(new CustomEvent("submit", { detail: { userInitiated: true } }));
         });
     }
 
